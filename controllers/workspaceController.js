@@ -5,6 +5,10 @@ const createWorkspace = async (req, res) => {
   try {
     const { name, description, project_data } = req.body;
     
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    
     const workspace = await Workspace.create({
       user_id: req.user.id,
       name,

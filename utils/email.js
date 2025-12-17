@@ -11,9 +11,9 @@ const transporter = nodemailer.createTransport({
   tls: {
     rejectUnauthorized: false
   },
-  connectionTimeout: 5000, // 5 second connection timeout
-  greetingTimeout: 5000,   // 5 second greeting timeout
-  socketTimeout: 5000      // 5 second socket timeout
+  connectionTimeout: 3000, // 3 second connection timeout
+  greetingTimeout: 3000,   // 3 second greeting timeout
+  socketTimeout: 3000      // 3 second socket timeout
 });
 
 // Verify transporter configuration on startup
@@ -44,6 +44,9 @@ const sendWelcomeEmail = async (user) => {
               <div style="padding: 30px; background: #f9f9f9;">
                 <h2 style="color: #333;">Hello ${user.name},</h2>
                 <p style="color: #666; line-height: 1.6;">
+                  <strong>This email is intended for: ${user.email}</strong>
+                </p>
+                <p style="color: #666; line-height: 1.6;">
                   Thank you for joining Cloudiverse Architect! You can now start designing multi-cloud architectures with our AI-powered platform.
                 </p>
                 <p style="color: #666; line-height: 1.6;">
@@ -67,6 +70,7 @@ const sendWelcomeEmail = async (user) => {
               </div>
               <div style="background: #333; color: white; padding: 20px; text-align: center; border-radius: 0 0 10px 10px;">
                 <p style="margin: 0;">&copy; ${new Date().getFullYear()} Cloudiverse Architect. All rights reserved.</p>
+                <p style="margin: 5px 0 0 0; font-size: 12px; color: #ccc;">Email sent to: ${user.email}</p>
               </div>
             </div>
           `
@@ -112,6 +116,9 @@ const sendLoginNotification = async (user) => {
               <div style="padding: 30px; background: #f9f9f9;">
                 <h2 style="color: #333;">Hello ${user.name},</h2>
                 <p style="color: #666; line-height: 1.6;">
+                  <strong>This email is intended for: ${user.email}</strong>
+                </p>
+                <p style="color: #666; line-height: 1.6;">
                   We noticed a new login to your Cloudiverse Architect account.
                 </p>
                 <p style="color: #666; line-height: 1.6;">
@@ -131,6 +138,7 @@ const sendLoginNotification = async (user) => {
               </div>
               <div style="background: #333; color: white; padding: 20px; text-align: center; border-radius: 0 0 10px 10px;">
                 <p style="margin: 0;">&copy; ${new Date().getFullYear()} Cloudiverse Architect. All rights reserved.</p>
+                <p style="margin: 5px 0 0 0; font-size: 12px; color: #ccc;">Email sent to: ${user.email}</p>
               </div>
             </div>
           `

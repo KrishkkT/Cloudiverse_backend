@@ -4,8 +4,10 @@ const bcrypt = require('bcryptjs');
 class User {
   static async create(userData) {
     const { name, email, password, company } = userData;
-    const hashedPassword = await bcrypt.hash(password, 10);
-    
+    // Use fewer rounds in development for faster hashing
+    const saltRounds = process.env.NODE_ENV === 'production' ? 12 : 8;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
     const query = `
       INSERT INTO users (name, email, password, company)
       VALUES ($1, $2, $3, $4)
