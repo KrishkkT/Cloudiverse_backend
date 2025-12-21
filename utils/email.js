@@ -1,39 +1,101 @@
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
-// Create transporter with timeout settings
-const transporter = nodemailer.createTransport({
-  service: process.env.EMAIL_SERVICE,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  },
-  tls: {
-    rejectUnauthorized: false
-  },
-  connectionTimeout: 3000, // 3 second connection timeout
-  greetingTimeout: 3000,   // 3 second greeting timeout
-  socketTimeout: 3000      // 3 second socket timeout
-});
+// Create transporter with more robust configuration
+const createTransporter = () => {
+  // Try direct SMTP configuration first
+  if (process.env.SMTP_HOST) {
+    return nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: process.env.SMTP_PORT || 587,
+      secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      },
+      tls: {
+        rejectUnauthorized: false
+      },
+      connectionTimeout: 30000, // 30 seconds
+      greetingTimeout: 30000,   // 30 seconds
+      socketTimeout: 60000      // 60 seconds
+    });
+  }
+  
+  // Fall back to service-based configuration
+  return nodemailer.createTransport({
+    service: process.env.EMAIL_SERVICE || 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    },
+    tls: {
+      rejectUnauthorized: false
+    },
+    connectionTimeout: 30000, // 30 seconds
+    greetingTimeout: 30000,   // 30 seconds
+    socketTimeout: 60000      // 60 seconds
+  });
+};
+
+const transporter = createTransporter();
 
 // Verify transporter configuration on startup
 transporter.verify((error, success) => {
   if (error) {
     console.error('Email transporter configuration error:', error.message);
+    console.log('Email service may not be available. Emails will be logged instead.');
   } else {
     console.log('Email transporter is ready to send messages');
   }
 });
 
-// Send welcome email with improved error handling
+// Utility function to send email with retry logic
+const sendEmailWithRetry = async (mailOptions, maxRetries = 3) => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`Attempt ${attempt} to send email to: ${mailOptions.to}`);
+      
+      // Create email promise
+      const emailPromise = transporter.sendMail(mailOptions);
+      
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Email send timeout')), 60000); // 60 seconds
+      });
+      
+      // Race between email promise and timeout
+      await Promise.race([emailPromise, timeoutPromise]);
+      
+      console.log(`Email sent successfully to: ${mailOptions.to} on attempt ${attempt}`);
+      return true;
+    } catch (error) {
+      console.error(`Attempt ${attempt} failed to send email to ${mailOptions.to}:`, error.message);
+      
+      // If this was the last attempt, log the email content as fallback
+      if (attempt === maxRetries) {
+        console.log('=== EMAIL CONTENT THAT FAILED TO SEND ===');
+        console.log('TO:', mailOptions.to);
+        console.log('SUBJECT:', mailOptions.subject);
+        console.log('CONTENT:', mailOptions.html);
+        console.log('=========================================');
+        throw error;
+      }
+      
+      // Wait before retrying (exponential backoff)
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 2000));
+    }
+  }
+};
+
+// Send welcome email with improved error handling and retry logic
 const sendWelcomeEmail = async (user) => {
   try {
     // Use setImmediate to ensure this is completely non-blocking
     setImmediate(async () => {
       try {
-        // Add a timeout wrapper to prevent hanging
-        const emailPromise = transporter.sendMail({
-          from: process.env.EMAIL_FROM,
+        const mailOptions = {
+          from: process.env.EMAIL_FROM || `"Cloudiverse Architect" <${process.env.EMAIL_USER}>`,
           to: user.email,
           subject: 'Welcome to Cloudiverse Architect!',
           html: `
@@ -74,14 +136,9 @@ const sendWelcomeEmail = async (user) => {
               </div>
             </div>
           `
-        });
+        };
 
-        // Add timeout to prevent hanging
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Email send timeout')), 10000);
-        });
-
-        await Promise.race([emailPromise, timeoutPromise]);
+        await sendEmailWithRetry(mailOptions);
         console.log('Welcome email sent successfully to:', user.email);
       } catch (error) {
         console.error('Error sending welcome email to', user.email, ':', error.message);
@@ -97,15 +154,14 @@ const sendWelcomeEmail = async (user) => {
   return { success: true };
 };
 
-// Send login notification email with improved error handling
+// Send login notification email with improved error handling and retry logic
 const sendLoginNotification = async (user) => {
   try {
     // Use setImmediate to ensure this is completely non-blocking
     setImmediate(async () => {
       try {
-        // Add a timeout wrapper to prevent hanging
-        const emailPromise = transporter.sendMail({
-          from: process.env.EMAIL_FROM,
+        const mailOptions = {
+          from: process.env.EMAIL_FROM || `"Cloudiverse Architect" <${process.env.EMAIL_USER}>`,
           to: user.email,
           subject: 'New Login to Your Cloudiverse Account',
           html: `
@@ -142,14 +198,9 @@ const sendLoginNotification = async (user) => {
               </div>
             </div>
           `
-        });
+        };
 
-        // Add timeout to prevent hanging
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Email send timeout')), 10000);
-        });
-
-        await Promise.race([emailPromise, timeoutPromise]);
+        await sendEmailWithRetry(mailOptions);
         console.log('Login notification email sent successfully to:', user.email);
       } catch (error) {
         console.error('Error sending login notification email to', user.email, ':', error.message);
