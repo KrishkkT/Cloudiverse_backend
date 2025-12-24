@@ -4,26 +4,33 @@
  */
 
 /* =========================================
-   LAYER 1: Intent Normalization & 
-   LAYER 2: Workload Classification
+   LAYER 1 & 2: Workload Classification
+   Adapts strict AI signals to internal Deterministic Classifications.
    ========================================= */
-const classifyWorkload = (intentTags) => {
+const classifyWorkload = (intent, signals) => {
     // Default values
     let classification = {
         type: "balanced",
-        statefulness: "stateful", // default
+        statefulness: signals.statefulness || "stateful",
         caching: false,
         asyncProcessing: false
     };
 
-    if (intentTags.includes("real_time") || intentTags.includes("streaming") || intentTags.includes("gaming")) {
+    // 1. Latency Sensitivity Check
+    if (signals.latency_sensitivity === "high" || intent.workload_type === "realtime") {
         classification.type = "latency_sensitive";
         classification.caching = true;
-    } else if (intentTags.includes("analytics") || intentTags.includes("big_data") || intentTags.includes("batch")) {
+    }
+    // 2. Throughput / Batch Check
+    else if (signals.usage_pattern === "bursty" || intent.workload_type === "batch" || signals.read_write_ratio === "write_heavy") {
         classification.type = "throughput_heavy";
         classification.asyncProcessing = true;
-        classification.statefulness = "stateless_compute"; // Batch jobs often stateless
-    } else if (intentTags.includes("internal") || intentTags.includes("tool")) {
+        if (intent.workload_type === "batch") {
+            classification.statefulness = "stateless";
+        }
+    }
+    // 3. Cost Optimization Check (e.g. tools, dev envs)
+    else if (intent.app_type.includes("internal") || intent.app_type.includes("tool")) {
         classification.type = "cost_optimized";
     }
 
@@ -33,7 +40,7 @@ const classifyWorkload = (intentTags) => {
 /* =========================================
    LAYER 3: Architecture Skeleton Builder
    ========================================= */
-const buildSkeleton = (classification, intentTags) => {
+const buildSkeleton = (classification, intent, signals) => {
     const modules = [];
 
     // 1. Force Networking
@@ -49,8 +56,10 @@ const buildSkeleton = (classification, intentTags) => {
     }
 
     // 3. Database
-    if (classification.statefulness !== "stateless_all") {
-        modules.push({ category: "Database", type: "Primary Database", required: true });
+    if (classification.statefulness !== "stateless") {
+        // Look at intent to guess DB type abstractly
+        const dbType = signals.read_write_ratio === "write_heavy" ? "NoSQL Database" : "Relational Database";
+        modules.push({ category: "Database", type: dbType, required: true });
     }
 
     // 4. Observability (Forced)
@@ -119,17 +128,19 @@ const enforceSecurity = (spec) => {
 /* =========================================
    LAYER 7: Compliance Resolution
    ========================================= */
-const resolveCompliance = (spec, intentTags) => {
+const resolveCompliance = (spec, intent) => {
     let compliance = "Standard";
     let extraControls = [];
 
-    if (intentTags.includes("healthcare") || intentTags.includes("medical")) {
+    const appType = (intent.app_type || "").toLowerCase();
+
+    if (appType.includes("healthcare") || appType.includes("medical") || appType.includes("hospital")) {
         compliance = "HIPAA";
         extraControls = ["Audit Logs", "Access Tracking", "Business Associate Agreement"];
-    } else if (intentTags.includes("finance") || intentTags.includes("payment")) {
+    } else if (appType.includes("finance") || appType.includes("payment") || appType.includes("bank")) {
         compliance = "PCI-DSS";
         extraControls = ["Tokenization", "Network Isolation", "WAF"];
-    } else if (intentTags.includes("ecommerce")) {
+    } else if (appType.includes("ecommerce") || appType.includes("shop")) {
         compliance = "GDPR/PII";
         extraControls = ["User Consent Management", "Data Anonymization"];
     }
@@ -184,9 +195,18 @@ const materializeDefaults = (spec, classification) => {
 
         // Sizing Defaults
         if (!mod.specs.capacity || mod.specs.capacity === "TBD") {
-            if (scale === "Large") mod.specs.capacity = "High Performance (Auto-scaling)";
-            else if (scale === "Small") mod.specs.capacity = "Cost Optimized (Burstable)";
-            else mod.specs.capacity = "Balanced Standard";
+            if (scale === "High" || scale === "Very High") {
+                mod.specs.capacity = "Production Grade (Autoscaling Cluster)";
+                if (mod.category === "Database") mod.specs.capacity = "High Availability Cluster (Multi-AZ)";
+            }
+            else if (scale === "Medium") {
+                mod.specs.capacity = "Standard (Balanced)";
+                if (mod.category === "Database") mod.specs.capacity = "Primary-Replica Set";
+            }
+            else {
+                mod.specs.capacity = "Dev/Test (Burstable)";
+                if (mod.category === "Database") mod.specs.capacity = "Single Instance (Dev)";
+            }
         }
 
         // Retention Defaults

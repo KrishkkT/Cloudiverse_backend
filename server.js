@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 require('dotenv').config();
 const pool = require('./config/db');
 
@@ -16,7 +17,7 @@ pool.query('SELECT NOW()', async (err, res) => {
     // Robust Migration Script
     // Handles Table Creation AND Schema Evolution (adding missing columns)
     const migrationQuery = `
-      -- 1. Create Tables if not exist
+      -- 1. Create Core Tables if not exist
       CREATE TABLE IF NOT EXISTS projects (
           id SERIAL PRIMARY KEY,
           name VARCHAR(255) NOT NULL,
@@ -35,6 +36,59 @@ pool.query('SELECT NOW()', async (err, res) => {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
+      CREATE TABLE IF NOT EXISTS password_resets (
+          email VARCHAR(255) PRIMARY KEY,
+          otp VARCHAR(10) NOT NULL,
+          expires_at TIMESTAMP NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- 2. Create Analytics Tables
+      CREATE TABLE IF NOT EXISTS infrastructure_templates (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          description TEXT,
+          category VARCHAR(100),
+          template_json JSONB NOT NULL,
+          is_public BOOLEAN DEFAULT TRUE,
+          created_by VARCHAR(255),
+          usage_count INTEGER DEFAULT 0,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS cost_history (
+          id SERIAL PRIMARY KEY,
+          workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE,
+          provider VARCHAR(20) NOT NULL,
+          cost_profile VARCHAR(30),
+          estimated_cost DECIMAL(10,2),
+          cost_range_low DECIMAL(10,2),
+          cost_range_high DECIMAL(10,2),
+          confidence VARCHAR(20),
+          category_breakdown JSONB,
+          service_count INTEGER,
+          scale_tier VARCHAR(20),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS audit_log (
+          id SERIAL PRIMARY KEY,
+          user_id VARCHAR(255),
+          workspace_id INTEGER,
+          action VARCHAR(100) NOT NULL,
+          details JSONB,
+          ip_address INET,
+          user_agent TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- 3. Create Indexes for Analytics Tables
+      CREATE INDEX IF NOT EXISTS idx_templates_category ON infrastructure_templates(category);
+      CREATE INDEX IF NOT EXISTS idx_cost_history_workspace ON cost_history(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_cost_history_provider ON cost_history(provider);
+      CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
+      CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+
       -- 2. Repair Schema (Fix missing columns for existing tables)
       DO $$
       BEGIN
@@ -48,7 +102,10 @@ pool.query('SELECT NOW()', async (err, res) => {
                    ALTER TABLE projects ALTER COLUMN owner_id TYPE VARCHAR(255);
               END IF;
           END IF;
-
+          
+          -- Fix: ensure password_resets table exists (if we just added the CREATE above, this is redundant but safe)
+          -- No specific column repairs needed for password_resets newly created.
+          
           -- Add description to projects if missing
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='projects' AND column_name='description') THEN
               ALTER TABLE projects ADD COLUMN description TEXT;
@@ -97,6 +154,7 @@ pool.query('SELECT NOW()', async (err, res) => {
 });
 
 // Middleware
+app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
@@ -113,6 +171,13 @@ app.use('/api/workspaces', require('./routes/workspaces'));
 
 // Workflow routes
 app.use('/api/workflow', require('./routes/workflow'));
+
+// Analytics routes (templates, cost history, audit logs)
+app.use('/api/analytics', require('./routes/analytics'));
+
+// Initialize built-in templates on startup
+const templateService = require('./services/templateService');
+templateService.initializeBuiltInTemplates();
 
 // 404 Handler
 app.use((req, res, next) => {

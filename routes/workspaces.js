@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const authMiddleware = require('../middleware/auth');
+const emailService = require('../utils/emailService');
 
 /**
  * @route POST /api/workspaces/save
@@ -177,8 +178,9 @@ router.post('/', authMiddleware, async (req, res) => {
  */
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    // In a real app, filtering by user would happen here: WHERE owner_id = req.user.id
-    // For now, valid user gets all (or filter by project owner if we enforced that relation)
+    // Filter by authenticated user's ID to ensure isolation
+    const userId = req.user.id;
+    // console.log(`[GET /workspaces] Fetching for User ID: ${userId}`);
 
     const result = await pool.query(
       `SELECT 
@@ -191,9 +193,13 @@ router.get('/', authMiddleware, async (req, res) => {
         p.description, 
         p.created_at 
       FROM workspaces w 
-      LEFT JOIN projects p ON w.project_id = p.id 
-      ORDER BY w.updated_at DESC`
+      JOIN projects p ON w.project_id = p.id 
+      WHERE p.owner_id = $1::varchar
+      ORDER BY w.updated_at DESC`,
+      [String(userId)] // Ensure it's a string for VARCHAR comparison
     );
+
+    // console.log(`[GET /workspaces] Found ${result.rows.length} workspaces`);
 
     res.json(result.rows);
   } catch (err) {
@@ -214,16 +220,27 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     // Retrieve project_id first so we can delete the parent Project container
     // This ensures we don't leave orphaned projects.
     // The Schema has ON DELETE CASCADE, so deleting Project -> deletes Workspace.
-    const wsRes = await pool.query("SELECT project_id FROM workspaces WHERE id = $1", [id]);
+    const wsRes = await pool.query("SELECT project_id, name FROM workspaces WHERE id = $1", [id]);
 
     if (wsRes.rows.length === 0) {
       return res.status(404).json({ msg: "Workspace not found" });
     }
 
-    const projectId = wsRes.rows[0].project_id;
+    const { project_id: projectId, name: workspaceName } = wsRes.rows[0];
 
     // Delete the Project (Cascades to Workspace)
     await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+
+    // Send Notification Email (Feature Requested)
+    try {
+      const userRes = await pool.query("SELECT email, name FROM users WHERE id = $1", [req.user.id]);
+      if (userRes.rows.length > 0) {
+        await emailService.sendWorkspaceDeletionEmail(userRes.rows[0], workspaceName);
+      }
+    } catch (emailErr) {
+      console.error("Failed to send deletion email:", emailErr);
+      // Don't block the response
+    }
 
     res.json({ msg: "Workspace and Project deleted" });
   } catch (err) {
