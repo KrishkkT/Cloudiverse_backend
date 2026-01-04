@@ -200,3 +200,24 @@ CREATE TRIGGER update_workspaces_updated_at
 
 -- Archive old inactive workspaces
 -- UPDATE workspaces SET is_active = FALSE WHERE updated_at < NOW() - INTERVAL '90 days';
+
+-- ---------------------------------------------------------------
+-- 7. COST_FEEDBACK TABLE
+-- Stores user feedback about cost estimates and recommendations
+-- ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS cost_feedback (
+    id SERIAL PRIMARY KEY,
+    workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE,
+    cost_intent VARCHAR(50),                    -- e.g., 'startup', 'enterprise', 'hobby'
+    estimated_min DECIMAL(12,2),                -- Lower bound of cost estimate
+    estimated_max DECIMAL(12,2),                -- Upper bound of cost estimate
+    selected_provider VARCHAR(20),              -- AWS, GCP, AZURE
+    selected_profile VARCHAR(30),               -- cost_effective, standard, high_performance
+    user_feedback TEXT NOT NULL,                -- User's feedback about the estimate
+    feedback_details JSONB,                     -- Additional details about feedback
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_cost_feedback_workspace ON cost_feedback(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_cost_feedback_provider ON cost_feedback(selected_provider);
+CREATE INDEX IF NOT EXISTS idx_cost_feedback_created ON cost_feedback(created_at DESC);

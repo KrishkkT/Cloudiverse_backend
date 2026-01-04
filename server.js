@@ -82,12 +82,28 @@ pool.query('SELECT NOW()', async (err, res) => {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
-      -- 3. Create Indexes for Analytics Tables
+      -- 3. Create cost_feedback table for Step 4 (Feedback before Terraform)
+      DROP TABLE IF EXISTS cost_feedback;
+      CREATE TABLE IF NOT EXISTS cost_feedback (
+          id SERIAL PRIMARY KEY,
+          workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE,
+          cost_intent VARCHAR(20),
+          estimated_min DECIMAL(10,2),
+          estimated_max DECIMAL(10,2),
+          selected_provider VARCHAR(20),
+          selected_profile VARCHAR(30),
+          user_feedback VARCHAR(50),
+          feedback_details JSONB,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- 4. Create Indexes for Analytics Tables
       CREATE INDEX IF NOT EXISTS idx_templates_category ON infrastructure_templates(category);
       CREATE INDEX IF NOT EXISTS idx_cost_history_workspace ON cost_history(workspace_id);
       CREATE INDEX IF NOT EXISTS idx_cost_history_provider ON cost_history(provider);
       CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
       CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+      CREATE INDEX IF NOT EXISTS idx_cost_feedback_workspace ON cost_feedback(workspace_id);
 
       -- 2. Repair Schema (Fix missing columns for existing tables)
       DO $$
@@ -171,6 +187,9 @@ app.use('/api/workspaces', require('./routes/workspaces'));
 
 // Workflow routes
 app.use('/api/workflow', require('./routes/workflow'));
+
+// Feedback route
+app.use('/api', require('./routes/feedback'));
 
 // Analytics routes (templates, cost history, audit logs)
 app.use('/api/analytics', require('./routes/analytics'));

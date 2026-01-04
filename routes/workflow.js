@@ -6,8 +6,12 @@ const monopolyLayers = require('../services/monopolyLayers');
 const infracostService = require('../services/infracostService');
 const auditService = require('../services/auditService');
 const costHistoryService = require('../services/costHistoryService');
-const { resolvePatternWithServices, resolvePattern } = require('../services/patternResolver');
+const patternResolver = require('../services/patternResolver');
 const { ARCHITECTURE_PATTERNS, validateServiceSelection } = require('../services/architecturePatterns');
+const integrityService = require('../services/integrityService');
+const terraformService = require('../services/terraformService');
+const costResultModel = require('../services/costResultModel');
+const pool = require('../config/db');
 
 // =====================================================
 // 3-LAYER QUESTION SELECTION SYSTEM
@@ -25,6 +29,19 @@ const DECISION_AXES = [
     'data_durability',
     'cost_sensitivity',
     'observability_level'
+];
+
+// TRACKED FEATURES (Three-State Model)
+const TRACKED_FEATURES = [
+    'static_content',
+    'payments',
+    'real_time',
+    'case_management',
+    'document_storage',
+    'multi_user_roles',
+    'identity_auth',
+    'messaging_queue',
+    'api_backend'
 ];
 
 // LAYER 2: Axis Importance Scoring Weights
@@ -73,9 +90,9 @@ const QUESTION_TEMPLATES = {
         default: {
             question: "What is the expected user scale for this application?",
             options: [
-                { label: "Proof of Concept (<100 users)", value: "POC" },
-                { label: "Small Business (100-1k users)", value: "SMB" },
-                { label: "Enterprise (>10k users)", value: "ENTERPRISE" }
+                { label: "Proof of Concept (<100 users)", value: "POC", description: "Small-scale testing environment, minimal infrastructure requirements" },
+                { label: "Small Business (100-1k users)", value: "SMB", description: "Production-ready for small teams and businesses, moderate scaling needs" },
+                { label: "Enterprise (>10k users)", value: "ENTERPRISE", description: "Large-scale deployment with high availability and performance requirements" }
             ]
         },
         saas: {
@@ -101,9 +118,9 @@ const QUESTION_TEMPLATES = {
         default: {
             question: "How critical is uptime for this system?",
             options: [
-                { label: "Standard (99.5%)", value: "STANDARD" },
-                { label: "High Availability (99.9%)", value: "HIGH" },
-                { label: "Mission Critical (99.99%)", value: "MISSION_CRITICAL" }
+                { label: "Standard (99.5%)", value: "STANDARD", description: "~3.6 hours downtime/month - suitable for internal tools and non-critical apps" },
+                { label: "High Availability (99.9%)", value: "HIGH", description: "~43 minutes downtime/month - recommended for customer-facing applications" },
+                { label: "Mission Critical (99.99%)", value: "MISSION_CRITICAL", description: "~4 minutes downtime/month - required for business-critical and revenue-impacting systems" }
             ]
         },
         healthcare: {
@@ -129,9 +146,9 @@ const QUESTION_TEMPLATES = {
         default: {
             question: "What is the sensitivity level of the data stored?",
             options: [
-                { label: "Public / Non-Sensitive", value: "PUBLIC" },
-                { label: "Internal Business Data", value: "INTERNAL" },
-                { label: "PII / HIPAA / Highly Sensitive", value: "SENSITIVE" }
+                { label: "Public / Non-Sensitive", value: "PUBLIC", description: "Publicly accessible data with no confidentiality requirements" },
+                { label: "Internal Business Data", value: "INTERNAL", description: "Proprietary business information requiring standard security measures" },
+                { label: "PII / HIPAA / Highly Sensitive", value: "SENSITIVE", description: "Personal identifiable information or regulated data requiring encryption and compliance" }
             ]
         },
         law_firm: {
@@ -157,9 +174,9 @@ const QUESTION_TEMPLATES = {
         default: {
             question: "Are there specific compliance or regulatory requirements?",
             options: [
-                { label: "None / Standard", value: "NONE" },
-                { label: "GDPR / CCPA", value: "GDPR_CCPA" },
-                { label: "HIPAA / PCI-DSS / GovCloud", value: "HIGH_COMPLIANCE" }
+                { label: "None / Standard", value: "NONE", description: "No specific regulatory requirements, standard security practices" },
+                { label: "GDPR / CCPA", value: "GDPR_CCPA", description: "Data privacy regulations for EU/California, requires consent management and data rights" },
+                { label: "HIPAA / PCI-DSS / GovCloud", value: "HIGH_COMPLIANCE", description: "Strict regulatory compliance for healthcare, payments, or government data" }
             ]
         },
         fintech: {
@@ -185,9 +202,9 @@ const QUESTION_TEMPLATES = {
         default: {
             question: "What is the impact of a system failure?",
             options: [
-                { label: "Low (Internal Tool)", value: "LOW" },
-                { label: "Medium (Customer Facing)", value: "MEDIUM" },
-                { label: "High (Revenue Impacting)", value: "HIGH" }
+                { label: "Low (Internal Tool)", value: "LOW", description: "Minimal impact, used internally, acceptable downtime without business disruption" },
+                { label: "Medium (Customer Facing)", value: "MEDIUM", description: "Affects customer experience, temporary degradation tolerable but should be minimized" },
+                { label: "High (Revenue Impacting)", value: "HIGH", description: "Direct revenue loss during downtime, critical to business operations" }
             ]
         },
         e_commerce: {
@@ -240,9 +257,9 @@ const QUESTION_TEMPLATES = {
         default: {
             question: "What are the data retention and durability requirements?",
             options: [
-                { label: "Standard Backup", value: "STANDARD" },
-                { label: "Long-term Retention", value: "LONG_TERM" },
-                { label: "Immutable / Legal Hold", value: "IMMUTABLE" }
+                { label: "Standard Backup", value: "STANDARD", description: "Daily backups with short-term retention, suitable for most applications" },
+                { label: "Long-term Retention", value: "LONG_TERM", description: "Extended retention periods (months to years) for audit and compliance purposes" },
+                { label: "Immutable / Legal Hold", value: "IMMUTABLE", description: "Write-once-read-many storage, tamper-proof for regulatory and legal requirements" }
             ]
         },
         law_firm: {
@@ -261,9 +278,9 @@ const QUESTION_TEMPLATES = {
         default: {
             question: "What is the priority between cost and performance?",
             options: [
-                { label: "Cost Optimize (Budget First)", value: "COST_FIRST" },
-                { label: "Balanced", value: "BALANCED" },
-                { label: "Performance Max (Speed First)", value: "PERFORMANCE_FIRST" }
+                { label: "Cost Optimize (Budget First)", value: "COST_FIRST", description: "Minimize infrastructure costs, prioritize efficient resource usage over peak performance" },
+                { label: "Balanced", value: "BALANCED", description: "Balance between cost and performance, suitable for most production workloads" },
+                { label: "Performance Max (Speed First)", value: "PERFORMANCE_FIRST", description: "Maximum performance and availability, cost is secondary to user experience" }
             ]
         }
     },
@@ -326,6 +343,15 @@ function scoreAndPrioritizeAxes(missingAxes, intentSignals) {
         // Irreversibility weight
         score += AXIS_WEIGHTS.irreversibility_weights[axis] || 0;
 
+        // 🔒 THREE-STATE EXCLUSION REFINEMENT
+        const excluded = intentSignals?.excluded_features || [];
+        if (excluded.includes('database') && (axis === 'data_durability' || axis === 'statefulness')) {
+            score -= 10; // Drastically deprioritize
+        }
+        if (excluded.includes('payments') && axis === 'regulatory_exposure') {
+            score -= 5;
+        }
+
         scores[axis] = score;
     });
 
@@ -358,6 +384,13 @@ function getQuestionTemplate(axis, domain, context = {}) {
         }
     }
 
+    // 🔒 THREE-STATE GUARD: Do not ask about data durability if no database
+    const excluded = context.excluded_features || [];
+    if (excluded.includes('database') && axis === 'data_durability') {
+        console.log(`Skipping ${axis} because database is excluded`);
+        return null;
+    }
+
     // Try domain-specific template first
     let template = axisConfig[domain];
 
@@ -379,10 +412,8 @@ function getQuestionTemplate(axis, domain, context = {}) {
     // Return processed template with labels extracted for UI
     return {
         question: template.question,
-        // Send labels to frontend, keep values for backend
-        options: template.options.map(opt =>
-            typeof opt === 'object' ? opt.label : opt
-        ),
+        // Send full option objects (with label, value, description) to frontend
+        options: template.options,
         // Store the full options for value extraction
         _optionsWithValues: template.options
     };
@@ -474,9 +505,62 @@ router.post('/analyze', authMiddleware, async (req, res) => {
         } else {
             // DESCRIPTION input - Call AI ONCE
             if (!userInput) return res.status(400).json({ msg: "User input required" });
+
+            // --- STEP 0: PREPROCESSING (NON-AI) ---
+            const normalizedInput = userInput.toLowerCase();
+            const manualExclusions = [];
+            if (normalizedInput.includes('no database') || normalizedInput.includes('without database') || normalizedInput.includes('database excluded')) {
+                manualExclusions.push('database');
+            }
+            if (normalizedInput.includes('no payments') || normalizedInput.includes('without payments')) {
+                manualExclusions.push('payments');
+            }
+            if (normalizedInput.includes('no auth') || normalizedInput.includes('without auth')) {
+                manualExclusions.push('auth');
+            }
+
             console.log("--- STEP 1: AI Intent Normalization (ONCE) ---");
-            step1Result = await aiService.normalizeIntent(userInput, conversationHistory || []);
-            console.log("AI Snapshot Created");
+            const rawStep1 = await aiService.normalizeIntent(userInput, conversationHistory || []);
+
+            // --- STEP 1.5: FEATURE RESOLUTION (DETERMINISTIC) ---
+            const resolvedFeatures = {};
+            const explicitExclusions = [...new Set([...(rawStep1.explicit_exclusions || []), ...manualExclusions])];
+            const explicitFeatures = rawStep1.explicit_features || {};
+            const inferredFeatures = rawStep1.inferred_features || {};
+
+            TRACKED_FEATURES.forEach(feature => {
+                // Priority 1: Explicit Exclusions
+                if (explicitExclusions.includes(feature) || explicitExclusions.includes(feature.split('_')[0])) {
+                    resolvedFeatures[feature] = false;
+                }
+                // Priority 2: Explicit Features
+                else if (explicitFeatures[feature] === true) {
+                    resolvedFeatures[feature] = true;
+                }
+                // Priority 3: Inferred (Threshold 0.6)
+                else if (inferredFeatures[feature] && inferredFeatures[feature].confidence >= 0.6) {
+                    resolvedFeatures[feature] = inferredFeatures[feature].value;
+                }
+                // Default: Unknown
+                else {
+                    resolvedFeatures[feature] = 'unknown';
+                }
+            });
+
+            // Special handling for 'database' (common exclusion target)
+            if (explicitExclusions.includes('database')) {
+                resolvedFeatures['database'] = false;
+            } else if (explicitFeatures['database']) {
+                resolvedFeatures['database'] = true;
+            }
+
+            step1Result = {
+                ...rawStep1,
+                feature_signals: resolvedFeatures, // Override with resolved ones
+                explicit_exclusions: explicitExclusions
+            };
+            console.log("AI Snapshot Created & Resolved");
+            console.log("Resolved Features:", JSON.stringify(resolvedFeatures));
         }
 
         // AMBIGUITY CHECK (Backend Logic Step 1)
@@ -498,7 +582,10 @@ router.post('/analyze', authMiddleware, async (req, res) => {
 
         // Get domain from intent for scoring
         const domain = step1Result.intent_classification?.primary_domain || 'default';
-        const features = Object.keys(step1Result.feature_signals || {});
+        const features = step1Result.feature_signals || {};
+        const confirmedFeatures = Object.keys(features).filter(k => features[k] === true);
+        const excludedFeatures = Object.keys(features).filter(k => features[k] === false);
+        const unknownFeatures = Object.keys(features).filter(k => features[k] === 'unknown');
 
         // FILTER: Remove axes already asked in conversation history
         const filteredMissingAxes = missingAxes.filter(axis => {
@@ -519,7 +606,9 @@ router.post('/analyze', authMiddleware, async (req, res) => {
         // Build context for feature guards and askable logic
         const questionContext = {
             domain: domain,
-            features: features,
+            features: confirmedFeatures,
+            excluded_features: excludedFeatures,
+            unknown_features: unknownFeatures,
             user_facing: step1Result.intent_classification?.user_facing,
             data_sensitivity: step1Result.semantic_signals?.data_sensitivity,
             has_pii: step1Result.risk_domains?.includes('pii'),
@@ -530,7 +619,8 @@ router.post('/analyze', authMiddleware, async (req, res) => {
         // SCORE AND PRIORITIZE using Layer 2 weights
         const prioritizedAxes = scoreAndPrioritizeAxes(filteredMissingAxes, {
             primary_domain: domain,
-            features: features,
+            features: confirmedFeatures,
+            excluded_features: excludedFeatures,
             user_facing: step1Result.intent_classification?.user_facing,
             data_sensitivity: step1Result.semantic_signals?.data_sensitivity,
             has_pii: step1Result.risk_domains?.includes('pii')
@@ -601,6 +691,7 @@ router.post('/analyze', authMiddleware, async (req, res) => {
                     semantic_signals: step1Result.semantic_signals,
                     features: step1Result.feature_signals,
                     risk_domains: step1Result.risk_domains,
+                    exclusions: step1Result.explicit_exclusions, // Add explicit exclusions here
                     full_analysis: step1Result // Send full result to be sent back as 'approvedIntent'
                 }
             });
@@ -614,10 +705,29 @@ router.post('/analyze', authMiddleware, async (req, res) => {
 
         // 🔒 PATTERN RESOLUTION: Deterministic selection based on intent signals
         // AI is NOT used for pattern/service selection - this is rule-based
-        const patternResolution = resolvePatternWithServices(step1Result);
+        let patternResolution;
+        try {
+            const resolvedArchitecture = patternResolver.resolveArchitecture(step1Result);
+            patternResolution = resolvedArchitecture.canonicalArchitecture;
+        } catch (patternError) {
+            console.error("Pattern Resolution Error:", patternError);
+            return res.status(500).json({
+                error: 'Pattern resolution failed',
+                message: patternError.message
+            });
+        }
+        
+        if (!patternResolution || !patternResolution.pattern) {
+            console.error("Pattern Resolution failed - no pattern returned");
+            return res.status(500).json({
+                error: 'Pattern resolution failed',
+                message: 'Could not determine appropriate architecture pattern'
+            });
+        }
+        
         const fixedPattern = patternResolution.pattern;
         console.log(`Pattern Resolved: ${fixedPattern} (${patternResolution.pattern_name})`);
-        console.log(`Services Selected: ${patternResolution.services.map(s => s.service_class).join(', ')}`);
+        console.log(`Services Selected: ${patternResolution.services.map(s => s.name).join(', ')}`);
 
         // 🔒 FIX 3: AI MODE BASED ON PATTERN
         // For STATIC_WEB_HOSTING: Skip AI architecture analysis entirely
@@ -674,10 +784,31 @@ router.post('/analyze', authMiddleware, async (req, res) => {
 
         // 3️⃣ Architecture Skeleton - PATTERN-DRIVEN SERVICE SELECTION
         // The pattern resolver determines exactly which services are needed
-        const selectedServiceClasses = new Set(patternResolution.services.map(s => s.service_class));
-        const requiredServiceClasses = new Set(patternResolution.required_services);
-        const optionalServiceClasses = new Set(patternResolution.optional_services);
-        const forbiddenServiceClasses = new Set(patternResolution.forbidden_services);
+        
+        // Map canonical service names to expected service class names
+        const canonicalToServiceClassMap = {
+            'relational_db': 'relational_database',
+            'message_queue': 'messaging_queue',
+            'websocket_gateway': 'event_bus',
+            'payment_gateway': 'api_gateway', // Closest match
+            'ml_inference': 'compute_serverless', // Closest match
+            'object_storage': 'object_storage',
+            'cache': 'cache',
+            'api_gateway': 'api_gateway',
+            'authentication': 'identity_auth',
+            'compute': 'compute_vm', // Default compute mapping
+            'load_balancer': 'load_balancer',
+            'monitoring': 'monitoring',
+            'logging': 'logging'
+        };
+        
+        const selectedServiceClasses = new Set(patternResolution.services.map(s => {
+            // Map canonical name to expected service class name
+            return canonicalToServiceClassMap[s.name] || s.name;
+        }));
+        const requiredServiceClasses = new Set(); // Not available in canonical architecture
+        const optionalServiceClasses = new Set(); // Not available in canonical architecture
+        const forbiddenServiceClasses = new Set(); // Not available in canonical architecture
 
         console.log(`Pattern ${fixedPattern}: ${selectedServiceClasses.size} services selected, ${forbiddenServiceClasses.size} forbidden`);
 
@@ -724,9 +855,9 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             SERVICE_CLASSES[name] = {
                 required: selectedServiceClasses.has(name),
                 description: description,
-                pattern_required: requiredServiceClasses.has(name),
-                pattern_optional: optionalServiceClasses.has(name),
-                pattern_forbidden: forbiddenServiceClasses.has(name)
+                pattern_required: true, // All services from canonical architecture are required
+                pattern_optional: false,
+                pattern_forbidden: false
             };
         }
 
@@ -734,21 +865,14 @@ router.post('/analyze', authMiddleware, async (req, res) => {
         const skeleton = {
             pattern: patternResolution.pattern,
             pattern_name: patternResolution.pattern_name,
-            cost_range: patternResolution.cost_range,
-            required_services: Object.entries(SERVICE_CLASSES)
-                .filter(([_, config]) => config.required)
-                .map(([name, config]) => ({
-                    service_class: name,
-                    description: config.description,
-                    pattern_required: config.pattern_required
-                })),
-            optional_services: Object.entries(SERVICE_CLASSES)
-                .filter(([_, config]) => !config.required && config.pattern_optional)
-                .map(([name, config]) => ({
-                    service_class: name,
-                    description: config.description
-                })),
-            forbidden_services: patternResolution.forbidden_services
+            cost_range: patternResolution.cost_range || { min: 0, max: 0 },
+            required_services: patternResolution.services.map(service => ({
+                service_class: canonicalToServiceClassMap[service.name] || service.name, // Map to expected service class name
+                description: service.description,
+                pattern_required: true
+            })),
+            optional_services: [],
+            forbidden_services: []
         };
 
         console.log(`Pattern ${patternResolution.pattern}: ${skeleton.required_services.length} required, ${skeleton.optional_services.length} optional, ${skeleton.forbidden_services.length} forbidden`);
@@ -960,8 +1084,14 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             skeleton.resilience?.includes('redundancy');
 
         if (isUserFacing && !hasExplicitRedundancy) {
+            const pattern = skeleton?.pattern || step2Result.architecture_pattern;
             const currentReliability = categoryScores.reliability || 80;
-            if (currentReliability > 75) {
+
+            if (pattern === 'STATIC_WEB_HOSTING') {
+                // Static workloads have implicit high availability via CDN/Object Storage
+                categoryScores.reliability = Math.min(currentReliability, 92);
+                console.log(`BACKEND CALIBRATION: Reliability for static workload adjusted to ${categoryScores.reliability}`);
+            } else if (currentReliability > 75) {
                 console.log(`BACKEND CALIBRATION: Reliability capped at 75 (was ${currentReliability}) - HA required but redundancy implicit`);
                 categoryScores.reliability = 75;
             }
@@ -1058,6 +1188,11 @@ router.post('/analyze', authMiddleware, async (req, res) => {
 
         console.log(`InfraSpec Complete. Required Services: ${skeleton.required_services.length}/15`);
 
+        // 🔒 FIX 1 & 2: Integrity Guard
+        // Enforce hard constraints on the finalized spec
+        integrityService.sanitizeInfraSpec(step2Result.architecture_pattern, infraSpec);
+        integrityService.enforcePatternMinimums(step2Result.architecture_pattern, infraSpec);
+
         res.json({
             step: 'infra_spec_generated',
             data: infraSpec
@@ -1070,8 +1205,38 @@ router.post('/analyze', authMiddleware, async (req, res) => {
 });
 
 // =====================================================
-// STEP 3: COST ESTIMATION & CLOUD RECOMMENDATION
+// STEP 2.5: USAGE PREDICTION (Layer A)
 // =====================================================
+
+/**
+ * @route POST /api/workflow/predict-usage
+ * @desc Get realistic usage range estimates from AI
+ */
+router.post('/predict-usage', authMiddleware, async (req, res) => {
+    try {
+        const { intent, infraSpec } = req.body;
+
+        if (!intent) {
+            return res.status(400).json({ error: 'Missing intent object' });
+        }
+
+        console.log("--- STEP 2.5: usage-prediction ---");
+        const usagePrediction = await aiService.predictUsage(intent, infraSpec || {});
+
+        // 🔒 FIX 3: Usage Integrity
+        if (usagePrediction.usage_profile) {
+            usagePrediction.usage_profile = integrityService.normalizeUsage(usagePrediction.usage_profile, intent);
+        }
+
+        res.json({
+            step: 'usage_prediction',
+            data: usagePrediction
+        });
+    } catch (error) {
+        console.error("Usage Prediction Error:", error);
+        res.status(500).json({ error: 'Failed to predict usage' });
+    }
+});
 
 /**
  * @route POST /api/workflow/cost-analysis
@@ -1087,10 +1252,16 @@ router.post('/analyze', authMiddleware, async (req, res) => {
  */
 router.post('/cost-analysis', authMiddleware, async (req, res) => {
     try {
-        const { infraSpec, intent, cost_profile } = req.body;
+        const { infraSpec, intent, cost_profile, usage_profile } = req.body;
 
         console.log("--- STEP 3: Cost Analysis Started ---");
         console.log(`Cost Profile: ${cost_profile || 'COST_EFFECTIVE'}`);
+
+        // BUG #1: Prevent Step 3 loop
+        if (req.body.step3_completed) {
+            console.log("STEP 3 already completed — skipping to prevent state overwrite");
+            return res.json({ status: 'SKIPPED', message: 'Step 3 already completed' });
+        }
 
         // Validate inputs
         if (!infraSpec || !intent) {
@@ -1100,97 +1271,572 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
         }
 
         const costProfile = cost_profile || 'COST_EFFECTIVE';
+        let costAnalysis;
+        let scenarios = null;
 
-        // Perform cost analysis (backend decides everything)
-        const costAnalysis = await infracostService.performCostAnalysis(
-            infraSpec,
-            intent,
-            costProfile
-        );
+        // 🔒 INFRASPEC VALIDATION (Problem 1 Fix)
+        // InfraSpec must have services before cost analysis can proceed
+        const requiredServices = infraSpec.service_classes?.required_services || [];
+        if (requiredServices.length === 0) {
+            console.error('[VALIDATION] InfraSpec has 0 services - cannot proceed with cost analysis');
+            return res.status(400).json({
+                error: 'Invalid InfraSpec',
+                message: 'No services selected. Pattern resolution may have failed.',
+                analysis_status: 'FAILED',
+                recommended: null,
+                cost_range: { min: 0, max: 0, formatted: '$0 - $0/month' }
+            });
+        }
+        console.log(`[VALIDATION] InfraSpec has ${requiredServices.length} services - proceeding`);
 
-        // Get AI explanation for the recommendations
-        let aiExplanation = null;
-        try {
-            aiExplanation = await aiService.explainCostRecommendation(
-                costAnalysis.rankings,
-                costProfile,
-                infraSpec,
-                costAnalysis.missing_components // Pass missing components for context
-            );
-        } catch (aiError) {
-            console.error("AI Explanation Error:", aiError);
-            // Continue without AI explanation
-            aiExplanation = {
-                recommendation_reason: `${costAnalysis.recommended_provider} offers the best balance of cost and performance for your needs.`,
-                tradeoffs: "Each cloud provider has unique strengths. Consider your team's expertise and existing infrastructure.",
-                cost_optimization_tips: [
-                    "Start with the recommended tier and scale as needed",
-                    "Use reserved instances for predictable workloads",
-                    "Monitor usage and adjust sizing monthly"
-                ],
-                future_considerations: "Adding async processing, search, or caching later may increase monthly costs."
+        // LAYER B: If usage_profile is provided, convert ranges to scenarios and calculate range
+        if (usage_profile && usage_profile.monthly_users) {
+            console.log("Using Usage Profile for Realistic Estimation");
+
+            // Convert AI ranges (min/max) to scenarios
+            // Convert AI ranges (min/max) to scenarios
+            const profileScenarios = {
+                low: {
+                    monthly_users: usage_profile.monthly_users.min,
+                    requests_per_user: usage_profile.requests_per_user.min,
+                    peak_concurrency: usage_profile.peak_concurrency.min,
+                    data_transfer_gb: usage_profile.data_transfer_gb.min,
+                    data_storage_gb: usage_profile.data_storage_gb.min
+                },
+                expected: {
+                    monthly_users: Math.round((usage_profile.monthly_users.min + usage_profile.monthly_users.max) / 2),
+                    requests_per_user: Math.round((usage_profile.requests_per_user.min + usage_profile.requests_per_user.max) / 2),
+                    peak_concurrency: Math.round((usage_profile.peak_concurrency.min + usage_profile.peak_concurrency.max) / 2),
+                    data_transfer_gb: Math.round((usage_profile.data_transfer_gb.min + usage_profile.data_transfer_gb.max) / 2),
+                    data_storage_gb: Math.round((usage_profile.data_storage_gb.min + usage_profile.data_storage_gb.max) / 2)
+                },
+                high: {
+                    monthly_users: usage_profile.monthly_users.max,
+                    requests_per_user: usage_profile.requests_per_user.max,
+                    peak_concurrency: usage_profile.peak_concurrency.max,
+                    data_transfer_gb: usage_profile.data_transfer_gb.max,
+                    data_storage_gb: usage_profile.data_storage_gb.max
+                }
             };
+
+            // Calculate costs for all scenarios
+            const scenarioResults = await infracostService.calculateScenarios(
+                infraSpec,
+                intent,
+                profileScenarios
+            );
+
+            // Use the new canonical scenario results
+            costAnalysis = scenarioResults.details;
+
+            // Attach CANONICAL scenario structure
+            costAnalysis.scenarios = scenarioResults.scenarios;
+            costAnalysis.cost_range = scenarioResults.cost_range;
+            costAnalysis.recommended = scenarioResults.recommended;
+            costAnalysis.confidence = scenarioResults.confidence;
+            costAnalysis.services = scenarioResults.services;
+            costAnalysis.drivers = scenarioResults.drivers;
+            
+            // Set recommended provider to avoid fallback to AWS
+            costAnalysis.recommended_provider = scenarioResults.recommended?.provider;
+
+            // 🔒 FIX 5: Safe Recommendation Fallback
+            costAnalysis = integrityService.safeRecommendation(costAnalysis);
+
+            scenarios = {
+                low: scenarioResults.low,
+                expected: scenarioResults.expected,
+                high: scenarioResults.high
+            };
+
+            // Override the recommended cost range with our calculated scenarios
+            costAnalysis.recommended_cost_range = scenarioResults.cost_range;
+
+        } else {
+            // Fallback to legacy single-point estimation
+            costAnalysis = await infracostService.performCostAnalysis(
+                infraSpec,
+                intent,
+                costProfile
+            );
+        }
+
+        // Bug #3: Guard AI call
+        if (!costAnalysis || !costAnalysis.rankings || costAnalysis.rankings.length === 0) {
+            console.warn("Skipping AI explanation: cost data incomplete");
+            aiExplanation = null;
+        } else {
+            try {
+                // Calculate dominant cost drivers for context
+                const dominantDrivers = costAnalysis.category_breakdown
+                    ?.sort((a, b) => b.total - a.total)
+                    .slice(0, 3) || [];
+
+                aiExplanation = await aiService.explainOutcomes(
+                    costAnalysis.rankings,
+                    costProfile,
+                    infraSpec,
+                    usage_profile, // Available from Layer 2 scope
+                    {
+                        dominant_drivers: dominantDrivers,
+                        missing_components: costAnalysis.missing_components
+                    }
+                );
+
+                // Preserve existing confidence if available, otherwise calculate AI confidence
+                // Define variables that might be used in both branches
+                let aiUsageConf = usage_profile?.confidence || 0.5;
+                const axisScore = 0.8; // improving hardcoded proxy
+                const patternCertainty = 1.0;
+                
+                if (!costAnalysis.confidence) {
+                    // Bug #4: CONFIDENCE CALCULATION
+                    // Formula: 0.5 * usage + 0.3 * axis + 0.2 * pattern
+
+                    const confidence = (aiUsageConf * 0.5) + (axisScore * 0.3) + (patternCertainty * 0.2);
+
+                    // Override/Augment AI confidence
+                    aiExplanation.confidence_score = Math.min(0.95, parseFloat(confidence.toFixed(2)));
+
+                    // Persist to summary (Bug #4)
+                    if (costAnalysis.summary) {
+                        costAnalysis.summary.confidence = aiExplanation.confidence_score;
+                    }
+                } else {
+                    // Use the confidence from calculateScenarios
+                    aiExplanation.confidence_score = costAnalysis.confidence;
+                }
+
+                aiExplanation.confidence_details = {
+                    usage_confidence: aiUsageConf,
+                    axis_score: axisScore,
+                    pattern_certainty: patternCertainty
+                };
+
+            } catch (aiError) {
+                console.error("AI Explanation Error:", aiError);
+                // Fallback
+                aiExplanation = {
+                    outcome_narrative: `${costAnalysis.recommended_provider || 'AWS'} offers the best balance for your needs.`,
+                    confidence_score: 0.6,
+                    critical_cost_drivers: ["Base Infrastructure"],
+                    architectural_fit: "Standard pattern matching your request."
+                };
+            }
         }
 
         console.log(`--- STEP 3: Analysis Complete ---`);
         console.log(`Recommended: ${costAnalysis.recommended_provider}`);
         console.log(`Cost Range: ${costAnalysis.recommended_cost_range?.formatted}`);
 
-        res.json({
+        // Defensive Patching for Step 3 Response
+        const safeProvider = costAnalysis.recommended_provider || 'AWS';
+        const safeDetails = costAnalysis.provider_details?.[safeProvider] || {};
+        const safeRange = costAnalysis.recommended_cost_range || { formatted: '$0 - $0/month' };
+
+        // Ensure explicit undefined checks for critical fields
+        const responseData = {
             step: 'cost_estimation',
             data: {
-                status: 'SUCCESS',
+                // Return PARTIAL_SUCCESS if AI failed or data incomplete
+                status: aiExplanation ? 'SUCCESS' : 'PARTIAL_SUCCESS',
+                analysis_status: aiExplanation ? 'SUCCESS' : 'PARTIAL_SUCCESS',
+
                 cost_profile: costProfile,
-                deployment_type: costAnalysis.deployment_type,
-                scale_tier: costAnalysis.scale_tier,
+                deployment_type: costAnalysis.deployment_type || 'standard',
+                scale_tier: costAnalysis.scale_tier || 'medium',
 
-                // Rankings (sorted by score) - now includes cost_range
-                rankings: costAnalysis.rankings,
+                // Rankings (sorted by score)
+                rankings: costAnalysis.rankings || [],
 
-                // Recommended provider - now includes cost_range
+                // Recommended provider with safe fallback
                 recommended: {
-                    provider: costAnalysis.recommended_provider,
-                    monthly_cost: costAnalysis.provider_details[costAnalysis.recommended_provider]?.total_monthly_cost,
-                    formatted_cost: costAnalysis.provider_details[costAnalysis.recommended_provider]?.formatted_cost,
-                    service_count: costAnalysis.provider_details[costAnalysis.recommended_provider]?.service_count,
-                    cost_range: costAnalysis.recommended_cost_range
+                    provider: safeProvider,
+                    monthly_cost: safeDetails.total_monthly_cost ?? safeDetails.total ?? 0,
+                    formatted_cost: safeDetails.formatted_cost ?? '$0.00',
+                    service_count: safeDetails.service_count ?? 0,
+                    cost_range: safeRange,
+                    drivers: costAnalysis.recommended?.drivers || costAnalysis.drivers || [],
+                    score: costAnalysis.recommended?.score || Math.round((costAnalysis.confidence || 0.75) * 100)
                 },
 
-                // NEW: Category breakdown for Tier 2 view
-                category_breakdown: costAnalysis.category_breakdown,
+                // Canonical Aggregation (Critical for Fix #2)
+                aggregated_estimates: costAnalysis.aggregated_estimates || {},
 
-                // FIX 1: Selected cloud services by category (for UI display)
-                selected_services: costAnalysis.provider_details[costAnalysis.recommended_provider]?.selected_services,
+                // Category breakdown
+                category_breakdown: costAnalysis.category_breakdown || [],
 
-                // FIX 3: Aggregated costs per service category (for UI table)
-                service_costs: costAnalysis.provider_details[costAnalysis.recommended_provider]?.service_costs,
+                // ═══════════════════════════════════════════════════════
+                // CANONICAL COST SCENARIOS (per profile + per provider)
+                // ═══════════════════════════════════════════════════════
+                scenarios: costAnalysis.scenarios || {},
 
-                // Full provider details (includes services array with cloud_service, display_name, cost)
+                // Overall cost range across all profiles
+                cost_range: costAnalysis.cost_range || safeRange,
+
+                // Per-service costs with cloud-specific names and reasons
+                services_breakdown: costAnalysis.services || [],
+
+                // Cost drivers (quantified with values + impact)
+                drivers: costAnalysis.drivers || [],
+
+                // Confidence with explanation (deterministic, not AI)
+                confidence: costAnalysis.confidence || 0.75,
+                confidence_percentage: costAnalysis.confidence_percentage || 75,
+                confidence_explanation: costAnalysis.confidence_explanation ||
+                    ['Heuristic pricing (not SKU-level)'],
+
+                // Make sure ai_explanation exists for frontend confidence dial
+                ai_explanation: {
+                    confidence_score: costAnalysis.confidence || 0.75,
+                    rationale: Array.isArray(costAnalysis.confidence_explanation) ? costAnalysis.confidence_explanation.join(', ') : 'Based on usage and service selection.'
+                },
+
+                // ═══════════════════════════════════════════════════════
+                // COST INTENT (hobby/startup/production)
+                // ═══════════════════════════════════════════════════════
+                cost_intent: costAnalysis.recommended?.cost_intent || 'startup',
+                cost_intent_description: costAnalysis.recommended?.cost_intent_description ||
+                    'Balanced for growth-stage applications',
+
+                // ═══════════════════════════════════════════════════════
+                // UX DISCLAIMER (critical for user clarity)
+                // ═══════════════════════════════════════════════════════
+                estimate_disclaimer: {
+                    type: 'planning_estimate',
+                    message: 'This is a planning-stage estimate based on usage assumptions and architectural patterns. Exact service-level costs will be generated after Terraform is produced and validated.',
+                    accuracy: 'directional',
+                    next_step: 'Select a provider and profile to generate Terraform and get exact costs'
+                },
+
+                // Selected cloud services 
+                selected_services: safeDetails.selected_services || [],
+
+                // Service costs
+                service_costs: safeDetails.service_costs || {},
+
+                // Feature 1: Assumption Source
+                assumption_source: usage_profile?.source || 'ai_inferred',
+
+                // Feature 2: Cost Sensitivity Meter
+                cost_sensitivity: (() => {
+                    const type = costAnalysis.deployment_type;
+                    if (['static', 'serverless'].includes(type)) return { level: 'high', factor: 'traffic', label: 'Sensitive to Traffic' };
+                    if (['container', 'kubernetes'].includes(type)) return { level: 'moderate', factor: 'compute', label: 'Sensitive to Compute' };
+                    return { level: 'moderate', factor: 'storage', label: 'Sensitive to Storage' };
+                })(),
+
+                // Scenario Analysis
+                scenario_analysis: {
+                    traffic_doubles: {
+                        impact: 'moderate',
+                        description: 'Cost scales linearly with active users',
+                        estimated_increase: '30-40%'
+                    },
+                    storage_doubles: {
+                        impact: 'low',
+                        description: 'Storage is cheap, minimal impact',
+                        estimated_increase: '5-10%'
+                    }
+                },
+
+                // Full provider details
                 providers: {
-                    AWS: costAnalysis.provider_details.AWS,
-                    GCP: costAnalysis.provider_details.GCP,
-                    AZURE: costAnalysis.provider_details.AZURE
+                    AWS: costAnalysis.provider_details?.AWS || {},
+                    GCP: costAnalysis.provider_details?.GCP || {},
+                    AZURE: costAnalysis.provider_details?.AZURE || {}
                 },
 
                 // Summary
-                summary: costAnalysis.summary,
+                summary: costAnalysis.summary || { confidence: 0.5 },
 
-                // FIX 3: Both profiles for accurate comparison
-                cost_profiles: costAnalysis.cost_profiles,
+                // Cost Profiles
+                cost_profiles: costAnalysis.cost_profiles || {},
 
-                // NEW: Missing components (future cost risks)
-                missing_components: costAnalysis.missing_components,
-                future_cost_warning: costAnalysis.future_cost_warning,
+                // Missing components
+                missing_components: costAnalysis.missing_components || [],
+                future_cost_warning: costAnalysis.future_cost_warning || null,
 
-                // AI Explanation (AI only explains, never decides)
-                explanation: aiExplanation
+                // AI Explanation (Defensive Null Check)
+                explanation: aiExplanation || {
+                    outcome_narrative: "Cost analysis completed using pattern-based fallback.",
+                    confidence_score: 0.5,
+                    critical_cost_drivers: [],
+                    architectural_fit: "Standard pattern."
+                },
+                
+                // Structured recommendation facts (deterministic, auditable)
+                recommendation_facts: costResultModel.generateRecommendationFacts(
+                    costAnalysis.recommended, 
+                    costAnalysis.scenarios, 
+                    usage_profile, 
+                    infraSpec.architecture_pattern
+                )
             }
-        });
+        };
+
+        res.json(responseData);
 
     } catch (error) {
         console.error("Step 3 Cost Analysis Error:", error);
         res.status(500).json({
             error: 'Cost analysis failed',
+            message: error.message
+        });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STEP 4: FEEDBACK COLLECTION (stored in Neon before Terraform)
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/feedback', authMiddleware, async (req, res) => {
+    try {
+        const {
+            workspace_id,
+            cost_intent,
+            estimated_min,
+            estimated_max,
+            selected_provider,
+            selected_profile,
+            user_feedback,
+            feedback_details
+        } = req.body;
+
+        console.log(`[STEP 4] Storing feedback for workspace ${workspace_id}: ${user_feedback}`);
+
+        // Validate required fields
+        if (!workspace_id || !selected_provider || !selected_profile || !user_feedback) {
+            return res.status(400).json({
+                error: 'Missing required fields',
+                required: ['workspace_id', 'selected_provider', 'selected_profile', 'user_feedback']
+            });
+        }
+
+        // Store feedback in Neon
+        const result = await pool.query(
+            `INSERT INTO cost_feedback 
+             (workspace_id, cost_intent, estimated_min, estimated_max, selected_provider, selected_profile, user_feedback, feedback_details)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             RETURNING id, created_at`,
+            [
+                workspace_id,
+                cost_intent || 'startup',
+                estimated_min || 0,
+                estimated_max || 0,
+                selected_provider,
+                selected_profile,
+                user_feedback,
+                feedback_details ? JSON.stringify(feedback_details) : null
+            ]
+        );
+
+        console.log(`[STEP 4] Feedback stored with ID: ${result.rows[0].id}`);
+
+        // Log to audit
+        if (auditService && req.user) {
+            auditService.logAction(
+                req.user.id,
+                workspace_id,
+                'COST_FEEDBACK_SUBMITTED',
+                { selected_provider, selected_profile, user_feedback, cost_intent },
+                req
+            );
+        }
+
+        res.json({
+            success: true,
+            feedback_id: result.rows[0].id,
+            created_at: result.rows[0].created_at,
+            message: 'Feedback recorded successfully. Ready for Terraform generation.',
+            next_step: '/api/workflow/terraform'
+        });
+
+    } catch (error) {
+        console.error('[STEP 4] Feedback Error:', error);
+        res.status(500).json({
+            error: 'Failed to store feedback',
+            message: error.message
+        });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STEP 5: TERRAFORM GENERATION (final step)
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/terraform', authMiddleware, async (req, res) => {
+    try {
+        const {
+            workspace_id,
+            infraSpec,
+            provider,
+            profile,
+            project_name
+        } = req.body;
+
+        console.log(`[STEP 5] Generating Terraform for ${provider} (${profile})`);
+
+        // Validate required fields
+        if (!infraSpec || !provider || !profile) {
+            return res.status(400).json({
+                error: 'Missing required fields',
+                required: ['infraSpec', 'provider', 'profile']
+            });
+        }
+
+        // Generate Terraform code
+        const terraformCode = terraformService.generateTerraform(
+            infraSpec,
+            provider,
+            profile,
+            project_name || 'my-project'
+        );
+
+        // Get services list with Terraform resource types
+        const services = terraformService.getTerraformServices(infraSpec, provider);
+
+        console.log(`[STEP 5] Generated ${terraformCode.length} characters of Terraform`);
+
+        // Log to audit
+        if (auditService && req.user && workspace_id) {
+            auditService.logAction(
+                req.user.id,
+                workspace_id,
+                'TERRAFORM_GENERATED',
+                { provider, profile, services_count: services.length },
+                req
+            );
+        }
+
+        res.json({
+            success: true,
+            terraform: {
+                code: terraformCode,
+                provider: provider.toUpperCase(),
+                profile,
+                pattern: infraSpec.service_classes?.pattern || 'SERVERLESS_WEB_APP',
+                file_name: 'main.tf'
+            },
+            services,
+            instructions: {
+                step_1: 'Save the Terraform code to a file named main.tf',
+                step_2: 'Run: terraform init',
+                step_3: 'Run: terraform plan',
+                step_4: 'Run: terraform apply',
+                note: 'Ensure you have appropriate cloud credentials configured'
+            },
+            disclaimer: 'This Terraform configuration is generated based on your selected architecture pattern. Review and customize as needed before deployment.'
+        });
+
+    } catch (error) {
+        console.error('[STEP 5] Terraform Error:', error);
+        res.status(500).json({
+            error: 'Failed to generate Terraform',
+            message: error.message
+        });
+    }
+});
+
+// 
+// STEP 4.5: ARCHITECTURE DIAGRAM GENERATION
+// 
+router.post('/architecture', authMiddleware, async (req, res) => {
+    try {
+        const {
+            workspace_id,
+            infraSpec,
+            provider,
+            profile,
+            usage_profile,
+            intent
+        } = req.body;
+
+        console.log(`[STEP 4.5] Generating architecture diagram for ${provider} (${profile})`);
+
+        // Validate required fields
+        if (!infraSpec || !provider || !profile) {
+            return res.status(400).json({
+                error: 'Missing required fields',
+                required: ['infraSpec', 'provider', 'profile']
+            });
+        }
+
+        // Use the pattern resolver to generate architecture based on intent
+        
+        // Extract requirements from intent
+        let requirements = patternResolver.extractRequirements(intent?.intent_classification?.project_description || "");
+        
+        // Merge with frontend requirements if provided
+        if (req.body.requirements) {
+            requirements = {
+                ...requirements,
+                ...req.body.requirements,
+                nfr: {
+                    ...requirements.nfr,
+                    ...req.body.requirements.nfr
+                },
+                region: {
+                    ...requirements.region,
+                    ...req.body.requirements.region
+                },
+                data_classes: {
+                    ...requirements.data_classes,
+                    ...req.body.requirements.data_classes
+                },
+                data_retention: {
+                    ...requirements.data_retention,
+                    ...req.body.requirements.data_retention
+                },
+                observability: {
+                    ...requirements.observability,
+                    ...req.body.requirements.observability
+                }
+            };
+        }
+        
+        // Generate canonical architecture based on requirements and pattern
+        const canonicalArchitecture = patternResolver.generateCanonicalArchitecture(requirements, infraSpec.architecture_pattern);
+
+        // Map to provider-specific services
+        const architectureDiagramService = require('../services/architectureDiagramService');
+        const providerArchitecture = architectureDiagramService.mapToProvider(canonicalArchitecture, provider);
+
+        // Generate services list
+        const services = architectureDiagramService.generateServicesList(providerArchitecture, provider);
+
+        // Generate architecture notes
+        const notes = architectureDiagramService.generateArchitectureNotes(infraSpec, usage_profile, requirements);
+
+        console.log(`[STEP 4.5] Generated architecture with ${providerArchitecture.nodes.length} nodes and ${services.length} services`);
+
+        // Log to audit
+        if (auditService && req.user && workspace_id) {
+            auditService.logAction(
+                req.user.id,
+                workspace_id,
+                'ARCHITECTURE_GENERATED',
+                { provider, profile, services_count: services.length },
+                req
+            );
+        }
+
+        res.json({
+            success: true,
+            data: {
+                architecture: providerArchitecture,
+                services,
+                notes,
+                provider,
+                profile,
+                requirements
+            },
+            message: 'Architecture diagram generated successfully',
+            next_step: '/api/workflow/terraform'
+        });
+
+    } catch (error) {
+        console.error('[STEP 4.5] Architecture Error:', error);
+        res.status(500).json({
+            error: 'Failed to generate architecture',
             message: error.message
         });
     }

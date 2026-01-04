@@ -26,4 +26,10 @@ pool.query('SELECT NOW()', (err, res) => {
   }
 });
 
+// FIX: Prevent crash on idle client errors
+pool.on('error', (err, client) => {
+  console.error('Unexpected error on idle client', err);
+  // Don't exit process, just log. This keeps the server alive during transient DB issues.
+});
+
 module.exports = pool;

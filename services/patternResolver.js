@@ -1,409 +1,931 @@
 /**
- * PATTERN RESOLVER
- * 
- * Deterministic pattern selection based on intent signals.
- * AI never selects patterns - this module does.
- * 
- * Rules are evaluated in priority order.
+ * Pattern Resolver Service
+ * Implements architecture taxonomy and governance layer
  */
 
-const { ARCHITECTURE_PATTERNS, getRequiredServices } = require('./architecturePatterns');
-
-/**
- * 🔒 FIX 1: HARD STATIC OVERRIDE (MANDATORY - RUNS FIRST)
- * This MUST run before any other inference.
- * Uses Step 1 signals VERBATIM (FIX 2).
- * 
- * @param {object} intent - The normalized intent from Step 1
- * @returns {object|null} { pattern, skipPatternInference } or null
- */
-function checkStaticOverride(intent) {
-    const classification = intent.intent_classification || {};
-    const features = intent.feature_signals || {};  // FIX 2: Use verbatim, never recompute
-    const semantic = intent.semantic_signals || {};
-
-    // Hard STATIC override conditions (EXACT match required)
-    const isStaticDomain = [
-        'portfolio', 'landing_page', 'documentation', 'blog',
-        'marketing_site', 'brochure', 'static_site', 'personal_website',
-        'web_hosting', 'static_website'
-    ].includes(classification.primary_domain) ||
-        ['static_website', 'static_content', 'documentation', 'static', 'portfolio', 'landing'].includes(classification.workload_type) ||
-        classification.workload_type?.includes('static');
-
-    const isStaticContent = features.static_content === true || features.static_site === true;
-    const isStateless = semantic.statefulness === 'stateless';
-    const noPayments = !features.payments;
-    const noRealTime = !features.real_time;
-
-    // HARD STATIC OVERRIDE
-    if ((isStaticDomain || isStaticContent) && isStateless && noPayments && noRealTime) {
-        console.log('[PATTERN RESOLVER] 🔒 HARD STATIC OVERRIDE TRIGGERED');
-        console.log('[PATTERN RESOLVER] Conditions: domain=' + classification.primary_domain +
-            ', workload=' + classification.workload_type +
-            ', static_content=' + isStaticContent +
-            ', stateless=' + isStateless);
-        return {
-            pattern: 'STATIC_WEB_HOSTING',
-            skipPatternInference: true,
-            // DO NOT infer api_required
-            // DO NOT allow serverless
-            // DO NOT ask AI for architecture
-            overrideReason: 'Hard static content guardrail'
-        };
+const PATTERN_CATALOG = {
+  STATIC_SITE: {
+    name: 'Static Site',
+    use_case: 'HTML/CSS/JS only',
+    requirements: {
+      stateful: false,
+      backend: false,
+      realtime: false,
+      payments: false,
+      ml: false
     }
-
-    return null;
-}
-
-/**
- * Resolve the architecture pattern based on intent signals
- * @param {object} intent - The normalized intent from Step 1
- * @returns {string} Pattern name
- */
-function resolvePattern(intent) {
-    // 🔒 FIX 1: Check hard STATIC override FIRST
-    const staticOverride = checkStaticOverride(intent);
-    if (staticOverride) {
-        return staticOverride.pattern;
+  },
+  SERVERLESS_API: {
+    name: 'Serverless API',
+    use_case: 'Stateless APIs',
+    requirements: {
+      stateful: false,
+      backend: true,
+      realtime: false,
+      payments: false,
+      ml: false
     }
-
-    // FIX 2: Use Step 1 signals VERBATIM (never recompute)
-    const signals = extractSignals(intent);
-
-    console.log('[PATTERN RESOLVER] Signals:', JSON.stringify(signals, null, 2));
-
-    // RULE 2: DATA_PROCESSING_PIPELINE
-    // ETL, analytics, batch processing
-    if (signals.workload_type === 'batch_processing' ||
-        signals.workload_type === 'data_pipeline' ||
-        signals.workload_type === 'etl') {
-        console.log('[PATTERN RESOLVER] → DATA_PROCESSING_PIPELINE');
-        return 'DATA_PROCESSING_PIPELINE';
+  },
+  SERVERLESS_WEB_APP: {
+    name: 'Serverless Web App',
+    use_case: 'Simple full-stack',
+    requirements: {
+      stateful: false,
+      backend: true,
+      realtime: false,
+      payments: false,
+      ml: false
     }
-
-    // RULE 3: EVENT_DRIVEN_SYSTEM
-    // Notifications, background jobs, triggers
-    if (signals.workload_type === 'event_driven' ||
-        signals.notifications ||
-        signals.background_jobs) {
-        console.log('[PATTERN RESOLVER] → EVENT_DRIVEN_SYSTEM');
-        return 'EVENT_DRIVEN_SYSTEM';
+  },
+  STATEFUL_WEB_PLATFORM: {
+    name: 'Stateful Web Platform',
+    use_case: 'SaaS, ERPs, CRMs',
+    requirements: {
+      stateful: true,
+      backend: true,
+      realtime: false,
+      payments: false,
+      ml: false
     }
-
-    // RULE 4: MICROSERVICES_PLATFORM
-    // Complex platforms, multiple services, large scale
-    if (signals.microservices ||
-        signals.scale === 'large' ||
-        signals.multi_team ||
-        (signals.feature_count && signals.feature_count > 10)) {
-        console.log('[PATTERN RESOLVER] → MICROSERVICES_PLATFORM');
-        return 'MICROSERVICES_PLATFORM';
+  },
+  REALTIME_PLATFORM: {
+    name: 'Real-time Platform',
+    use_case: 'Chat, live dashboards',
+    requirements: {
+      stateful: false,
+      backend: true,
+      realtime: true,
+      payments: false,
+      ml: false
     }
-
-    // RULE 5: INTERNAL_TOOL
-    // Admin tools, internal dashboards, not user-facing
-    if (!signals.user_facing &&
-        (signals.workload_type === 'internal_tool' ||
-            signals.workload_type === 'admin_dashboard' ||
-            signals.domain === 'ops')) {
-        console.log('[PATTERN RESOLVER] → INTERNAL_TOOL');
-        return 'INTERNAL_TOOL';
+  },
+  MOBILE_BACKEND: {
+    name: 'Mobile Backend',
+    use_case: 'Mobile APIs',
+    requirements: {
+      stateful: false,
+      backend: true,
+      realtime: false,
+      payments: false,
+      ml: false
     }
-
-    // RULE 6: SERVERLESS_WEB_APP
-    // Mobile backends, SPAs with simple APIs, lightweight apps
-    if (signals.client_type === 'mobile' ||
-        signals.workload_type === 'api_service' ||
-        (signals.user_facing && !signals.stateful && signals.api_required)) {
-        console.log('[PATTERN RESOLVER] → SERVERLESS_WEB_APP');
-        return 'SERVERLESS_WEB_APP';
+  },
+  DATA_PLATFORM: {
+    name: 'Data Platform',
+    use_case: 'DB-only / analytics',
+    requirements: {
+      stateful: true,
+      backend: false,
+      realtime: false,
+      payments: false,
+      ml: false
     }
-
-    // RULE 7: CONTAINERIZED_APP
-    // Single service, APIs, stateful web apps
-    if (signals.workload_type === 'web_application' &&
-        signals.stateful &&
-        !signals.microservices) {
-        console.log('[PATTERN RESOLVER] → CONTAINERIZED_APP');
-        return 'CONTAINERIZED_APP';
+  },
+  ML_INFERENCE_SERVICE: {
+    name: 'ML Inference Service',
+    use_case: 'Model serving',
+    requirements: {
+      stateful: false,
+      backend: true,
+      realtime: false,
+      payments: false,
+      ml: true
     }
-
-    // RULE 8: THREE_TIER_WEB_APP (DEFAULT)
-    // Classic web apps, business apps, dashboards
-    console.log('[PATTERN RESOLVER] → THREE_TIER_WEB_APP (default)');
-    return 'THREE_TIER_WEB_APP';
-}
-
-/**
- * Extract pattern-relevant signals from intent
- */
-function extractSignals(intent) {
-    const classification = intent.intent_classification || {};
-    const features = intent.feature_signals || {};
-    const semantic = intent.semantic_signals || {};
-
-    // Check static content first (affects api_required)
-    const isStatic = isStaticContent(classification, semantic, features);
-
-    return {
-        // Workload type
-        workload_type: classification.workload_type || 'web_application',
-        domain: classification.primary_domain || 'general',
-
-        // Static content check (portfolio, landing pages, docs)
-        static_content: isStatic,
-
-        // Statefulness
-        stateful: semantic.statefulness === 'stateful',
-
-        // Feature flags
-        payments: features.payments || false,
-        realtime: features.real_time || false,
-        auth_required: features.multi_user_roles || features.auth_required || false,
-        // For static sites, api_required is always false
-        api_required: isStatic ? false : (features.api_required !== false),
-        notifications: features.notifications || false,
-        background_jobs: features.background_jobs || false,
-
-        // Scale
-        scale: determineScale(intent),
-
-        // User facing
-        user_facing: classification.user_facing !== false,
-
-        // Client type (web, mobile, both)
-        client_type: classification.client_type || 'web',
-
-        // Complexity indicators
-        microservices: features.microservices || classification.workload_type === 'microservices',
-        multi_team: features.multi_team || false,
-        feature_count: countFeatures(features)
-    };
-}
-
-/**
- * Detect if this is a static content site
- */
-function isStaticContent(classification, semantic, features = {}) {
-    const staticDomains = [
-        'portfolio', 'landing_page', 'documentation', 'blog',
-        'marketing_site', 'brochure', 'static_site', 'personal_website',
-        'resume', 'cv', 'company_website'
-    ];
-
-    const staticWorkloads = [
-        'static_website', 'static_content', 'documentation', 'static',
-        'static_site', 'landing', 'portfolio'
-    ];
-
-    // Check primary domain
-    if (staticDomains.includes(classification.primary_domain)) return true;
-
-    // Check workload type
-    if (staticWorkloads.includes(classification.workload_type)) return true;
-
-    // Check if workload contains 'static'
-    if (classification.workload_type?.includes('static')) return true;
-
-    // Check features for static indicators
-    if (features.static_site || features.jamstack) return true;
-
-    return false;
-}
-
-/**
- * Determine scale from intent
- */
-function determineScale(intent) {
-    const missing = intent.missing_decision_axes || [];
-
-    // Check if scale was asked and answered
-    if (intent.answered_axes?.scale) {
-        const answer = intent.answered_axes.scale.toLowerCase();
-        if (answer.includes('large') || answer.includes('million')) return 'large';
-        if (answer.includes('small') || answer.includes('hundred')) return 'small';
-        return 'medium';
+  },
+  ML_TRAINING_PIPELINE: {
+    name: 'ML Training Pipeline',
+    use_case: 'Training jobs',
+    requirements: {
+      stateful: false,
+      backend: false,
+      realtime: false,
+      payments: false,
+      ml: true
     }
-
-    // Default based on workload type
-    const workload = intent.intent_classification?.workload_type;
-    if (workload === 'microservices' || workload === 'enterprise') return 'large';
-
-    return 'medium';
-}
-
-/**
- * Count number of features to estimate complexity
- */
-function countFeatures(features) {
-    return Object.values(features).filter(v => v === true).length;
-}
-
-/**
- * Get the complete service list for a resolved pattern
- * @param {string} patternName - The resolved pattern
- * @param {object} options - Additional options (compute_preference, db_preference)
- * @returns {array} List of service class names
- */
-function getServicesForPattern(patternName, options = {}) {
-    const pattern = ARCHITECTURE_PATTERNS[patternName];
-    if (!pattern) {
-        console.error(`[PATTERN RESOLVER] Unknown pattern: ${patternName}`);
-        return [];
+  },
+  HYBRID_PLATFORM: {
+    name: 'Hybrid Platform',
+    use_case: 'Combination',
+    requirements: {
+      stateful: true,
+      backend: true,
+      realtime: true,
+      payments: true,
+      ml: true
     }
-
-    const services = new Set(pattern.required);
-
-    // Handle compute choice
-    if (pattern.compute_choice) {
-        const preferred = options.compute_preference || pattern.compute_choice[0];
-        if (pattern.compute_choice.includes(preferred)) {
-            services.add(preferred);
-        } else {
-            services.add(pattern.compute_choice[0]);
-        }
-    }
-
-    // Handle database choice
-    if (pattern.database_choice) {
-        const preferred = options.db_preference || pattern.database_choice[0];
-        if (pattern.database_choice.includes(preferred)) {
-            services.add(preferred);
-        } else {
-            services.add(pattern.database_choice[0]);
-        }
-    }
-
-    // Add optional services based on features
-    if (options.include_optional) {
-        for (const opt of pattern.optional || []) {
-            services.add(opt);
-        }
-    }
-
-    return Array.from(services);
-}
-
-/**
- * Map user exclusion keywords to service classes
- * e.g., "database" -> ["relational_database", "nosql_database"]
- */
-const EXCLUSION_MAPPING = {
-    'database': ['relational_database', 'nosql_database'],
-    'db': ['relational_database', 'nosql_database'],
-    'cache': ['cache'],
-    'caching': ['cache'],
-    'api': ['api_gateway', 'compute_serverless'],
-    'backend': ['compute_container', 'compute_vm', 'compute_serverless', 'api_gateway'],
-    'auth': ['identity_auth'],
-    'authentication': ['identity_auth'],
-    'login': ['identity_auth'],
-    'compute': ['compute_container', 'compute_vm', 'compute_serverless'],
-    'storage': ['object_storage', 'block_storage'],
-    'cdn': ['cdn'],
-    'search': ['search_engine'],
-    'queue': ['messaging_queue'],
-    'messaging': ['messaging_queue', 'event_bus'],
-    'monitoring': ['monitoring'],
-    'logging': ['logging'],
-    'secrets': ['secrets_management']
+  }
 };
 
-/**
- * Extract service classes to exclude based on user's explicit_exclusions
- */
-function getExcludedServiceClasses(intent) {
-    const exclusions = intent.explicit_exclusions || [];
-    const excludedServices = new Set();
+const SERVICE_REGISTRY = {
+  relational_db: { 
+    required_for: ["stateful", "data_stores:relational"], 
+    description: "Relational database service",
+    category: "database"
+  },
+  message_queue: { 
+    required_for: ["realtime", "data_stores:queue"], 
+    description: "Message queue service",
+    category: "messaging"
+  },
+  websocket_gateway: { 
+    required_for: ["realtime"], 
+    description: "WebSocket gateway service",
+    category: "messaging"
+  },
+  payment_gateway: { 
+    required_for: ["payments"], 
+    description: "Payment processing service",
+    category: "payments"
+  },
+  ml_inference: { 
+    required_for: ["ml"], 
+    description: "ML inference service",
+    category: "ml"
+  },
+  object_storage: { 
+    required_for: ["file_storage"], 
+    description: "Object storage service",
+    category: "storage"
+  },
+  cache: { 
+    required_for: ["performance", "data_stores:cache"], 
+    description: "Caching service",
+    category: "database"
+  },
+  api_gateway: { 
+    required_for: ["api_management"], 
+    description: "API gateway service",
+    category: "networking"
+  },
+  authentication: { 
+    required_for: ["authentication"], 
+    description: "Authentication service",
+    category: "security"
+  },
+  compute: { 
+    required_for: ["backend", "processing"], 
+    description: "Compute service",
+    category: "compute"
+  },
+  load_balancer: { 
+    required_for: ["high_availability", "scaling"], 
+    description: "Load balancing service",
+    category: "networking"
+  }
+};
 
-    for (const exclusion of exclusions) {
-        const normalized = exclusion.toLowerCase().trim();
-        const serviceClasses = EXCLUSION_MAPPING[normalized] || [];
-        for (const sc of serviceClasses) {
-            excludedServices.add(sc);
+const PATTERN_VALIDATION_RULES = {
+  'stateful + relational_db': (requirements) => {
+    if (requirements.stateful && requirements.data_stores?.includes('relational_db')) {
+      // SERVERLESS_WEB_APP is invalid for stateful applications
+      return (pattern) => pattern !== 'SERVERLESS_WEB_APP';
+    }
+    return () => true;
+  },
+  'realtime + messaging': (requirements) => {
+    if (requirements.realtime) {
+      // Must include messaging + websocket layer
+      return (pattern) => pattern === 'REALTIME_PLATFORM' || pattern === 'HYBRID_PLATFORM';
+    }
+    return () => true;
+  },
+  'payments + compliance': (requirements) => {
+    if (requirements.payments) {
+      // Must include secure backend + compliance notes
+      return (pattern) => pattern !== 'SERVERLESS_API' && pattern !== 'STATIC_SITE';
+    }
+    return () => true;
+  }
+};
+
+class PatternResolver {
+  /**
+   * Extract project requirements into a strict schema
+   * NOW READS FROM FULL STEP1 RESULT INCLUDING DECISION_AXES
+   */
+  extractRequirements(intent) {
+    try {
+      const requirements = {
+        workload_types: [],
+        stateful: false,
+        realtime: false,
+        payments: false,
+        authentication: false,
+        data_stores: [],
+        ml: false,
+        public_facing: true,
+        compliance: [],
+        data_sensitivity: "low",
+        // Non-functional requirements
+        nfr: {
+          availability: "99.5", // default
+          latency: "medium",
+          compliance: [],
+          data_residency: null,
+          cost_ceiling_usd: null,
+          security_level: "standard"
+        },
+        // Region and multi-region
+        region: {
+          primary_region: "us-east-1", // default
+          secondary_region: null,
+          multi_region: false
+        },
+        // Data classification
+        data_classes: {},
+        // Data retention
+        data_retention: {},
+        // Deployment strategy
+        deployment_strategy: "rolling",
+        downtime_allowed: true,
+        // Observability
+        observability: {
+          logs: true,
+          metrics: true,
+          alerts: false
         }
+      };
+
+      // 🔥 CRITICAL FIX: Read from full step1Result, not just text
+      // Use explicit_features, inferred_features, and decision_axes
+      const explicitFeatures = intent.explicit_features || {};
+      const inferredFeatures = intent.inferred_features || {};
+      const decisionAxes = intent.decision_axes || {};
+      const semanticSignals = intent.semantic_signals || {};
+      
+      // Merge explicit + inferred features (explicit takes precedence)
+      const allFeatures = { ...inferredFeatures, ...explicitFeatures };
+      
+      // Extract features from explicit_features and inferred_features
+      if (allFeatures.static_content === true) {
+        requirements.workload_types.push('static_site');
+      }
+      if (allFeatures.payments === true) {
+        requirements.payments = true;
+        requirements.workload_types.push('payment_system');
+      }
+      if (allFeatures.real_time === true) {
+        requirements.realtime = true;
+        requirements.workload_types.push('realtime_app');
+      }
+      if (allFeatures.case_management === true) {
+        requirements.stateful = true;
+      }
+      if (allFeatures.document_storage === true) {
+        requirements.data_stores.push('object_storage');
+      }
+      if (allFeatures.multi_user_roles === true) {
+        requirements.authentication = true;
+        requirements.stateful = true; // Multi-user typically requires stateful architecture
+      }
+      if (allFeatures.identity_auth === true) {
+        requirements.authentication = true;
+      }
+      if (allFeatures.messaging_queue === true) {
+        requirements.data_stores.push('queue');
+      }
+      if (allFeatures.api_backend === true) {
+        requirements.workload_types.push('backend_api');
+      }
+      
+      // Extract from semantic signals
+      if (semanticSignals.statefulness === 'stateful') {
+        requirements.stateful = true;
+      }
+      if (semanticSignals.latency_sensitivity) {
+        requirements.nfr.latency = semanticSignals.latency_sensitivity;
+      }
+      
+      // Extract from decision_axes (CRITICAL - this is what was missing!)
+      if (decisionAxes.data_sensitivity) {
+        requirements.data_sensitivity = decisionAxes.data_sensitivity.toLowerCase();
+        if (requirements.data_sensitivity.includes('sensitive') || requirements.data_sensitivity.includes('pii')) {
+          requirements.data_sensitivity = 'confidential';
+        }
+      }
+      
+      if (decisionAxes.regulatory_exposure) {
+        const regExp = decisionAxes.regulatory_exposure.toLowerCase();
+        if (regExp.includes('pci')) requirements.compliance.push('PCI');
+        if (regExp.includes('hipaa')) requirements.compliance.push('HIPAA');
+        if (regExp.includes('gdpr')) requirements.compliance.push('GDPR');
+      }
+      
+      if (decisionAxes.availability) {
+        requirements.nfr.availability = decisionAxes.availability;
+      }
+      
+      // Fallback: Also safely extract from intent text if provided
+      const text = (intent.project_description || intent.description || intent || '').toString().toLowerCase();
+
+      // Only use text parsing if features weren't already detected
+      if (requirements.workload_types.length === 0) {
+        if (text.includes('web') || text.includes('app') || text.includes('website')) {
+          requirements.workload_types.push('web_app');
+        }
+        if (text.includes('api') || text.includes('backend') || text.includes('service')) {
+          requirements.workload_types.push('backend_api');
+        }
+        if (text.includes('mobile')) {
+          requirements.workload_types.push('mobile_backend');
+        }
+      }
+      
+      // Determine if stateful (if not already detected from features)
+      if (!requirements.stateful) {
+        if (text.includes('database') || text.includes('store') || text.includes('save') || 
+            text.includes('user') || text.includes('profile') || text.includes('session')) {
+          requirements.stateful = true;
+        }
+      }
+
+      // Determine real-time requirements (if not already detected)
+      if (!requirements.realtime) {
+        if (text.includes('real-time') || text.includes('realtime') || text.includes('chat') || 
+            text.includes('live') || text.includes('streaming') || text.includes('notifications')) {
+          requirements.realtime = true;
+        }
+      }
+
+      // Determine authentication requirements (if not already detected)
+      if (!requirements.authentication) {
+        if (text.includes('login') || text.includes('auth') || text.includes('user') || 
+            text.includes('profile') || text.includes('account')) {
+          requirements.authentication = true;
+        }
+      }
+
+      // Determine data stores (if not already detected)
+      if (text.includes('sql') || text.includes('database') || text.includes('relational') || 
+          text.includes('mysql') || text.includes('postgres')) {
+        if (!requirements.data_stores.includes('relational_db')) {
+          requirements.data_stores.push('relational_db');
+        }
+      }
+      if (text.includes('cache') || text.includes('redis') || text.includes('memcached')) {
+        if (!requirements.data_stores.includes('cache')) {
+          requirements.data_stores.push('cache');
+        }
+      }
+      if (text.includes('queue') || text.includes('message') || text.includes('kafka')) {
+        if (!requirements.data_stores.includes('queue')) {
+          requirements.data_stores.push('queue');
+        }
+      }
+      if (text.includes('file') || text.includes('storage') || text.includes('document') || 
+          text.includes('image') || text.includes('video')) {
+        if (!requirements.data_stores.includes('object_storage')) {
+          requirements.data_stores.push('object_storage');
+        }
+      }
+
+      return requirements;
+    } catch (error) {
+      console.error('Error in extractRequirements:', error);
+      // Return default requirements in case of error
+      return {
+        workload_types: [],
+        stateful: false,
+        realtime: false,
+        payments: false,
+        authentication: false,
+        data_stores: [],
+        ml: false,
+        public_facing: true,
+        compliance: [],
+        data_sensitivity: "low",
+        // Non-functional requirements
+        nfr: {
+          availability: "99.5", // default
+          latency: "medium",
+          compliance: [],
+          data_residency: null,
+          cost_ceiling_usd: null,
+          security_level: "standard"
+        },
+        // Region and multi-region
+        region: {
+          primary_region: "us-east-1", // default
+          secondary_region: null,
+          multi_region: false
+        },
+        // Data classification
+        data_classes: {},
+        // Data retention
+        data_retention: {},
+        // Deployment strategy
+        deployment_strategy: "rolling",
+        downtime_allowed: true,
+        // Observability
+        observability: {
+          logs: true,
+          metrics: true,
+          alerts: false
+        }
+      };
     }
+  }
 
-    if (excludedServices.size > 0) {
-        console.log(`[PATTERN RESOLVER] User excluded: ${Array.from(excludedServices).join(', ')}`);
-    }
-
-    return excludedServices;
-}
-
-/**
- * Full pattern resolution with services
- * @param {object} intent - The normalized intent
- * @returns {object} { pattern, services, cost_range, forbidden, user_excluded }
- */
-function resolvePatternWithServices(intent) {
-    const patternName = resolvePattern(intent);
-    const pattern = ARCHITECTURE_PATTERNS[patternName];
-
-    let services = getServicesForPattern(patternName, {
-        compute_preference: getComputePreference(intent),
-        db_preference: getDatabasePreference(intent)
+  /**
+   * Select architecture pattern based on requirements
+   * WITH PATTERN ESCALATION LOGIC
+   */
+  selectPattern(requirements) {
+    console.log('[PATTERN RESOLUTION] Requirements:', {
+      stateful: requirements.stateful,
+      realtime: requirements.realtime,
+      payments: requirements.payments,
+      authentication: requirements.authentication,
+      data_stores: requirements.data_stores,
+      workload_types: requirements.workload_types
     });
-
-    // 🔒 USER EXCLUSION HANDLING
-    // Remove any services the user explicitly said NOT to include
-    const userExcluded = getExcludedServiceClasses(intent);
-    if (userExcluded.size > 0) {
-        const before = services.length;
-        services = services.filter(s => !userExcluded.has(s));
-        console.log(`[PATTERN RESOLVER] Filtered ${before - services.length} services based on user exclusions`);
+    
+    // 🔥 HARD REJECTION RULES - These patterns are ILLEGAL for certain requirements
+    // NO silent downgrades, NO defaults, MUST escalate
+    
+    // Rule 1: Stateful + Relational DB → CANNOT be SERVERLESS_WEB_APP
+    if (requirements.stateful && requirements.data_stores.includes('relational_db')) {
+      console.log('[PATTERN REJECTION] SERVERLESS_WEB_APP is ILLEGAL for stateful + relational DB');
+    }
+    
+    // Rule 2: Payments → CANNOT be SERVERLESS_WEB_APP (requires stateful for security)
+    if (requirements.payments) {
+      console.log('[PATTERN REJECTION] SERVERLESS_WEB_APP is ILLEGAL for payment processing');
+    }
+    
+    // Rule 3: Real-time + Messaging → MUST have proper WebSocket/event architecture
+    if (requirements.realtime && (requirements.data_stores.includes('queue') || requirements.data_stores.includes('cache'))) {
+      console.log('[PATTERN REJECTION] Simple patterns ILLEGAL for real-time with messaging');
     }
 
+    // 🔥 PATTERN ESCALATION LOGIC (order matters - most specific first)
+    
+    // ML + Real-time = Hybrid Platform
+    if (requirements.ml && requirements.realtime) {
+      console.log('[PATTERN ESCALATION] ML + Real-time → HYBRID_PLATFORM');
+      return 'HYBRID_PLATFORM';
+    }
+    
+    // ML + Stateful = Hybrid Platform
+    if (requirements.ml && requirements.stateful) {
+      console.log('[PATTERN ESCALATION] ML + Stateful → HYBRID_PLATFORM');
+      return 'HYBRID_PLATFORM';
+    }
+    
+    // ML alone = ML Inference Service
+    if (requirements.ml) {
+      console.log('[PATTERN SELECTION] ML detected → ML_INFERENCE_SERVICE');
+      return 'ML_INFERENCE_SERVICE';
+    }
+    
+    // Real-time + Stateful + Payments = Hybrid Platform (complex requirements)
+    if (requirements.realtime && requirements.stateful && requirements.payments) {
+      console.log('[PATTERN ESCALATION] Real-time + Stateful + Payments → HYBRID_PLATFORM');
+      return 'HYBRID_PLATFORM';
+    }
+    
+    // Real-time + Stateful = Realtime Platform with persistence
+    if (requirements.realtime && requirements.stateful) {
+      console.log('[PATTERN ESCALATION] Real-time + Stateful → REALTIME_PLATFORM');
+      return 'REALTIME_PLATFORM';
+    }
+    
+    // Real-time alone = Realtime Platform
+    if (requirements.realtime) {
+      console.log('[PATTERN SELECTION] Real-time detected → REALTIME_PLATFORM');
+      return 'REALTIME_PLATFORM';
+    }
+    
+    // Payments ALWAYS require stateful platform for security/audit
+    if (requirements.payments) {
+      console.log('[PATTERN ESCALATION] Payments detected → STATEFUL_WEB_PLATFORM (security required)');
+      return 'STATEFUL_WEB_PLATFORM';
+    }
+    
+    // Stateful + Relational DB = Stateful Web Platform
+    if (requirements.stateful && requirements.data_stores.includes('relational_db')) {
+      console.log('[PATTERN ESCALATION] Stateful + Relational DB → STATEFUL_WEB_PLATFORM');
+      return 'STATEFUL_WEB_PLATFORM';
+    }
+    
+    // Stateful (any type) = Stateful Web Platform
+    if (requirements.stateful) {
+      console.log('[PATTERN SELECTION] Stateful detected → STATEFUL_WEB_PLATFORM');
+      return 'STATEFUL_WEB_PLATFORM';
+    }
+    
+    // Mobile backend = Mobile Backend pattern
+    if (requirements.workload_types.includes('mobile_backend')) {
+      console.log('[PATTERN SELECTION] Mobile backend → MOBILE_BACKEND');
+      return 'MOBILE_BACKEND';
+    }
+    
+    // Backend API (stateless) = Serverless API
+    if (requirements.workload_types.includes('backend_api') && !requirements.stateful) {
+      console.log('[PATTERN SELECTION] Stateless backend API → SERVERLESS_API');
+      return 'SERVERLESS_API';
+    }
+    
+    // Web app with auth or data stores = Serverless Web App
+    if (requirements.workload_types.includes('web_app')) {
+      if (requirements.authentication || requirements.data_stores.length > 0) {
+        console.log('[PATTERN SELECTION] Web app with auth/data → SERVERLESS_WEB_APP');
+        return 'SERVERLESS_WEB_APP';
+      } else {
+        console.log('[PATTERN SELECTION] Simple web app → STATIC_SITE');
+        return 'STATIC_SITE';
+      }
+    }
+    
+    // Static site = Static Site pattern
+    if (requirements.workload_types.includes('static_site')) {
+      console.log('[PATTERN SELECTION] Static site → STATIC_SITE');
+      return 'STATIC_SITE';
+    }
+
+    // Default fallback (should rarely be reached)
+    console.log('[PATTERN FALLBACK] No specific pattern matched, defaulting to SERVERLESS_WEB_APP');
+    return 'SERVERLESS_WEB_APP';
+  }
+
+  /**
+   * Select services based on requirements using service registry
+   */
+  selectServices(requirements, pattern) {
+    const services = [];
+
+    // Check each service in the registry
+    for (const [serviceName, serviceDef] of Object.entries(SERVICE_REGISTRY)) {
+      let shouldInclude = false;
+
+      // Check if service is required based on requirements
+      for (const requirement of serviceDef.required_for) {
+        if (requirement.includes(':')) {
+          // Handle specific requirements like "data_stores:relational"
+          const [reqType, reqValue] = requirement.split(':');
+          if (reqType === 'data_stores' && requirements[reqType]?.includes(reqValue)) {
+            shouldInclude = true;
+            break;
+          }
+        } else {
+          // Handle simple requirements like "realtime", "payments", etc.
+          if (requirements[requirement] === true) {
+            shouldInclude = true;
+            break;
+          }
+        }
+      }
+      
+      // Apply NFR-based service selection
+      if (!shouldInclude) {
+        // High availability requirement may require additional services
+        if (requirements.nfr.availability === "99.99" && serviceDef.category === "messaging") {
+          shouldInclude = true; // For resilience
+        }
+        
+        // Security requirements may require additional services
+        if (requirements.nfr.security_level === "high" && serviceDef.category === "security") {
+          shouldInclude = true;
+        }
+        
+        // Observability requirements
+        if (requirements.observability.logs && serviceDef.category === "observability") {
+          shouldInclude = true;
+        }
+      }
+
+      if (shouldInclude) {
+        services.push({
+          name: serviceName,
+          description: serviceDef.description,
+          category: serviceDef.category
+        });
+      }
+    }
+    
+    // Add required services based on NFRs
+    if (requirements.nfr.compliance.includes('PCI')) {
+      // Add security and monitoring services for PCI compliance
+      if (!services.some(s => s.name === 'authentication')) {
+        services.push({
+          name: 'authentication',
+          description: 'Authentication service for PCI compliance',
+          category: 'security'
+        });
+      }
+      if (!services.some(s => s.name === 'monitoring')) {
+        services.push({
+          name: 'monitoring',
+          description: 'Monitoring for PCI compliance',
+          category: 'observability'
+        });
+      }
+    }
+    
+    // Add observability services if required
+    if (requirements.observability.logs && !services.some(s => s.name === 'logging')) {
+      services.push({
+        name: 'logging',
+        description: 'Centralized logging service',
+        category: 'observability'
+      });
+    }
+    
+    if (requirements.observability.metrics && !services.some(s => s.name === 'monitoring')) {
+      services.push({
+        name: 'monitoring',
+        description: 'Infrastructure monitoring service',
+        category: 'observability'
+      });
+    }
+    
+    if (requirements.observability.alerts && !services.some(s => s.name === 'monitoring')) {
+      services.push({
+        name: 'monitoring',
+        description: 'Alerting service',
+        category: 'observability'
+      });
+    }
+    
+    // 🔥 ENFORCE MINIMUM REQUIRED SERVICES PER PATTERN
+    // This prevents partial/incomplete architectures
+    const ensureService = (serviceName, description, category) => {
+      if (!services.some(s => s.name === serviceName)) {
+        console.log(`[PATTERN INTEGRITY] Adding required service for ${pattern}: ${serviceName}`);
+        services.push({
+          name: serviceName,
+          description: description,
+          category: category
+        });
+      }
+    };
+    
+    if (pattern === 'HYBRID_PLATFORM') {
+      // HYBRID_PLATFORM requires minimum viable architecture
+      ensureService('compute', 'Application compute service', 'compute');
+      ensureService('api_gateway', 'API gateway for request routing', 'networking');
+      ensureService('load_balancer', 'Load balancer for traffic distribution', 'networking');
+      ensureService('cache', 'Cache service for real-time performance', 'database');
+      ensureService('object_storage', 'Object storage for documents and files', 'storage');
+      
+      console.log('[PATTERN INTEGRITY] HYBRID_PLATFORM minimum services enforced');
+    } else if (pattern === 'STATEFUL_WEB_PLATFORM') {
+      // STATEFUL_WEB_PLATFORM requires compute + database + ingress
+      ensureService('compute', 'Application compute service', 'compute');
+      ensureService('load_balancer', 'Load balancer for high availability', 'networking');
+      
+      console.log('[PATTERN INTEGRITY] STATEFUL_WEB_PLATFORM minimum services enforced');
+    } else if (pattern === 'REALTIME_PLATFORM') {
+      // REALTIME_PLATFORM requires compute + messaging + websocket
+      ensureService('compute', 'Application compute service', 'compute');
+      ensureService('websocket_gateway', 'WebSocket gateway for real-time connections', 'messaging');
+      ensureService('message_queue', 'Message queue for event processing', 'messaging');
+      
+      console.log('[PATTERN INTEGRITY] REALTIME_PLATFORM minimum services enforced');
+    }
+
+    return services;
+  }
+
+  /**
+   * Generate canonical architecture based on pattern and services
+   * THIS IS THE SINGLE SOURCE OF TRUTH - All downstream systems MUST read from this
+   */
+  generateCanonicalArchitecture(requirements, selectedPattern) {
+    const services = this.selectServices(requirements, selectedPattern);
+    
+    console.log(`[CANONICAL ARCHITECTURE] Pattern: ${selectedPattern}, Services: ${services.length}`);
+    console.log(`[CANONICAL ARCHITECTURE] Service List: ${services.map(s => s.name).join(', ')}`);
+    
+    // 🔥 VALIDATION: Fail if required services are missing for pattern
+    this.validateServicesForPattern(services, selectedPattern);
+    
+    // Create canonical architecture based on pattern
+    const pattern = PATTERN_CATALOG[selectedPattern];
+    
+    // Build canonical services contract (provider-agnostic)
+    const canonicalServices = services.map((service, idx) => ({
+      id: `${service.name}_${idx}`,
+      canonical_type: service.name,
+      category: service.category,
+      description: service.description,
+      required: true, // All services from selectServices are required
+      pattern_enforced: true
+    }));
+    
+    // Define nodes based on services
+    let nodes = [];
+    for (let i = 0; i < services.length; i++) {
+      const service = services[i];
+      const position = calculateNodePosition(i, service.category, nodes);
+      nodes.push({
+        id: service.name,
+        label: service.name.replace('_', ' ').toUpperCase(),
+        type: service.name, // Use canonical type, not category
+        category: service.category,
+        position: position,
+        required: true
+      });
+    }
+
+    // Define edges based on service dependencies
+    const edges = [];
+    
+    // Add some basic relationships
+    if (requirements.authentication && requirements.data_stores.includes('relational_db')) {
+      // Authentication typically connects to database
+      if (nodes.some(n => n.id === 'authentication') && nodes.some(n => n.id === 'relational_db')) {
+        edges.push({
+          from: 'authentication',
+          to: 'relational_db',
+          label: 'stores user data'
+        });
+      }
+    }
+    
+    if (requirements.realtime && nodes.some(n => n.id === 'websocket_gateway') && nodes.some(n => n.id === 'message_queue')) {
+      edges.push({
+        from: 'websocket_gateway',
+        to: 'message_queue',
+        label: 'forwards messages'
+      });
+    }
+    
+    // Add observability connections
+    if (nodes.some(n => n.id === 'logging') && nodes.some(n => n.id === 'monitoring')) {
+      edges.push({
+        from: 'logging',
+        to: 'monitoring',
+        label: 'feeds metrics'
+      });
+    }
+    
+    // Add security connections
+    if (nodes.some(n => n.id === 'authentication') && nodes.some(n => n.id === 'compute')) {
+      edges.push({
+        from: 'authentication',
+        to: 'compute',
+        label: 'authenticates'
+      });
+    }
+    
+    // Add compliance and data classification connections
+    if (requirements.nfr.compliance.includes('PCI') && nodes.some(n => n.id === 'payment_gateway') && nodes.some(n => n.id === 'monitoring')) {
+      edges.push({
+        from: 'payment_gateway',
+        to: 'monitoring',
+        label: 'PCI compliance monitoring'
+      });
+    }
+    
+    // Add data retention connections
+    if (Object.keys(requirements.data_retention).length > 0 && nodes.some(n => n.id === 'storage') && nodes.some(n => n.id === 'monitoring')) {
+      edges.push({
+        from: 'storage',
+        to: 'monitoring',
+        label: 'retention policy monitoring'
+      });
+    }
+    
+    // Add deployment strategy connections
+    if (requirements.deployment_strategy === 'blue-green' && nodes.some(n => n.id === 'load_balancer') && nodes.some(n => n.id === 'compute')) {
+      edges.push({
+        from: 'load_balancer',
+        to: 'compute',
+        label: 'blue-green deployment routing'
+      });
+    }
+    
+    // Add region-based connections
+    if (requirements.region.multi_region && nodes.some(n => n.id === 'load_balancer') && nodes.some(n => n.id === 'database')) {
+      edges.push({
+        from: 'load_balancer',
+        to: 'database',
+        label: 'multi-region replication'
+      });
+    }
+
+    // 🔥 CANONICAL SERVICES CONTRACT - This is the finalized, enforced service list
+    const servicesContract = {
+      pattern: selectedPattern,
+      total_services: canonicalServices.length,
+      services: canonicalServices,
+      validated: true,
+      complete: true
+    };
+    
+    console.log(`[CANONICAL CONTRACT] ${servicesContract.total_services} services finalized for ${selectedPattern}`);
+    
     return {
-        pattern: patternName,
-        pattern_name: pattern.name,
-        pattern_description: pattern.description,
-        services: services.map(s => ({ service_class: s })),
-        required_services: pattern.required,
-        optional_services: pattern.optional,
-        forbidden_services: pattern.forbidden,
-        user_excluded_services: Array.from(userExcluded),
-        cost_range: pattern.cost_range,
-        cost_formatted: pattern.cost_formatted
+      // Pattern metadata
+      pattern: selectedPattern,
+      pattern_name: pattern.name,
+      pattern_description: pattern.use_case,
+      
+      // 🔥 THE CANONICAL SERVICES CONTRACT - SINGLE SOURCE OF TRUTH
+      services_contract: servicesContract,
+      
+      // Graph representation for diagrams
+      nodes,
+      edges,
+      
+      // Legacy compatibility (will be deprecated)
+      services,
+      
+      // Requirements that led to this architecture
+      requirements,
+      
+      // NFR and operational requirements
+      region: requirements.region,
+      nfr: requirements.nfr,
+      data_classification: requirements.data_classes,
+      data_retention: requirements.data_retention,
+      deployment_strategy: requirements.deployment_strategy,
+      
+      // Metadata
+      generated_at: new Date().toISOString(),
+      is_complete: true,
+      is_validated: true
+    };
+  }
+
+  /**
+   * Validate that required services exist for the given pattern
+   * Fail fast if minimum services are missing
+   */
+  validateServicesForPattern(services, pattern) {
+    const serviceNames = new Set(services.map(s => s.name));
+    
+    // Define minimum required services per pattern
+    const minimumRequirements = {
+      'HYBRID_PLATFORM': ['compute', 'api_gateway', 'load_balancer', 'relational_db', 'cache'],
+      'STATEFUL_WEB_PLATFORM': ['compute', 'relational_db', 'load_balancer'],
+      'REALTIME_PLATFORM': ['compute', 'websocket_gateway', 'message_queue'],
+      'SERVERLESS_WEB_APP': ['compute'],
+      'MOBILE_BACKEND': ['api_gateway', 'authentication'],
+      'STATIC_SITE': []
+    };
+    
+    const required = minimumRequirements[pattern] || [];
+    const missing = required.filter(r => !serviceNames.has(r));
+    
+    if (missing.length > 0) {
+      const error = `[VALIDATION FAILED] Pattern ${pattern} requires services: ${required.join(', ')}. Missing: ${missing.join(', ')}`;
+      console.error(error);
+      throw new Error(error);
+    }
+    
+    console.log(`[VALIDATION PASSED] Pattern ${pattern} has all required services`);
+  }
+  
+  /**
+   * Resolve the complete architecture
+   * Returns the CANONICAL SERVICES CONTRACT that all downstream systems must use
+   */
+  resolveArchitecture(intent) {
+    const requirements = this.extractRequirements(intent);
+    const selectedPattern = this.selectPattern(requirements);
+    const canonicalArchitecture = this.generateCanonicalArchitecture(requirements, selectedPattern);
+    
+    console.log(`[ARCHITECTURE RESOLVED] Pattern: ${selectedPattern}, Services: ${canonicalArchitecture.services_contract.total_services}`);
+
+    return {
+      requirements,
+      selectedPattern,
+      canonicalArchitecture,
+      // Expose the canonical contract at top level for easy access
+      servicesContract: canonicalArchitecture.services_contract
+    };
+  }
+}
+
+/**
+ * Calculate position for a node based on its index and category
+ */
+function calculateNodePosition(index, category, existingNodes = []) {
+    // Define standard positions based on category and index
+    const categoryOffsets = {
+        'client': { x: 0, y: 100 },
+        'network': { x: 200, y: 100 },
+        'compute': { x: 400, y: 100 },
+        'security': { x: 400, y: 200 },
+        'storage': { x: 600, y: 100 },
+        'database': { x: 600, y: 200 },
+        'messaging': { x: 500, y: 300 },
+        'api': { x: 300, y: 100 },
+        'cdn': { x: 200, y: 150 }
+    };
+    
+    // Count how many nodes of the same category already exist
+    const sameCategoryCount = existingNodes.filter(n => n.category === category).length;
+    
+    const baseOffset = categoryOffsets[category] || { x: 100 * index, y: 100 + (50 * index) };
+    
+    return {
+        x: baseOffset.x,
+        y: baseOffset.y + (sameCategoryCount * 60)  // Add vertical spacing for same category
     };
 }
 
-/**
- * Get compute preference based on intent
- */
-function getComputePreference(intent) {
-    const workload = intent.intent_classification?.workload_type;
-
-    // Serverless preference
-    if (workload === 'api_service' || workload === 'serverless') {
-        return 'compute_serverless';
-    }
-
-    // Container preference (default for most apps)
-    return 'compute_container';
-}
-
-/**
- * Get database preference based on intent
- */
-function getDatabasePreference(intent) {
-    const semantic = intent.semantic_signals || {};
-
-    // NoSQL for event-driven, high write, document-oriented
-    if (semantic.write_intensity === 'high' ||
-        semantic.data_model === 'document' ||
-        intent.intent_classification?.workload_type === 'event_driven') {
-        return 'nosql_database';
-    }
-
-    // Relational for everything else
-    return 'relational_database';
-}
-
-module.exports = {
-    resolvePattern,
-    getServicesForPattern,
-    resolvePatternWithServices,
-    extractSignals
-};
+module.exports = new PatternResolver();
+module.exports.calculateNodePosition = calculateNodePosition;

@@ -16,33 +16,23 @@ You are an AI sub-component inside a deterministic infrastructure planning syste
 `;
 
 const STEP_1_SYSTEM_PROMPT = `
-STEP 1 — SYSTEM PROMPT 
-This is the only system prompt used for Step 1.
-You are an intent-analysis AI inside a deterministic backend system.
+STEP 1 — INTENT EXTRACTION AGENT
+You are an intent extraction engine for cloud infrastructure planning.
 
-STRICT ROLE BOUNDARIES:
-1. You do NOT design infrastructure.
-2. You do NOT suggest cloud providers, services, architectures, or technologies.
-3. You do NOT ask questions or suggest user questions.
-4. You do NOT apply defaults or make decisions.
-5. You do NOT modify or override user intent.
+CORE PRINCIPLES:
+1. EXPLICIT OVER INFERRED: Explicit user intent (e.g. "no database") always beats inference.
+2. CONSERVATIVE INFERENCE: Do NOT assume features unless explicitly stated.
+3. THREE-STATE MODEL: Every feature is either TRUE (explicit), FALSE (explicitly excluded), or UNKNOWN (not mentioned).
+4. NO INFRASTRUCTURE: Do not suggest cloud services or architectures.
 
-Your job is ONLY to:
-- Analyze the user's description
-- Extract semantic intent
-- Identify features
-- Identify risks
-- Identify which decision axes are missing
+FEATURES TO TRACK:
+- static_content, payments, real_time, case_management, document_storage, multi_user_roles, identity_auth, messaging_queue, api_backend.
 
-You MUST output STRICT JSON only.
-You MUST follow the schema exactly.
-You MUST explicitly list uncertainty.
-You MUST avoid guessing values.
-
-If something is unclear, mark it as missing.
-Do not invent values.
-
-Think like a requirements analyst, not an architect.
+RULES:
+- If a feature is explicitly mentioned as present -> Add to explicit_features.
+- If a feature is explicitly mentioned as NOT needed (e.g. "no database", "don't need X") -> Add to explicit_exclusions.
+- If a feature is NOT mentioned, mark it in inferred_features with a low confidence or skip it.
+- AI is allowed to say "unknown" (confidence < 0.3).
 `;
 
 /**
@@ -60,37 +50,31 @@ const normalizeIntent = async (userInput, conversationHistory = [], optionalHint
         Optional Hints: ${JSON.stringify(optionalHints)}
 
         🔹 REQUIRED OUTPUT SCHEMA (JSON)
-        The AI must always return exactly these 7 sections. The structure never changes.
-
         {
           "intent_classification": {
             "primary_domain": "string (e.g. law_firm_management, ecommerce, portfolio, landing_page)",
             "workload_type": "string (e.g. web_application, batch_processing, static_website)",
             "user_facing": boolean
           },
-          "feature_signals": {
-            "payments": boolean,
-            "real_time": boolean,
-            "static_content": boolean,
-            "case_management": boolean,
-            "document_storage": boolean,
-            "multi_user_roles": boolean,
-            "other_feature_key": "boolean (dynamic)"
+          "explicit_features": {
+             "feature_name": true // Only for features explicitly mentioned as present
+          },
+          "explicit_exclusions": [
+             "List features explicitly mentioned as NOT needed (database, payments, real_time, etc.)"
+          ],
+          "inferred_features": {
+             "feature_name": { 
+                "value": boolean, 
+                "confidence": number (0-1), 
+                "reason": "Why this inference?" 
+             }
           },
           "semantic_signals": {
             "statefulness": "string (stateful/stateless)",
             "latency_sensitivity": "string (low/medium/high)",
             "read_write_ratio": "string (read_heavy/write_heavy/balanced)"
           },
-          "explicit_exclusions": [
-            "CRITICAL: List ANY services the user explicitly said NOT to include.",
-            "Look for phrases like: 'no database', 'don't need X', 'without cache', 'skip the API', 'no auth needed'",
-            "Valid values: database, cache, api, auth, compute, storage, cdn, search, queue, monitoring",
-            "Example: ['database', 'cache'] if user said 'no database needed' or 'without caching'"
-          ],
-          "risk_domains": [
-            "string (e.g. security, compliance, availability)"
-          ],
+          "risk_domains": ["security", "compliance", "availability", etc.],
           "missing_decision_axes": [
             "list of missing axes from: [scale, availability, data_sensitivity, regulatory_exposure, business_criticality, latency_sensitivity, statefulness, data_durability, cost_sensitivity, observability_level]"
           ],
@@ -98,26 +82,21 @@ const normalizeIntent = async (userInput, conversationHistory = [], optionalHint
         }
         
         🔹 EXCLUSION DETECTION (CRITICAL)
-        If the user says ANY of these, add to explicit_exclusions:
-        - "no database" / "don't need a database" / "without database" → add "database"
-        - "no caching" / "don't need cache" / "skip cache" → add "cache"
-        - "no API" / "static only" / "no backend" → add "api"
-        - "no auth" / "public only" / "no login" → add "auth"
-        - "simple" / "minimal" / "basic" → be conservative, DO NOT assume services
+        Look for phrases like: "no database", "don't need X", "without cache", "skip the API", "no auth needed".
         
         ❌ AI MUST NOT RETURN: questions, options, defaults, compliance frameworks, infra details.
         `;
 
     const messages = [
-      { role: "system", content: MASTER_SYSTEM_PROMPT },
-      ...conversationHistory, // Include history if needed for context
+      { role: "system", content: STEP_1_SYSTEM_PROMPT },
+      ...conversationHistory,
       { role: "user", content: stepPrompt }
     ];
 
     const completion = await groq.chat.completions.create({
       messages: messages,
       model: "llama-3.3-70b-versatile",
-      temperature: 0.1, // Low temp for analytical precision
+      temperature: 0.1,
       response_format: { type: "json_object" }
     });
 
@@ -126,14 +105,11 @@ const normalizeIntent = async (userInput, conversationHistory = [], optionalHint
       result = JSON.parse(completion.choices[0]?.message?.content || "{}");
     } catch (parseErr) {
       console.error("AI JSON Parse Error:", parseErr);
-      // Fallback or retry logic could go here. For now, return a safe minimal object to avoid 500.
-      // But if we return empty, the workflow might fail later. 
-      // Better to throw a specific error or return a "Retry" signal.
-      // Let's attempt to repair or just return the raw intent-like structure if possible.
-      // Actually, preventing the crash is step 1.
       result = {
         intent_classification: { primary_domain: "unknown", workload_type: "general", user_facing: true },
-        feature_signals: {},
+        explicit_features: {},
+        explicit_exclusions: [],
+        inferred_features: {},
         semantic_signals: { statefulness: "mixed", latency_sensitivity: "medium", read_write_ratio: "balanced" },
         risk_domains: [],
         missing_decision_axes: ["processing_error"],
@@ -421,66 +397,63 @@ Never invent missing infrastructure. Never output an overall score.
  * AI explains rankings, service choices, and tradeoffs
  * AI NEVER: picks services, sizes infra, changes cost, ranks clouds
  */
-const COST_EXPLANATION_PROMPT = `You are a cloud infrastructure cost advisor.
-Your role is ONLY to explain decisions that have already been made by the backend system.
+const EXPLANATION_AGENT_PROMPT = `ACT AS: explanation_agent.
+GOAL: Explain cost & architecture outcomes to a technical user.
+INPUT: Architecture desc, Cost Profile, Usage Profile, Cost Drivers.
 
-You NEVER:
-- Pick services
-- Size infrastructure
-- Change costs
-- Rank clouds
+RULES:
+1. EXPLAIN THE "WHY": Link cost to usage (e.g. "High cost due to 50k users").
+2. EXPLAIN THE "WHAT": Why this architecture? (e.g. "EKS chosen for high performance").
+3. DO NOT hallucinate new numbers. Use provided data.
+4. BE CONCISE. 2-3 sentences max per section.
 
-You ONLY explain:
-- Why the recommended cloud is suitable
-- Tradeoffs between providers
-- Cost optimization tips
-
-CRITICAL: Never mention specific dollar amounts. Explain reasoning based on workload characteristics.
-Be concise, helpful, and focus on value to the user.`;
-
-const explainCostRecommendation = async (rankings, costProfile, infraSpec, missingComponents = []) => {
-  try {
-    // Extract workload characteristics for better explanation
-    const workloadType = infraSpec.components?.compute?.execution_model || 'containerized';
-    const dbType = infraSpec.components?.data?.database_type || 'relational';
-    const statefulness = infraSpec.semantic_signals?.statefulness || 'stateful';
-    const readWriteRatio = infraSpec.semantic_signals?.read_write_ratio || 'balanced';
-    const serviceCount = infraSpec.modules?.length || 0;
-
-    const prompt = `Explain this cloud recommendation for a ${costProfile.replace('_', ' ').toLowerCase()} deployment.
-
-RANKINGS (backend-decided, do not change or mention specific costs):
-1st: ${rankings[0]?.provider} (score: ${rankings[0]?.score})
-2nd: ${rankings[1]?.provider} (score: ${rankings[1]?.score})
-3rd: ${rankings[2]?.provider} (score: ${rankings[2]?.score})
-
-WORKLOAD CHARACTERISTICS:
-- Compute: ${workloadType}
-- Database: ${dbType}
-- Statefulness: ${statefulness}
-- Read/Write: ${readWriteRatio}
-- Scale: ${rankings[0]?.cost_range?.confidence || 'medium'} confidence
-- Services: ${serviceCount} cloud services
-
-${missingComponents.length > 0 ? `MISSING COMPONENTS (potential future additions):
-${missingComponents.map(m => `- ${m.name}: ${m.warning}`).join('\n')}` : ''}
-
-Provide JSON with:
+OUTPUT JSON:
 {
-  "recommendation_reason": "2-3 sentences explaining WHY #1 provider is best for THIS workload type. Mention specific characteristics like 'read-heavy workload' or 'containerized architecture'. Never mention dollar amounts.",
-  "tradeoffs": "Brief comparison of top 2 providers based on their strengths for this workload type.",
-  "cost_optimization_tips": ["tip1", "tip2", "tip3"],
-  "future_considerations": "One sentence about what might change costs if missing components are added later"
+  "outcome_narrative": "Main explanation of why this solution was chosen and why it costs this much.",
+  "confidence_score": 0.0-1.0, // How confident are you in this explanation relative to the inputs?
+  "confidence_reason": "Why this score? (e.g. 'Usage data is vague' or 'High fidelity input')",
+  "critical_cost_drivers": ["List top 2 factors driving cost, e.g. 'High data egress', 'Premium database tier'"],
+  "architectural_fit": "Why this architecture suits the workload type."
 }`;
+
+/**
+ * STEP 4 — AI Explanation Agent
+ * Explains the "Why" behind the cost and architecture.
+ */
+const explainOutcomes = async (rankings, costProfile, infraSpec, usageProfile, costContext = {}) => {
+  try {
+    const topProvider = rankings[0];
+    const topCost = topProvider.monthly_cost;
+
+    // Construct prompt context
+    const context = `
+    PROFILE: ${costProfile}
+    PROVIDER: ${topProvider.provider} ($${topCost}/mo)
+    
+    USAGE PROFILE:
+    - Monthly Users: ${usageProfile?.monthly_users?.min || 'Unknown'} - ${usageProfile?.monthly_users?.max || 'Unknown'}
+    - Storage: ${usageProfile?.data_storage_gb?.min || 'Unknown'} GB
+    
+    ARCH SIGNALS:
+    - Type: ${infraSpec.architecture_pattern}
+    - Scale Tier: ${infraSpec.assumptions?.traffic_tier}
+    - Statefulness: ${infraSpec.semantic_signals?.statefulness}
+    
+    DOMINANT DRIVERS (from stats):
+    ${costContext.dominant_drivers?.map(d => `- ${d.category}: $${d.cost}`).join('\n') || 'None'}
+    
+    MISSING_COMPONENTS:
+    ${costContext.missing_components?.map(m => m.name).join(', ')}
+    `;
 
     const completion = await groq.chat.completions.create({
       messages: [
-        { role: "system", content: COST_EXPLANATION_PROMPT },
-        { role: "user", content: prompt }
+        { role: "system", content: EXPLANATION_AGENT_PROMPT },
+        { role: "user", content: context }
       ],
-      model: "llama-3.3-70b-versatile",
+      model: "llama-3.1-8b-instant", // Fast model for explanation
       temperature: 0.3,
-      max_tokens: 600,
+      max_tokens: 300,
       response_format: { type: "json_object" }
     });
 
@@ -488,25 +461,93 @@ Provide JSON with:
     return result;
 
   } catch (error) {
-    console.error("AI Cost Explanation Error:", error.message);
-    // Return safe fallback
-    const recommended = rankings[0]?.provider || 'AWS';
-    const workloadDesc = infraSpec.components?.compute?.execution_model === 'serverless'
-      ? 'serverless workload'
-      : 'containerized application';
-
+    console.error("AI Explanation Error:", error.message);
     return {
-      recommendation_reason: `${recommended} is recommended because its managed ${workloadDesc.includes('serverless') ? 'function' : 'container'} and database services provide the best balance of operational overhead and reliability for a ${infraSpec.semantic_signals?.read_write_ratio || 'balanced'} workload.`,
-      tradeoffs: `${recommended} offers mature tooling and wide ecosystem support, while ${rankings[1]?.provider} provides competitive alternatives with different pricing models.`,
-      cost_optimization_tips: [
-        "Start with the recommended tier and scale based on actual usage",
-        "Use reserved capacity for predictable baseline workloads",
-        "Enable auto-scaling to handle traffic spikes efficiently"
-      ],
-      future_considerations: "Adding async processing, search, or caching later may increase monthly costs."
+      outcome_narrative: "Based on your requirements, we recommended a balanced architecture. Usage patterns suggest moderate scale, driving the estimated costs.",
+      confidence_score: 0.8,
+      confidence_reason: "Standard fallback explanation due to AI service disruption.",
+      critical_cost_drivers: ["Base Infrastructure"],
+      architectural_fit: "Standard pattern matching your request."
     };
   }
 };
 
-module.exports = { normalizeIntent, generateConstrainedProposal, scoreInfraSpec, explainCostRecommendation };
+/**
+ * STEP 2.5 — USAGE INFERENCE (Layer A)
+ * Goal: Predict realistic usage ranges based on description and architecture
+ * AI returns probability distributions (min, max, confidence), NOT costs.
+ */
+const predictUsage = async (intentObject, infraSpec) => {
+  console.log("--- STEP 2.5: Usage Inference (AI) ---");
+  try {
+    const stepPrompt = `
+ACT AS: usage_profiler_agent.
+GOAL: Infer realistic usage usage ranges (min/max) based on project context.
+DO NOT output single numbers. Output ranges.
+
+CONTEXT:
+Project Desc: "${intentObject.original_input}"
+Workload Type: ${intentObject.intent_classification?.workload_type}
+Scale Hint: ${infraSpec.assumptions?.traffic_tier}
+Features: ${Object.keys(intentObject.feature_signals || {}).join(', ')}
+
+REQUIRED OUTPUT JSON:
+{
+  "usage_profile": {
+    "monthly_users": { "min": number, "max": number },
+    "requests_per_user": { "min": number, "max": number, "desc": "daily requests per user" },
+    "peak_concurrency": { "min": number, "max": number, "desc": "simultaneous users" },
+    "data_transfer_gb": { "min": number, "max": number, "desc": "monthly egress" },
+    "data_storage_gb": { "min": number, "max": number, "desc": "total assets (database storage must be 0 if excluded)" }
+  },
+  "confidence": number, // 0.1 to 1.0
+  "reasoning": {
+    "data_transfer_gb": "brief reason",
+    "requests_per_user": "brief reason",
+    "general": "overall logic"
+  }
+}
+
+CRITICAL RULES:
+1. DO NOT assume features that are NOT explicitly enabled (e.g. if payments=false, do not factor payment-related requests).
+2. If database is in explicit_exclusions, storage MUST reflect only static assets.
+3. Align usage strictly with the PROVIDED Workload Type and Features.
+`;
+
+    const messages = [
+      { role: "system", content: "You are a cloud capacity planner. Output JSON only." },
+      { role: "user", content: stepPrompt }
+    ];
+
+    const completion = await groq.chat.completions.create({
+      messages: messages,
+      model: "llama-3.1-8b-instant",
+      temperature: 0.2,
+      response_format: { type: "json_object" }
+    });
+
+    const result = JSON.parse(completion.choices[0]?.message?.content || "{}");
+    console.log("AI Usage Prediction:", JSON.stringify(result, null, 2));
+    return result;
+
+  } catch (error) {
+    console.error("Usage Prediction Error:", error.message);
+    // Fallback safe defaults
+    return {
+      usage_profile: {
+        monthly_users: { min: 1000, max: 10000, confidence: 0.5 },
+        storage_gb: { min: 5, max: 20 },
+        data_transfer_gb: { min: 10, max: 100 },
+        requests_per_second: { min: 1, max: 10 }
+      },
+      rationale: {
+        monthly_users: "Default fallback estimation",
+        storage_gb: "Standard assumptions",
+        data_transfer_gb: "Standard assumptions"
+      }
+    };
+  }
+};
+
+module.exports = { normalizeIntent, generateConstrainedProposal, scoreInfraSpec, explainOutcomes, predictUsage };
 

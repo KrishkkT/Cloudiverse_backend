@@ -1,142 +1,135 @@
 /**
  * CANONICAL ARCHITECTURE PATTERNS
  * 
- * Every Cloudiverse project resolves to exactly one of these 8 patterns.
- * This ensures deterministic, predictable infrastructure.
+ * Every Cloudiverse project resolves to exactly ONE of these 6 patterns.
+ * This is the most important structural decision in the system.
  * 
- * AI never selects patterns - backend rules do.
- * 🔒 FIX 3: AI cannot change or override these patterns.
+ * CORE PRINCIPLE:
+ *   Pattern → Cost Engine → Pricing Model
+ *   AI NEVER bypasses either.
+ * 
+ * COST ENGINE TYPES:
+ *   - 'formula': Pure math, no Terraform/Infracost
+ *   - 'hybrid':  Formula for compute, optional Infracost for DB
+ *   - 'infracost': Full Terraform IR + Infracost required
  */
 
-// The 8 canonical patterns with required/optional/forbidden services
 const ARCHITECTURE_PATTERNS = {
 
-    // 1. STATIC_WEB_HOSTING - Portfolio, landing pages, docs
-    // Cost: $1-10/month (CRITICAL GUARDRAIL)
-    // 🔒 FIX 4: HARD SERVICE RULES
+    // ═══════════════════════════════════════════════════════════════════
+    // 1. STATIC_WEB_HOSTING — Formula Based (NEVER INFRACOST)
+    // ═══════════════════════════════════════════════════════════════════
     STATIC_WEB_HOSTING: {
         name: 'Static Web Hosting',
-        description: 'Simple static websites, portfolios, landing pages, documentation sites',
-        // 🔒 FIX 4: REQUIRED SERVICES (ONLY THESE 3)
-        required: ['object_storage', 'cdn', 'dns'],
-        // 🔒 FIX 4: OPTIONAL (monitoring only)
-        optional: ['monitoring'],
-        // 🔒 FIX 4: FORBIDDEN SERVICES (HARD BLOCK - NO EXCEPTIONS)
-        forbidden: [
+        description: 'Static websites, portfolios, landing pages, documentation sites',
+        cost_engine: 'formula',
+        cost_drivers: ['bandwidth', 'storage', 'dns'],
+        allowed_services: ['object_storage', 'cdn', 'dns', 'monitoring', 'identity_auth'],
+        forbidden_services: [
             'compute_vm', 'compute_container', 'compute_serverless', 'compute_batch',
             'relational_database', 'nosql_database', 'cache',
-            'load_balancer', 'api_gateway', 'messaging_queue', 'event_bus', 'search_engine',
-            'secrets_management', 'block_storage', 'identity_auth'
+            'load_balancer', 'api_gateway', 'messaging_queue', 'event_bus'
         ],
         cost_range: { min: 1, max: 10, unit: 'month' },
-        cost_formatted: '$1-10/month',
-        // 🔒 FIX 5: Cost presentation note
-        cost_note: 'Based on storage and CDN usage. Traffic not yet specified.',
-        ai_mode: 'EXPLAIN_ONLY'  // 🔒 FIX 3: AI cannot change architecture
+        infracost_allowed: false
     },
 
-    // 2. SERVERLESS_WEB_APP - SPAs, mobile backends, APIs
+    // ═══════════════════════════════════════════════════════════════════
+    // 2. SERVERLESS_WEB_APP — Hybrid (Formula + Optional Infracost for DB)
+    // ═══════════════════════════════════════════════════════════════════
     SERVERLESS_WEB_APP: {
         name: 'Serverless Web App',
-        description: 'Single-page apps with APIs, mobile backends, lightweight web services',
-        required: [
+        description: 'SPAs with APIs, mobile backends, lightweight web services',
+        cost_engine: 'hybrid',
+        cost_drivers: ['invocations', 'api_requests', 'bandwidth', 'managed_db'],
+        allowed_services: [
             'object_storage', 'cdn', 'api_gateway', 'compute_serverless',
-            'logging', 'monitoring', 'secrets_management', 'dns'
+            'nosql_database', 'event_bus', 'logging', 'monitoring',
+            'secrets_management', 'dns', 'identity_auth'
         ],
-        optional: ['nosql_database', 'event_bus'],
-        forbidden: ['compute_vm', 'compute_batch'],
-        cost_range: { min: 10, max: 100, unit: 'month' },
-        cost_formatted: '$10-100/month'
+        forbidden_services: ['compute_vm', 'compute_batch', 'load_balancer'],
+        cost_range: { min: 10, max: 150, unit: 'month' },
+        infracost_allowed: true,
+        infracost_scope: ['nosql_database', 'relational_database'] // Only these go to Infracost
     },
 
-    // 3. THREE_TIER_WEB_APP - Business apps, dashboards, admin panels
-    THREE_TIER_WEB_APP: {
-        name: 'Three-Tier Web App',
-        description: 'Classic MVC applications, admin dashboards, business apps with databases',
-        required: [
-            'relational_database', 'load_balancer', 'object_storage',
-            'logging', 'monitoring', 'secrets_management', 'dns'
+    // ═══════════════════════════════════════════════════════════════════
+    // 3. CONTAINERIZED_WEB_APP — Infracost Required
+    // ═══════════════════════════════════════════════════════════════════
+    CONTAINERIZED_WEB_APP: {
+        name: 'Containerized Web App',
+        description: 'Containerized services, REST APIs, microservices',
+        cost_engine: 'infracost',
+        cost_drivers: ['compute_hours', 'memory', 'load_balancers', 'databases'],
+        allowed_services: [
+            'compute_container', 'load_balancer', 'relational_database', 'nosql_database',
+            'cache', 'object_storage', 'cdn', 'api_gateway',
+            'logging', 'monitoring', 'secrets_management', 'dns', 'identity_auth'
         ],
-        optional: ['cache', 'cdn', 'compute_vm', 'compute_container'],
-        forbidden: ['compute_batch'],
-        compute_choice: ['compute_vm', 'compute_container'], // One required
-        cost_range: { min: 50, max: 300, unit: 'month' },
-        cost_formatted: '$50-300/month'
+        forbidden_services: ['compute_vm', 'compute_batch'],
+        cost_range: { min: 80, max: 500, unit: 'month' },
+        infracost_allowed: true
     },
 
-    // 4. CONTAINERIZED_APP - Single containerized service, APIs
-    CONTAINERIZED_APP: {
-        name: 'Containerized App',
-        description: 'Single containerized service, REST APIs, web applications',
-        required: [
-            'compute_container', 'load_balancer', 'relational_database',
-            'logging', 'monitoring', 'secrets_management', 'dns'
+    // ═══════════════════════════════════════════════════════════════════
+    // 4. MOBILE_BACKEND_API — Hybrid (Formula for API + Infracost for DB)
+    // ═══════════════════════════════════════════════════════════════════
+    MOBILE_BACKEND_API: {
+        name: 'Mobile Backend API',
+        description: 'APIs for mobile apps, push notifications, user auth',
+        cost_engine: 'hybrid',
+        cost_drivers: ['api_calls', 'auth', 'db_read_write', 'bandwidth'],
+        allowed_services: [
+            'api_gateway', 'compute_serverless', 'nosql_database', 'relational_database',
+            'event_bus', 'messaging_queue', 'object_storage',
+            'logging', 'monitoring', 'secrets_management', 'dns', 'identity_auth'
         ],
-        optional: ['cache', 'object_storage', 'cdn'],
-        forbidden: ['compute_vm', 'compute_batch'],
-        cost_range: { min: 80, max: 400, unit: 'month' },
-        cost_formatted: '$80-400/month'
+        forbidden_services: ['compute_vm', 'compute_batch', 'cdn'],
+        cost_range: { min: 20, max: 200, unit: 'month' },
+        infracost_allowed: true,
+        infracost_scope: ['nosql_database', 'relational_database']
     },
 
-    // 5. MICROSERVICES_PLATFORM - Large SaaS, complex platforms
-    MICROSERVICES_PLATFORM: {
-        name: 'Microservices Platform',
-        description: 'Complex platforms with multiple services, large teams, high scalability',
-        required: [
-            'compute_container', 'api_gateway', 'relational_database', 'nosql_database',
-            'event_bus', 'messaging_queue', 'cache',
-            'logging', 'monitoring', 'secrets_management', 'dns'
+    // ═══════════════════════════════════════════════════════════════════
+    // 5. TRADITIONAL_VM_APP — Infracost Required
+    // ═══════════════════════════════════════════════════════════════════
+    TRADITIONAL_VM_APP: {
+        name: 'Traditional VM App',
+        description: 'Legacy applications, VMs, classic server deployments',
+        cost_engine: 'infracost',
+        cost_drivers: ['vm_hours', 'disk', 'bandwidth'],
+        allowed_services: [
+            'compute_vm', 'load_balancer', 'relational_database',
+            'block_storage', 'object_storage',
+            'logging', 'monitoring', 'secrets_management', 'dns', 'identity_auth'
         ],
-        optional: ['search_engine', 'cdn', 'object_storage'],
-        forbidden: ['compute_vm'],
-        cost_range: { min: 300, max: 2000, unit: 'month' },
-        cost_formatted: '$300-2000/month'
+        forbidden_services: ['compute_container', 'compute_serverless', 'compute_batch', 'cdn', 'api_gateway'],
+        cost_range: { min: 50, max: 400, unit: 'month' },
+        infracost_allowed: true
     },
 
-    // 6. EVENT_DRIVEN_SYSTEM - Notifications, background jobs, triggers
-    EVENT_DRIVEN_SYSTEM: {
-        name: 'Event-Driven System',
-        description: 'Notification systems, background job processors, mobile push triggers',
-        required: [
-            'event_bus', 'messaging_queue', 'compute_serverless',
-            'logging', 'monitoring'
-        ],
-        optional: ['nosql_database', 'object_storage', 'secrets_management', 'dns'],
-        forbidden: ['compute_vm', 'compute_batch', 'load_balancer'],
-        cost_range: { min: 20, max: 150, unit: 'month' },
-        cost_formatted: '$20-150/month'
-    },
-
-    // 7. DATA_PROCESSING_PIPELINE - ETL, analytics, batch jobs
+    // ═══════════════════════════════════════════════════════════════════
+    // 6. DATA_PROCESSING_PIPELINE — Infracost Required
+    // ═══════════════════════════════════════════════════════════════════
     DATA_PROCESSING_PIPELINE: {
         name: 'Data Processing Pipeline',
-        description: 'ETL pipelines, analytics ingestion, batch data processing',
-        required: [
-            'object_storage', 'compute_batch', 'logging', 'monitoring'
+        description: 'ETL pipelines, analytics, batch data processing',
+        cost_engine: 'infracost',
+        cost_drivers: ['batch_compute', 'storage', 'orchestration'],
+        allowed_services: [
+            'compute_batch', 'object_storage', 'relational_database', 'nosql_database',
+            'messaging_queue', 'event_bus',
+            'logging', 'monitoring', 'secrets_management', 'dns'
         ],
-        optional: ['relational_database', 'nosql_database', 'messaging_queue'],
-        database_choice: ['relational_database', 'nosql_database'], // One required
-        forbidden: ['cdn', 'api_gateway', 'load_balancer'],
+        forbidden_services: ['compute_vm', 'compute_container', 'cdn', 'api_gateway', 'load_balancer'],
         cost_range: { min: 50, max: 500, unit: 'month' },
-        cost_formatted: '$50-500/month'
-    },
-
-    // 8. INTERNAL_TOOL - Admin tools, ops dashboards
-    INTERNAL_TOOL: {
-        name: 'Internal Tool',
-        description: 'Admin tools, internal dashboards, operations management',
-        required: [
-            'relational_database', 'logging', 'monitoring', 'secrets_management'
-        ],
-        optional: ['load_balancer', 'compute_vm', 'compute_container'],
-        compute_choice: ['compute_vm', 'compute_container'], // One required
-        forbidden: ['cdn', 'api_gateway', 'event_bus', 'messaging_queue'],
-        cost_range: { min: 30, max: 150, unit: 'month' },
-        cost_formatted: '$30-150/month'
+        infracost_allowed: true
     }
 };
 
-// Canonical service classes - THE ONLY VALID CLASSES
+// ═══════════════════════════════════════════════════════════════════
+// CANONICAL SERVICE CLASSES
+// ═══════════════════════════════════════════════════════════════════
 const CANONICAL_SERVICE_CLASSES = [
     'compute_vm',
     'compute_container',
@@ -156,65 +149,57 @@ const CANONICAL_SERVICE_CLASSES = [
     'logging',
     'monitoring',
     'secrets_management',
-    'dns'
+    'dns',
+    'identity_auth'
 ];
 
-/**
- * Get a pattern by name
- */
+// ═══════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════
+
 function getPattern(patternName) {
     return ARCHITECTURE_PATTERNS[patternName] || null;
 }
 
-/**
- * Get all pattern names
- */
 function getPatternNames() {
     return Object.keys(ARCHITECTURE_PATTERNS);
 }
 
-/**
- * Validate that a service class is canonical
- */
 function isValidServiceClass(serviceClass) {
     return CANONICAL_SERVICE_CLASSES.includes(serviceClass);
 }
 
-/**
- * Get required services for a pattern
- */
-function getRequiredServices(patternName) {
+function getCostEngine(patternName) {
     const pattern = ARCHITECTURE_PATTERNS[patternName];
-    if (!pattern) return [];
-
-    const services = [...pattern.required];
-
-    // Add compute choice (first option as default)
-    if (pattern.compute_choice && !services.some(s => pattern.compute_choice.includes(s))) {
-        services.push(pattern.compute_choice[0]);
-    }
-
-    // Add database choice (first option as default)
-    if (pattern.database_choice && !services.some(s => pattern.database_choice.includes(s))) {
-        services.push(pattern.database_choice[0]);
-    }
-
-    return services;
+    return pattern ? pattern.cost_engine : null;
 }
 
-/**
- * Check if a service is forbidden for a pattern
- */
+function isInfracostAllowed(patternName) {
+    const pattern = ARCHITECTURE_PATTERNS[patternName];
+    return pattern ? pattern.infracost_allowed : false;
+}
+
+function getInfracostScope(patternName) {
+    const pattern = ARCHITECTURE_PATTERNS[patternName];
+    return pattern?.infracost_scope || null; // null means "all services"
+}
+
+function getAllowedServices(patternName) {
+    const pattern = ARCHITECTURE_PATTERNS[patternName];
+    return pattern ? pattern.allowed_services : [];
+}
+
+function getForbiddenServices(patternName) {
+    const pattern = ARCHITECTURE_PATTERNS[patternName];
+    return pattern ? pattern.forbidden_services : [];
+}
+
 function isForbiddenService(patternName, serviceClass) {
     const pattern = ARCHITECTURE_PATTERNS[patternName];
     if (!pattern) return false;
-    return pattern.forbidden.includes(serviceClass);
+    return pattern.forbidden_services.includes(serviceClass);
 }
 
-/**
- * Validate services against pattern rules
- * Returns { valid: boolean, errors: string[] }
- */
 function validateServicesForPattern(patternName, services) {
     const pattern = ARCHITECTURE_PATTERNS[patternName];
     if (!pattern) {
@@ -225,31 +210,16 @@ function validateServicesForPattern(patternName, services) {
 
     // Check for forbidden services
     for (const service of services) {
-        if (pattern.forbidden.includes(service)) {
+        if (pattern.forbidden_services.includes(service)) {
             errors.push(`Service '${service}' is forbidden for pattern '${patternName}'`);
         }
     }
 
-    // Check for required services
-    for (const required of pattern.required) {
-        if (!services.includes(required)) {
-            errors.push(`Missing required service '${required}' for pattern '${patternName}'`);
-        }
-    }
-
-    // Check compute choice
-    if (pattern.compute_choice) {
-        const hasCompute = services.some(s => pattern.compute_choice.includes(s));
-        if (!hasCompute) {
-            errors.push(`Pattern '${patternName}' requires one of: ${pattern.compute_choice.join(', ')}`);
-        }
-    }
-
-    // Check database choice
-    if (pattern.database_choice) {
-        const hasDatabase = services.some(s => pattern.database_choice.includes(s));
-        if (!hasDatabase) {
-            errors.push(`Pattern '${patternName}' requires one of: ${pattern.database_choice.join(', ')}`);
+    // Check that all services are in the allowed list
+    for (const service of services) {
+        if (!pattern.allowed_services.includes(service) && !pattern.forbidden_services.includes(service)) {
+            // Warn but don't fail for unknown services
+            console.warn(`[PATTERN] Service '${service}' not in allowed list for '${patternName}'`);
         }
     }
 
@@ -265,8 +235,12 @@ module.exports = {
     getPattern,
     getPatternNames,
     isValidServiceClass,
-    getRequiredServices,
+    getCostEngine,
+    isInfracostAllowed,
+    getInfracostScope,
+    getAllowedServices,
+    getForbiddenServices,
     isForbiddenService,
     validateServicesForPattern,
-    validateServiceSelection: validateServicesForPattern // Alias for workflow.js
+    validateServiceSelection: validateServicesForPattern
 };
