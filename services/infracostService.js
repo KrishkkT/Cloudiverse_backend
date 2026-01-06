@@ -1634,7 +1634,7 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
     // ═══════════════════════════════════════════════════════════════════
     // CALL ENGINE ONCE - It internally calculates ALL providers
     // ═══════════════════════════════════════════════════════════════════
-    const engineResult = engine.calculate(usageProfile, {
+    const engineResult = await engine.calculate(usageProfile, {
       costProfile,
       hasDatabase: services.some(s => ['relational_database', 'nosql_database'].includes(s))
     });
@@ -1651,9 +1651,16 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
       const providerData = engineResult?.cost_estimates?.[provider] ||
         engineResult?.cost_estimates?.[provider.toUpperCase()] || {};
 
-      const numericCost = providerData.total || 0;
+      // 🔥 CRITICAL: Engine returns monthly_cost AND total (both have same value)
+      // Try both fields to ensure we get the correct cost
+      const numericCost = providerData.monthly_cost || providerData.total || 0;
+      
+      if (numericCost <= 0) {
+        console.error(`[COST ANALYSIS] Invalid cost for ${provider.toUpperCase()}: $${numericCost}`);
+        console.error(`[COST ANALYSIS] Provider data:`, providerData);
+        throw new Error(`Engine returned invalid cost $${numericCost} for ${provider}`);
+      }
 
-      // Build structured CostResult for this provider
       // Build structured CostResult for this provider
       const structuredResult = costResultModel.buildCostResult(
         provider,

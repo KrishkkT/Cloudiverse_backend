@@ -1,12 +1,22 @@
 /**
  * Pattern Resolver Service
- * Implements architecture taxonomy and governance layer
+ * Implements V1 Pattern Catalog (Authoritative)
+ * 
+ * 11 CANONICAL PATTERNS - Each project resolves to exactly ONE
+ * Extensions add services, patterns never combine
  */
 
+// ═══════════════════════════════════════════════════════════════════════════
+// V1 PATTERN CATALOG (AUTHORITATIVE)
+// ═══════════════════════════════════════════════════════════════════════════
 const PATTERN_CATALOG = {
+  // 1️⃣ STATIC_SITE
   STATIC_SITE: {
     name: 'Static Site',
-    use_case: 'HTML/CSS/JS only',
+    use_case: 'Informational websites, landing pages, documentation',
+    mandatory_services: ['object_storage', 'cdn', 'logging', 'monitoring'],
+    optional_services: ['identity_auth', 'waf'],
+    forbidden_services: ['compute', 'relational_database', 'api_gateway'],
     requirements: {
       stateful: false,
       backend: false,
@@ -15,9 +25,31 @@ const PATTERN_CATALOG = {
       ml: false
     }
   },
+  
+  // 2️⃣ STATIC_SITE_WITH_AUTH
+  STATIC_SITE_WITH_AUTH: {
+    name: 'Static Site with Auth',
+    use_case: 'Marketing site with login / gated content',
+    mandatory_services: ['object_storage', 'cdn', 'identity_auth', 'logging', 'monitoring'],
+    optional_services: ['waf'],
+    forbidden_services: ['compute', 'relational_database', 'api_gateway'],
+    requirements: {
+      stateful: false,
+      backend: false,
+      realtime: false,
+      payments: false,
+      ml: false,
+      authentication: true
+    }
+  },
+  
+  // 3️⃣ SERVERLESS_API
   SERVERLESS_API: {
     name: 'Serverless API',
-    use_case: 'Stateless APIs',
+    use_case: 'Pure API backend, stateless, event-driven',
+    mandatory_services: ['api_gateway', 'serverless_compute', 'logging', 'monitoring'],
+    optional_services: ['nosql_database', 'object_storage', 'message_queue'],
+    forbidden_services: ['relational_database', 'load_balancer'],
     requirements: {
       stateful: false,
       backend: true,
@@ -26,9 +58,15 @@ const PATTERN_CATALOG = {
       ml: false
     }
   },
+  
+  // 4️⃣ SERVERLESS_WEB_APP
   SERVERLESS_WEB_APP: {
     name: 'Serverless Web App',
-    use_case: 'Simple full-stack',
+    use_case: 'Simple full-stack apps, low complexity',
+    mandatory_services: ['cdn', 'api_gateway', 'serverless_compute', 'identity_auth', 'logging', 'monitoring'],
+    optional_services: ['nosql_database', 'object_storage'],
+    forbidden_services: ['relational_database', 'load_balancer', 'payment_gateway'],
+    invalid_if: ['payments', 'realtime', 'multi_user_workflows'],
     requirements: {
       stateful: false,
       backend: true,
@@ -37,9 +75,15 @@ const PATTERN_CATALOG = {
       ml: false
     }
   },
+  
+  // 5️⃣ STATEFUL_WEB_PLATFORM
   STATEFUL_WEB_PLATFORM: {
     name: 'Stateful Web Platform',
-    use_case: 'SaaS, ERPs, CRMs',
+    use_case: 'SaaS, CRMs, dashboards, ERPs (NO payments, NO queues)',
+    mandatory_services: ['cdn', 'load_balancer', 'app_compute', 'relational_database', 'identity_auth', 'logging', 'monitoring'],
+    optional_services: ['object_storage', 'cache'],
+    forbidden_services: ['message_queue', 'payment_gateway', 'serverless_compute'],
+    invalid_if: ['payments', 'background_jobs', 'async_workflows'],
     requirements: {
       stateful: true,
       backend: true,
@@ -48,76 +92,113 @@ const PATTERN_CATALOG = {
       ml: false
     }
   },
-  REALTIME_PLATFORM: {
-    name: 'Real-time Platform',
-    use_case: 'Chat, live dashboards',
-    requirements: {
-      stateful: false,
-      backend: true,
-      realtime: true,
-      payments: false,
-      ml: false
-    }
-  },
-  MOBILE_BACKEND: {
-    name: 'Mobile Backend',
-    use_case: 'Mobile APIs',
-    requirements: {
-      stateful: false,
-      backend: true,
-      realtime: false,
-      payments: false,
-      ml: false
-    }
-  },
-  DATA_PLATFORM: {
-    name: 'Data Platform',
-    use_case: 'DB-only / analytics',
-    requirements: {
-      stateful: true,
-      backend: false,
-      realtime: false,
-      payments: false,
-      ml: false
-    }
-  },
-  ML_INFERENCE_SERVICE: {
-    name: 'ML Inference Service',
-    use_case: 'Model serving',
-    requirements: {
-      stateful: false,
-      backend: true,
-      realtime: false,
-      payments: false,
-      ml: true
-    }
-  },
-  ML_TRAINING_PIPELINE: {
-    name: 'ML Training Pipeline',
-    use_case: 'Training jobs',
-    requirements: {
-      stateful: false,
-      backend: false,
-      realtime: false,
-      payments: false,
-      ml: true
-    }
-  },
+  
+  // 6️⃣ HYBRID_PLATFORM
   HYBRID_PLATFORM: {
     name: 'Hybrid Platform',
-    use_case: 'Combination',
+    use_case: 'Stateful + realtime + async workflows',
+    mandatory_services: ['cdn', 'load_balancer', 'app_compute', 'serverless_compute', 'relational_database', 'cache', 'message_queue', 'identity_auth', 'logging', 'monitoring'],
+    conditional_mandatory: {
+      websocket_gateway: 'if realtime',
+      payment_gateway: 'if payments',
+      object_storage: 'if file uploads'
+    },
+    optional_services: [],
+    forbidden_services: [],
     requirements: {
       stateful: true,
       backend: true,
       realtime: true,
-      payments: true,
+      payments: false,
+      ml: false
+    }
+  },
+  
+  // 7️⃣ MOBILE_BACKEND_PLATFORM
+  MOBILE_BACKEND_PLATFORM: {
+    name: 'Mobile Backend Platform',
+    use_case: 'API backend for mobile apps, low latency required',
+    mandatory_services: ['api_gateway', 'app_compute', 'relational_database', 'identity_auth', 'logging', 'monitoring'],
+    optional_services: ['push_notification_service', 'cache', 'message_queue'],
+    forbidden_services: ['cdn'],
+    requirements: {
+      stateful: true,
+      backend: true,
+      realtime: false,
+      payments: false,
+      ml: false,
+      mobile_only: true
+    }
+  },
+  
+  // 8️⃣ DATA_PLATFORM
+  DATA_PLATFORM: {
+    name: 'Data Platform',
+    use_case: 'Internal analytics, batch processing, data warehousing',
+    mandatory_services: ['analytical_database', 'object_storage', 'batch_compute', 'identity_auth', 'logging', 'monitoring'],
+    optional_services: ['message_queue', 'api_gateway'],
+    forbidden_services: ['cdn', 'load_balancer', 'app_compute'],
+    requirements: {
+      stateful: true,
+      backend: false,
+      realtime: false,
+      payments: false,
+      ml: false,
+      internal_only: true
+    }
+  },
+  
+  // 9️⃣ REALTIME_PLATFORM
+  REALTIME_PLATFORM: {
+    name: 'Real-time Platform',
+    use_case: 'Chat apps, live dashboards, WebSockets, pub/sub',
+    mandatory_services: ['websocket_gateway', 'app_compute', 'cache', 'message_queue', 'logging', 'monitoring'],
+    optional_services: ['relational_database', 'identity_auth'],
+    forbidden_services: [],
+    requirements: {
+      stateful: false,
+      backend: true,
+      realtime: true,
+      payments: false,
+      ml: false
+    }
+  },
+  
+  // 🔟 ML_INFERENCE_PLATFORM
+  ML_INFERENCE_PLATFORM: {
+    name: 'ML Inference Platform',
+    use_case: 'Model serving, prediction APIs',
+    mandatory_services: ['ml_inference_service', 'object_storage', 'logging', 'monitoring'], // 🔥 FIX 2
+    optional_services: ['api_gateway', 'cache'], // 🔥 FIX 2
+    forbidden_services: ['relational_database', 'nosql_database', 'message_queue', 'batch_compute'], // 🔥 FIX 2: No DB, no queue, no batch
+    requirements: {
+      stateful: false,
+      backend: true,
+      realtime: false,
+      payments: false,
+      ml: true
+    }
+  },
+  
+  // 1️⃣1️⃣ ML_TRAINING_PLATFORM
+  ML_TRAINING_PLATFORM: {
+    name: 'ML Training Platform',
+    use_case: 'Training pipelines, batch jobs, GPU workloads',
+    mandatory_services: ['batch_compute', 'object_storage', 'logging', 'monitoring'],
+    optional_services: ['artifact_registry'],
+    forbidden_services: [],
+    requirements: {
+      stateful: false,
+      backend: false,
+      realtime: false,
+      payments: false,
       ml: true
     }
   }
 };
 
 const SERVICE_REGISTRY = {
-  relational_db: { 
+  relational_database: {  // 🔥 CANONICAL NAME (not relational_db)
     required_for: ["stateful", "data_stores:relational"], 
     description: "Relational database service",
     category: "database"
@@ -137,13 +218,13 @@ const SERVICE_REGISTRY = {
     description: "Payment processing service",
     category: "payments"
   },
-  ml_inference: { 
+  ml_inference_service: {  // 🔥 CANONICAL NAME (not ml_inference)
     required_for: ["ml"], 
     description: "ML inference service",
     category: "ml"
   },
   object_storage: { 
-    required_for: ["file_storage"], 
+    required_for: ["file_storage", "data_stores:object_storage"],  // 🔥 ADDED data_stores trigger
     description: "Object storage service",
     category: "storage"
   },
@@ -157,20 +238,40 @@ const SERVICE_REGISTRY = {
     description: "API gateway service",
     category: "networking"
   },
-  authentication: { 
+  identity_auth: {  // 🔥 CANONICAL NAME (not authentication)
     required_for: ["authentication"], 
     description: "Authentication service",
     category: "security"
   },
-  compute: { 
+  app_compute: {  // 🔥 CANONICAL NAME (not compute)
     required_for: ["backend", "processing"], 
-    description: "Compute service",
+    description: "Application compute service",
+    category: "compute"
+  },
+  serverless_compute: {  // 🔥 ADDED (was missing)
+    required_for: ["serverless", "background_jobs"],
+    description: "Serverless compute for event-driven workloads",
     category: "compute"
   },
   load_balancer: { 
     required_for: ["high_availability", "scaling"], 
     description: "Load balancing service",
     category: "networking"
+  },
+  cdn: {  // 🔥 ADDED (was missing)
+    required_for: ["public_facing", "static_content"],
+    description: "Content delivery network",
+    category: "networking"
+  },
+  logging: {  // 🔥 ADDED (was missing)
+    required_for: ["observability"],
+    description: "Centralized logging service",
+    category: "observability"
+  },
+  monitoring: {  // 🔥 ADDED (was missing)
+    required_for: ["observability"],
+    description: "Infrastructure monitoring service",
+    category: "observability"
   }
 };
 
@@ -252,6 +353,26 @@ class PatternResolver {
       const inferredFeatures = intent.inferred_features || {};
       const decisionAxes = intent.decision_axes || {};
       const semanticSignals = intent.semantic_signals || {};
+      const intentClassification = intent.intent_classification || {};
+      
+      // 🔒 FIX 1: Detect mobile_app_backend domain from intent_classification
+      const primaryDomain = intentClassification.primary_domain || '';
+      if (primaryDomain === 'mobile_app_backend' || primaryDomain.includes('mobile')) {
+        requirements.workload_types.push('mobile_backend');
+        console.log('[DOMAIN DETECTION] mobile_app_backend domain → mobile_backend workload');
+      }
+      
+      // 🔥 FIX 1: Detect internal_analytics domain → DATA_PLATFORM
+      if (primaryDomain === 'internal_analytics' || primaryDomain.includes('analytics') || primaryDomain.includes('batch_processing')) {
+        requirements.workload_types.push('data_analytics');
+        console.log('[DOMAIN DETECTION] internal_analytics domain → data_analytics workload');
+      }
+      
+      // 🔥 FIX 1: Detect machine_learning domain → ML flag
+      if (primaryDomain === 'machine_learning' || primaryDomain.includes('ml') || primaryDomain.includes('ai')) {
+        requirements.ml = true;
+        console.log('[DOMAIN DETECTION] machine_learning domain → ml=true');
+      }
       
       // Merge explicit + inferred features (explicit takes precedence)
       const allFeatures = { ...inferredFeatures, ...explicitFeatures };
@@ -484,6 +605,20 @@ class PatternResolver {
       return 'HYBRID_PLATFORM';
     }
     
+    // 🔥 CRITICAL: Payments + Message Queue = Hybrid Platform (background processing required)
+    // E-commerce, payment processing, order fulfillment need async workflows
+    if (requirements.payments && requirements.data_stores.includes('queue')) {
+      console.log('[PATTERN ESCALATION] Payments + Message Queue → HYBRID_PLATFORM');
+      return 'HYBRID_PLATFORM';
+    }
+    
+    // 🔥 CRITICAL: Stateful + Message Queue = Hybrid Platform (async workflows required)
+    // Background jobs, async processing, worker queues
+    if (requirements.stateful && requirements.data_stores.includes('queue')) {
+      console.log('[PATTERN ESCALATION] Stateful + Message Queue → HYBRID_PLATFORM');
+      return 'HYBRID_PLATFORM';
+    }
+    
     // Real-time + Stateful = Realtime Platform with persistence
     if (requirements.realtime && requirements.stateful) {
       console.log('[PATTERN ESCALATION] Real-time + Stateful → REALTIME_PLATFORM');
@@ -502,26 +637,53 @@ class PatternResolver {
       return 'STATEFUL_WEB_PLATFORM';
     }
     
-    // Stateful + Relational DB = Stateful Web Platform
-    if (requirements.stateful && requirements.data_stores.includes('relational_db')) {
+    // 🔒 FIX 1: Mobile Backend Platform - API-first mobile backends (before generic stateful)
+    // Mobile + Stateful + No Web Frontend = Mobile Backend Platform
+    if (requirements.workload_types.includes('mobile_backend') && requirements.stateful) {
+      console.log('[PATTERN SELECTION] Mobile backend + Stateful → MOBILE_BACKEND_PLATFORM');
+      return 'MOBILE_BACKEND_PLATFORM';
+    }
+    
+    // 🔥 FIX 1: DATA_PLATFORM - Internal analytics / batch processing (before generic stateful)
+    // Analytics + Batch = Data Platform (NOT web platform)
+    if (requirements.workload_types.includes('data_analytics')) {
+      console.log('[PATTERN SELECTION] Internal analytics / batch processing → DATA_PLATFORM');
+      return 'DATA_PLATFORM';
+    }
+    
+    // Stateful + Relational DB = Stateful Web Platform (only if NOT mobile backend or analytics)
+    if (requirements.stateful && requirements.data_stores.includes('relational_db') && 
+        !requirements.workload_types.includes('mobile_backend') && 
+        !requirements.workload_types.includes('data_analytics')) {
       console.log('[PATTERN ESCALATION] Stateful + Relational DB → STATEFUL_WEB_PLATFORM');
       return 'STATEFUL_WEB_PLATFORM';
     }
     
-    // Stateful (any type) = Stateful Web Platform
-    if (requirements.stateful) {
+    // Stateful (any type) = Stateful Web Platform (only if NOT mobile backend or analytics)
+    if (requirements.stateful && 
+        !requirements.workload_types.includes('mobile_backend') && 
+        !requirements.workload_types.includes('data_analytics')) {
       console.log('[PATTERN SELECTION] Stateful detected → STATEFUL_WEB_PLATFORM');
       return 'STATEFUL_WEB_PLATFORM';
     }
     
-    // Mobile backend = Mobile Backend pattern
+    // Mobile backend (stateless) = Mobile Backend pattern
     if (requirements.workload_types.includes('mobile_backend')) {
       console.log('[PATTERN SELECTION] Mobile backend → MOBILE_BACKEND');
       return 'MOBILE_BACKEND';
     }
     
-    // Backend API (stateless) = Serverless API
-    if (requirements.workload_types.includes('backend_api') && !requirements.stateful) {
+    // 🔥 FIX 1: ML Inference Platform - API backend for ML (before generic API)
+    // ML + Stateless API = ML Inference Platform (NOT generic serverless API)
+    if (requirements.workload_types.includes('backend_api') && 
+        !requirements.stateful && 
+        requirements.ml) {
+      console.log('[PATTERN SELECTION] ML + Stateless API → ML_INFERENCE_PLATFORM');
+      return 'ML_INFERENCE_PLATFORM';
+    }
+    
+    // Backend API (stateless) = Serverless API (only if NOT ML)
+    if (requirements.workload_types.includes('backend_api') && !requirements.stateful && !requirements.ml) {
       console.log('[PATTERN SELECTION] Stateless backend API → SERVERLESS_API');
       return 'SERVERLESS_API';
     }
@@ -647,11 +809,11 @@ class PatternResolver {
       });
     }
     
-    // 🔥 ENFORCE MINIMUM REQUIRED SERVICES PER PATTERN
-    // This prevents partial/incomplete architectures
+    // 🔥 ENFORCE V1 PATTERN CATALOG MANDATORY SERVICES
+    // This ensures every pattern has its required minimum architecture
     const ensureService = (serviceName, description, category) => {
       if (!services.some(s => s.name === serviceName)) {
-        console.log(`[PATTERN INTEGRITY] Adding required service for ${pattern}: ${serviceName}`);
+        console.log(`[PATTERN INTEGRITY] Adding mandatory service for ${pattern}: ${serviceName}`);
         services.push({
           name: serviceName,
           description: description,
@@ -660,28 +822,66 @@ class PatternResolver {
       }
     };
     
-    if (pattern === 'HYBRID_PLATFORM') {
-      // HYBRID_PLATFORM requires minimum viable architecture
-      ensureService('compute', 'Application compute service', 'compute');
-      ensureService('api_gateway', 'API gateway for request routing', 'networking');
-      ensureService('load_balancer', 'Load balancer for traffic distribution', 'networking');
-      ensureService('cache', 'Cache service for real-time performance', 'database');
-      ensureService('object_storage', 'Object storage for documents and files', 'storage');
+    const patternDef = PATTERN_CATALOG[pattern];
+    if (patternDef && patternDef.mandatory_services) {
+      // Enforce ALL mandatory services from V1 catalog
+      patternDef.mandatory_services.forEach(serviceName => {
+        const descriptions = {
+          object_storage: 'Object storage for static files and assets',
+          cdn: 'Content delivery network for global distribution',
+          logging: 'Centralized logging service',
+          monitoring: 'Infrastructure and application monitoring',
+          identity_auth: 'User authentication and identity management',
+          waf: 'Web application firewall',
+          api_gateway: 'API gateway for request routing and management',
+          serverless_compute: 'Serverless compute for application logic',
+          app_compute: 'Application compute service (containers/VMs)',
+          relational_database: 'Relational database for structured data',
+          nosql_database: 'NoSQL database for flexible data storage',
+          load_balancer: 'Load balancer for traffic distribution',
+          cache: 'In-memory cache for performance',
+          message_queue: 'Message queue for async processing',
+          websocket_gateway: 'WebSocket gateway for real-time connections',
+          payment_gateway: 'Payment processing integration',
+          push_notification_service: 'Push notification service for mobile alerts',
+          batch_compute: 'Batch compute for long-running jobs',
+          analytical_database: 'Analytical database for OLAP workloads',
+          ml_inference_service: 'ML model inference service',
+          artifact_registry: 'Artifact and model registry'
+        };
+        
+        const categories = {
+          object_storage: 'storage',
+          cdn: 'networking',
+          logging: 'observability',
+          monitoring: 'observability',
+          identity_auth: 'security',
+          waf: 'security',
+          api_gateway: 'networking',
+          serverless_compute: 'compute',
+          app_compute: 'compute',
+          relational_database: 'database',
+          nosql_database: 'database',
+          load_balancer: 'networking',
+          cache: 'database',
+          message_queue: 'messaging',
+          websocket_gateway: 'messaging',
+          payment_gateway: 'payments',
+          push_notification_service: 'messaging',
+          batch_compute: 'compute',
+          analytical_database: 'database',
+          ml_inference_service: 'ml',
+          artifact_registry: 'storage'
+        };
+        
+        ensureService(
+          serviceName,
+          descriptions[serviceName] || `${serviceName} service`,
+          categories[serviceName] || 'general'
+        );
+      });
       
-      console.log('[PATTERN INTEGRITY] HYBRID_PLATFORM minimum services enforced');
-    } else if (pattern === 'STATEFUL_WEB_PLATFORM') {
-      // STATEFUL_WEB_PLATFORM requires compute + database + ingress
-      ensureService('compute', 'Application compute service', 'compute');
-      ensureService('load_balancer', 'Load balancer for high availability', 'networking');
-      
-      console.log('[PATTERN INTEGRITY] STATEFUL_WEB_PLATFORM minimum services enforced');
-    } else if (pattern === 'REALTIME_PLATFORM') {
-      // REALTIME_PLATFORM requires compute + messaging + websocket
-      ensureService('compute', 'Application compute service', 'compute');
-      ensureService('websocket_gateway', 'WebSocket gateway for real-time connections', 'messaging');
-      ensureService('message_queue', 'Message queue for event processing', 'messaging');
-      
-      console.log('[PATTERN INTEGRITY] REALTIME_PLATFORM minimum services enforced');
+      console.log(`[PATTERN INTEGRITY] ${pattern} mandatory services enforced: ${patternDef.mandatory_services.join(', ')}`);
     }
 
     return services;
@@ -851,22 +1051,18 @@ class PatternResolver {
 
   /**
    * Validate that required services exist for the given pattern
-   * Fail fast if minimum services are missing
+   * Uses V1 Pattern Catalog mandatory services as validation baseline
    */
   validateServicesForPattern(services, pattern) {
     const serviceNames = new Set(services.map(s => s.name));
     
-    // Define minimum required services per pattern
-    const minimumRequirements = {
-      'HYBRID_PLATFORM': ['compute', 'api_gateway', 'load_balancer', 'relational_db', 'cache'],
-      'STATEFUL_WEB_PLATFORM': ['compute', 'relational_db', 'load_balancer'],
-      'REALTIME_PLATFORM': ['compute', 'websocket_gateway', 'message_queue'],
-      'SERVERLESS_WEB_APP': ['compute'],
-      'MOBILE_BACKEND': ['api_gateway', 'authentication'],
-      'STATIC_SITE': []
-    };
+    const patternDef = PATTERN_CATALOG[pattern];
+    if (!patternDef || !patternDef.mandatory_services) {
+      console.warn(`[VALIDATION] No validation rules for pattern: ${pattern}`);
+      return; // Pattern not in V1 catalog, skip validation
+    }
     
-    const required = minimumRequirements[pattern] || [];
+    const required = patternDef.mandatory_services;
     const missing = required.filter(r => !serviceNames.has(r));
     
     if (missing.length > 0) {
@@ -875,7 +1071,7 @@ class PatternResolver {
       throw new Error(error);
     }
     
-    console.log(`[VALIDATION PASSED] Pattern ${pattern} has all required services`);
+    console.log(`[VALIDATION PASSED] Pattern ${pattern} has all ${required.length} mandatory services`);
   }
   
   /**

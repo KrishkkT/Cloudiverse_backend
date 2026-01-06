@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS projects (
     description TEXT,
     owner_id VARCHAR(255),                -- User ID (references users table)
     status VARCHAR(50) DEFAULT 'active',  -- active, archived, deleted
+    active_deployments INTEGER DEFAULT 0, -- Count of active deployments
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

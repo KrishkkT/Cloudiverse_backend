@@ -11,6 +11,7 @@ const { ARCHITECTURE_PATTERNS, validateServiceSelection } = require('../services
 const integrityService = require('../services/integrityService');
 const terraformService = require('../services/terraformService');
 const costResultModel = require('../services/costResultModel');
+const canonicalValidator = require('../services/canonicalValidator');
 const pool = require('../config/db');
 
 // =====================================================
@@ -788,18 +789,23 @@ router.post('/analyze', authMiddleware, async (req, res) => {
         // Map canonical service names to expected service class names
         const canonicalToServiceClassMap = {
             'relational_db': 'relational_database',
-            'message_queue': 'messaging_queue',
+            'message_queue': 'message_queue',  // 🔥 FIXED: Keep as message_queue (not messaging_queue)
+            'messaging_queue': 'message_queue',  // 🔥 ALIAS: Normalize to message_queue
             'websocket_gateway': 'event_bus',
-            'payment_gateway': 'api_gateway', // Closest match
+            'payment_gateway': 'payment_gateway',  // 🔥 FIXED: Keep as payment_gateway
             'ml_inference': 'compute_serverless', // Closest match
             'object_storage': 'object_storage',
             'cache': 'cache',
             'api_gateway': 'api_gateway',
             'authentication': 'identity_auth',
+            'identity_auth': 'identity_auth',  // 🔥 ADDED: Direct mapping
             'compute': 'compute_vm', // Default compute mapping
+            'app_compute': 'app_compute',  // 🔥 ADDED: Direct mapping
+            'serverless_compute': 'compute_serverless',  // 🔥 ADDED: Map to compute_serverless
             'load_balancer': 'load_balancer',
             'monitoring': 'monitoring',
-            'logging': 'logging'
+            'logging': 'logging',
+            'cdn': 'cdn'  // 🔥 ADDED: Direct mapping
         };
         
         const selectedServiceClasses = new Set(patternResolution.services.map(s => {
@@ -1150,6 +1156,10 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             explanations: explanations,
             risk_review: step2Result.risk_review || { security: [], availability: [], cost: [] },
 
+            // 🔒 FIX 1: STORE CANONICAL ARCHITECTURE (IMMUTABLE)
+            // This becomes the single source of truth for all downstream steps
+            canonical_architecture: patternResolution,
+
             // Tier 2 Data (Engineering View)
             components: activeComponents,
             service_classes: skeleton, // 15 provider-agnostic service classes
@@ -1187,6 +1197,27 @@ router.post('/analyze', authMiddleware, async (req, res) => {
         };
 
         console.log(`InfraSpec Complete. Required Services: ${skeleton.required_services.length}/15`);
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // CANONICAL VALIDATION & ENFORCEMENT (CRITICAL)
+        // ═══════════════════════════════════════════════════════════════════════════
+        
+        // Step 1: Validate and fix canonical architecture
+        try {
+            const validated = canonicalValidator.validateAndFixCanonicalArchitecture(
+                infraSpec.canonical_architecture,
+                step1Result.intent_classification
+            );
+            infraSpec.canonical_architecture = validated.canonicalArchitecture;
+            console.log('[VALIDATOR] ✓ Canonical architecture validated and fixed');
+        } catch (validationError) {
+            console.error('[VALIDATOR] ✗ Validation failed:', validationError.message);
+            return res.status(400).json({
+                error: 'Architecture validation failed',
+                message: validationError.message,
+                details: validationError.stack
+            });
+        }
 
         // 🔒 FIX 1 & 2: Integrity Guard
         // Enforce hard constraints on the finalized spec
@@ -1456,7 +1487,13 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                     formatted_cost: safeDetails.formatted_cost ?? '$0.00',
                     service_count: safeDetails.service_count ?? 0,
                     cost_range: safeRange,
-                    drivers: costAnalysis.recommended?.drivers || costAnalysis.drivers || [],
+                    // 🔒 FIX: Ensure drivers are passed with proper fallbacks
+                    drivers: costAnalysis.recommended?.drivers || 
+                             costAnalysis.drivers || 
+                             (costAnalysis.scenarios ? 
+                                Object.values(costAnalysis.scenarios)
+                                    .find(profile => profile && profile[safeProvider])?.[safeProvider]?.drivers || []
+                             : []),
                     score: costAnalysis.recommended?.score || Math.round((costAnalysis.confidence || 0.75) * 100)
                 },
 
@@ -1660,82 +1697,6 @@ router.post('/feedback', authMiddleware, async (req, res) => {
     }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// STEP 5: TERRAFORM GENERATION (final step)
-// ═══════════════════════════════════════════════════════════════════════════
-router.post('/terraform', authMiddleware, async (req, res) => {
-    try {
-        const {
-            workspace_id,
-            infraSpec,
-            provider,
-            profile,
-            project_name
-        } = req.body;
-
-        console.log(`[STEP 5] Generating Terraform for ${provider} (${profile})`);
-
-        // Validate required fields
-        if (!infraSpec || !provider || !profile) {
-            return res.status(400).json({
-                error: 'Missing required fields',
-                required: ['infraSpec', 'provider', 'profile']
-            });
-        }
-
-        // Generate Terraform code
-        const terraformCode = terraformService.generateTerraform(
-            infraSpec,
-            provider,
-            profile,
-            project_name || 'my-project'
-        );
-
-        // Get services list with Terraform resource types
-        const services = terraformService.getTerraformServices(infraSpec, provider);
-
-        console.log(`[STEP 5] Generated ${terraformCode.length} characters of Terraform`);
-
-        // Log to audit
-        if (auditService && req.user && workspace_id) {
-            auditService.logAction(
-                req.user.id,
-                workspace_id,
-                'TERRAFORM_GENERATED',
-                { provider, profile, services_count: services.length },
-                req
-            );
-        }
-
-        res.json({
-            success: true,
-            terraform: {
-                code: terraformCode,
-                provider: provider.toUpperCase(),
-                profile,
-                pattern: infraSpec.service_classes?.pattern || 'SERVERLESS_WEB_APP',
-                file_name: 'main.tf'
-            },
-            services,
-            instructions: {
-                step_1: 'Save the Terraform code to a file named main.tf',
-                step_2: 'Run: terraform init',
-                step_3: 'Run: terraform plan',
-                step_4: 'Run: terraform apply',
-                note: 'Ensure you have appropriate cloud credentials configured'
-            },
-            disclaimer: 'This Terraform configuration is generated based on your selected architecture pattern. Review and customize as needed before deployment.'
-        });
-
-    } catch (error) {
-        console.error('[STEP 5] Terraform Error:', error);
-        res.status(500).json({
-            error: 'Failed to generate Terraform',
-            message: error.message
-        });
-    }
-});
-
 // 
 // STEP 4.5: ARCHITECTURE DIAGRAM GENERATION
 // 
@@ -1793,8 +1754,31 @@ router.post('/architecture', authMiddleware, async (req, res) => {
             };
         }
         
-        // Generate canonical architecture based on requirements and pattern
-        const canonicalArchitecture = patternResolver.generateCanonicalArchitecture(requirements, infraSpec.architecture_pattern);
+        // 🔒 FIX 1: USE CANONICAL ARCHITECTURE FROM STEP 2 (IMMUTABLE)
+        // DO NOT regenerate - reuse the finalized services contract from infraSpec
+        let canonicalArchitecture;
+        
+        if (infraSpec.canonical_architecture) {
+            // Use the stored canonical architecture from Step 2
+            console.log('[FIX 1] Using stored canonical architecture from Step 2');
+            canonicalArchitecture = infraSpec.canonical_architecture;
+        } else {
+            // Fallback: reconstruct from infraSpec services (legacy compatibility)
+            console.warn('[FIX 1] No stored canonical architecture - reconstructing from infraSpec');
+            canonicalArchitecture = {
+                pattern: infraSpec.architecture_pattern || infraSpec.service_classes?.pattern,
+                pattern_name: infraSpec.service_classes?.pattern_name || 'Unknown Pattern',
+                services: (infraSpec.service_classes?.required_services || []).map(s => ({
+                    name: s.service_class,
+                    canonical_type: s.service_class,
+                    description: s.description,
+                    category: getCategoryForService(s.service_class)
+                })),
+                total_services: infraSpec.service_classes?.required_services?.length || 0
+            };
+        }
+        
+        console.log(`[FIX 1] Canonical Architecture: ${canonicalArchitecture.pattern}, Services: ${canonicalArchitecture.services?.length || 0}`);
 
         // Map to provider-specific services
         const architectureDiagramService = require('../services/architectureDiagramService');
@@ -1838,6 +1822,107 @@ router.post('/architecture', authMiddleware, async (req, res) => {
         res.status(500).json({
             error: 'Failed to generate architecture',
             message: error.message
+        });
+    }
+});
+
+/**
+ * @route POST /api/workflow/terraform
+ * @desc Generate Terraform code for infrastructure
+ * @access Private
+ */
+router.post('/terraform', authMiddleware, async (req, res) => {
+    try {
+        const { workspace_id, infraSpec, provider, profile, project_name, requirements } = req.body;
+
+        console.log(`[TERRAFORM] Generating modular code for ${provider} (${profile})`);
+        console.log(`[TERRAFORM] InfraSpec:`, JSON.stringify(infraSpec, null, 2));
+        console.log(`[TERRAFORM] InfraSpec pattern:`, infraSpec?.service_classes?.pattern);
+        console.log(`[TERRAFORM] Services:`, infraSpec?.service_classes?.required_services?.map(s => s.service_class));
+
+        // Validate required fields
+        if (!infraSpec || !provider) {
+            console.error('[TERRAFORM] Missing required fields:', { hasInfraSpec: !!infraSpec, hasProvider: !!provider });
+            return res.status(400).json({
+                error: 'Missing required fields',
+                required: ['infraSpec', 'provider']
+            });
+        }
+
+        // Validate infraSpec structure
+        if (!infraSpec.service_classes || !infraSpec.service_classes.required_services) {
+            console.error('[TERRAFORM] Invalid infraSpec structure:', infraSpec);
+            return res.status(400).json({
+                error: 'Invalid infraSpec structure',
+                message: 'infraSpec must contain service_classes with required_services'
+            });
+        }
+
+        // Generate modular Terraform project (V2)
+        const terraformService = require('../services/terraformService');
+        
+        console.log('[TERRAFORM] Calling generateModularTerraform...');
+        const terraformProject = await terraformService.generateModularTerraform(
+            infraSpec,
+            provider,
+            project_name || 'cloudiverse-project',
+            requirements || {}
+        );
+        console.log('[TERRAFORM] Project generated successfully');
+
+        // Get services list
+        const services = terraformService.getTerraformServices(infraSpec, provider);
+        console.log(`[TERRAFORM] Generated modular project with ${Object.keys(terraformProject).length} root files`);
+        console.log(`[TERRAFORM] Modules:`, Object.keys(terraformProject.modules || {}));
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // TERRAFORM INTEGRITY GATE (CRITICAL - NO BYPASS)
+        // ═══════════════════════════════════════════════════════════════════════════
+        
+        // Validate Terraform project integrity
+        if (!terraformProject.modules || Object.keys(terraformProject.modules).length === 0) {
+            console.error('[TERRAFORM INTEGRITY] ✗ FAILED: No modules generated');
+            return res.status(500).json({
+                error: 'Terraform integrity check failed',
+                message: 'No Terraform modules were generated. Infrastructure is invalid.',
+                details: 'Each canonical service must generate at least one module.',
+                terraform_valid: false
+            });
+        }
+        
+        // Validate main.tf exists
+        if (!terraformProject['main.tf']) {
+            console.error('[TERRAFORM INTEGRITY] ✗ FAILED: No main.tf generated');
+            return res.status(500).json({
+                error: 'Terraform integrity check failed',
+                message: 'main.tf is missing. Infrastructure is invalid.',
+                terraform_valid: false
+            });
+        }
+        
+        console.log('[TERRAFORM INTEGRITY] ✓ PASSED: Valid Terraform project');
+        console.log(`[TERRAFORM INTEGRITY] ✓ ${Object.keys(terraformProject.modules).length} modules generated`);
+        console.log(`[TERRAFORM INTEGRITY] ✓ main.tf exists with ${terraformProject['main.tf'].split('\n').length} lines`);
+
+        res.json({
+            success: true,
+            terraform: {
+                project: terraformProject, // Folder structure with modules
+                provider,
+                profile,
+                structure: 'modular' // V2 indicator
+            },
+            services,
+            terraform_valid: true,
+            message: 'Terraform generated successfully (modular structure)'
+        });
+    } catch (error) {
+        console.error('[TERRAFORM] Generation Error:', error);
+        console.error('[TERRAFORM] Error stack:', error.stack);
+        res.status(500).json({
+            error: 'Failed to generate Terraform',
+            message: error.message,
+            details: error.stack
         });
     }
 });

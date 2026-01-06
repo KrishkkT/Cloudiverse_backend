@@ -18,19 +18,23 @@ const pipelineEngine = require('./pipelineEngine');
 const hybridEngine = require('./hybridEngine');
 
 const ENGINES = {
-    STATIC_WEB_HOSTING: staticEngine,
-    STATIC_SITE: staticEngine, // Alias
+    // V1 Pattern Catalog Mappings
+    STATIC_SITE: staticEngine,
+    STATIC_SITE_WITH_AUTH: staticEngine, // Auth doesn't change cost model
     SERVERLESS_WEB_APP: serverlessEngine,
-    SERVERLESS_API: serverlessEngine, // Similar pattern
+    SERVERLESS_API: serverlessEngine,
     CONTAINERIZED_WEB_APP: containerEngine,
-    MOBILE_BACKEND_API: mobileEngine,
-    MOBILE_BACKEND: mobileEngine, // Alias
-    TRADITIONAL_VM_APP: vmEngine,
-    DATA_PROCESSING_PIPELINE: pipelineEngine,
-    // New patterns
+    STATEFUL_WEB_PLATFORM: containerEngine,
     HYBRID_PLATFORM: hybridEngine,
-    STATEFUL_WEB_PLATFORM: containerEngine, // Use container engine for stateful web apps
-    REALTIME_PLATFORM: hybridEngine // Real-time uses similar complex architecture
+    REALTIME_PLATFORM: hybridEngine,
+    MOBILE_BACKEND_API: mobileEngine,
+    MOBILE_BACKEND: mobileEngine,
+    MOBILE_BACKEND_PLATFORM: containerEngine, // Stateful mobile uses container engine
+    DATA_PLATFORM: pipelineEngine, // Analytics/batch workloads use pipeline/compute pricing
+    ML_INFERENCE_PLATFORM: containerEngine, // 🔥 FIX 3: Model serving (requests + model size, not generic API)
+    ML_TRAINING_PLATFORM: pipelineEngine, // Batch training uses pipeline/compute pricing
+    TRADITIONAL_VM_APP: vmEngine,
+    DATA_PROCESSING_PIPELINE: pipelineEngine
 };
 
 /**

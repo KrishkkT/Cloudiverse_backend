@@ -18,9 +18,12 @@ const PROVIDER_SERVICE_MAP = {
     compute_serverless: 'AWS Lambda',
     compute_container: 'Amazon ECS / Fargate',
     compute_vm: 'Amazon EC2',
+    batch_compute: 'AWS Batch', // 🔥 FIX 2: Batch processing for analytics
     api_gateway: 'API Gateway',
     load_balancer: 'Application Load Balancer',
     relational_db: 'Amazon RDS (PostgreSQL)',
+    relational_database: 'Amazon RDS (PostgreSQL)',
+    analytical_database: 'Amazon Redshift', // 🔥 FIX 2: Analytics/OLAP database
     nosql_db: 'DynamoDB',
     cache: 'Amazon ElastiCache (Redis)',
     object_storage: 'Amazon S3',
@@ -33,6 +36,7 @@ const PROVIDER_SERVICE_MAP = {
     authentication: 'Amazon Cognito',
     identity_auth: 'Amazon Cognito',
     payment_gateway: 'Stripe Integration',
+    push_notification_service: 'Amazon SNS', // 🔒 FIX 3: Mobile push notifications
     logging: 'CloudWatch Logs',
     monitoring: 'CloudWatch Metrics',
     secrets_management: 'AWS Secrets Manager',
@@ -45,9 +49,12 @@ const PROVIDER_SERVICE_MAP = {
     compute_serverless: 'Cloud Functions',
     compute_container: 'Cloud Run / GKE',
     compute_vm: 'Compute Engine',
+    batch_compute: 'Cloud Batch', // 🔥 FIX 2: Batch processing for analytics
     api_gateway: 'Cloud Endpoints',
     load_balancer: 'Cloud Load Balancing',
     relational_db: 'Cloud SQL (PostgreSQL)',
+    relational_database: 'Cloud SQL (PostgreSQL)',
+    analytical_database: 'BigQuery', // 🔥 FIX 2: Analytics/OLAP database
     nosql_db: 'Firestore',
     cache: 'Memorystore (Redis)',
     object_storage: 'Cloud Storage',
@@ -60,6 +67,7 @@ const PROVIDER_SERVICE_MAP = {
     authentication: 'Identity Platform',
     identity_auth: 'Identity Platform',
     payment_gateway: 'Stripe Integration',
+    push_notification_service: 'Firebase Cloud Messaging', // 🔒 FIX 3: Mobile push notifications
     logging: 'Cloud Logging',
     monitoring: 'Cloud Monitoring',
     secrets_management: 'Secret Manager',
@@ -72,9 +80,12 @@ const PROVIDER_SERVICE_MAP = {
     compute_serverless: 'Azure Functions',
     compute_container: 'Azure Container Apps',
     compute_vm: 'Azure Virtual Machines',
+    batch_compute: 'Azure Batch', // 🔥 FIX 2: Batch processing for analytics
     api_gateway: 'Azure API Management',
     load_balancer: 'Azure Application Gateway',
     relational_db: 'Azure Database for PostgreSQL',
+    relational_database: 'Azure Database for PostgreSQL',
+    analytical_database: 'Azure Synapse Analytics', // 🔥 FIX 2: Analytics/OLAP database
     nosql_db: 'Azure Cosmos DB',
     cache: 'Azure Cache for Redis',
     object_storage: 'Azure Blob Storage',
@@ -87,6 +98,7 @@ const PROVIDER_SERVICE_MAP = {
     authentication: 'Azure AD B2C / Entra ID',
     identity_auth: 'Azure AD B2C / Entra ID',
     payment_gateway: 'Stripe Integration',
+    push_notification_service: 'Azure Notification Hubs', // 🔒 FIX 3: Mobile push notifications
     logging: 'Azure Monitor Logs',
     monitoring: 'Azure Monitor',
     secrets_management: 'Azure Key Vault',

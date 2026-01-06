@@ -249,4 +249,157 @@ router.delete('/:id', authMiddleware, async (req, res) => {
   }
 });
 
+/**
+ * @route PUT /api/workspaces/:id/deploy
+ * @desc Mark workspace as ACTIVE DEPLOYMENT and increment active_deployments count
+ * @access Private
+ */
+router.put('/:id/deploy', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { deployment_method, provider } = req.body;
+
+    // Get project_id first
+    const wsRes = await pool.query(
+      "SELECT project_id FROM workspaces WHERE id = $1",
+      [id]
+    );
+
+    if (wsRes.rows.length === 0) {
+      return res.status(404).json({ msg: "Workspace not found" });
+    }
+
+    const projectId = wsRes.rows[0].project_id;
+
+    // Update workspace to active deployment status
+    await pool.query(
+      `UPDATE workspaces 
+       SET state_json = jsonb_set(
+         COALESCE(state_json, '{}'::jsonb),
+         '{deployment}',
+         $1::jsonb
+       ),
+       step = 'active_deployment',
+       updated_at = NOW()
+       WHERE id = $2`,
+      [
+        JSON.stringify({
+          status: 'active',
+          deployment_method,
+          provider,
+          deployed_at: new Date().toISOString()
+        }),
+        id
+      ]
+    );
+
+    // Increment active_deployments count in projects table
+    const updateResult = await pool.query(
+      `UPDATE projects 
+       SET active_deployments = COALESCE(active_deployments, 0) + 1,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING active_deployments`,
+      [projectId]
+    );
+    
+    if (updateResult.rows.length === 0) {
+      console.error(`[DEPLOYMENT] Project ${projectId} not found`);
+      return res.status(404).json({ msg: "Project not found" });
+    }
+
+    const newCount = updateResult.rows[0].active_deployments;
+    console.log(`[DEPLOYMENT] Workspace ${id} marked as ACTIVE DEPLOYMENT - ${deployment_method} to ${provider}`);
+    console.log(`[DEPLOYMENT] Project ${projectId} active_deployments incremented to ${newCount}`);
+
+    res.json({ 
+      msg: "Workspace deployed - active_deployments incremented",
+      id,
+      deployment_method,
+      provider,
+      status: 'active_deployment',
+      active_deployments: newCount
+    });
+  } catch (err) {
+    console.error("Deploy Workspace Error:", err);
+    console.error("Error details:", err.message);
+    console.error("Error stack:", err.stack);
+    
+    // Check if it's a column missing error
+    if (err.message && err.message.includes('active_deployments')) {
+      return res.status(500).json({ 
+        msg: "Database schema missing active_deployments column. Please run migrations.",
+        error: err.message 
+      });
+    }
+    
+    res.status(500).json({ msg: "Server Error", error: err.message });
+  }
+});
+
+/**
+ * @route PUT /api/workspaces/:id
+ * @desc Update workspace name and description
+ * @access Private
+ */
+router.put('/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description } = req.body;
+
+    // First verify workspace exists and get project_id
+    const wsRes = await pool.query(
+      "SELECT project_id FROM workspaces WHERE id = $1",
+      [id]
+    );
+
+    if (wsRes.rows.length === 0) {
+      return res.status(404).json({ msg: "Workspace not found" });
+    }
+
+    const projectId = wsRes.rows[0].project_id;
+
+    // Update workspace name
+    if (name) {
+      await pool.query(
+        "UPDATE workspaces SET name = $1, updated_at = NOW() WHERE id = $2",
+        [name, id]
+      );
+    }
+
+    // Update project name and description
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (name) {
+      updates.push(`name = $${paramIndex++}`);
+      values.push(name);
+    }
+
+    if (description !== undefined) {
+      updates.push(`description = $${paramIndex++}`);
+      values.push(description);
+    }
+
+    if (updates.length > 0) {
+      values.push(projectId);
+      await pool.query(
+        `UPDATE projects SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
+        values
+      );
+    }
+
+    res.json({ 
+      msg: "Workspace updated successfully",
+      id,
+      name,
+      description
+    });
+  } catch (err) {
+    console.error("Update Workspace Error:", err);
+    res.status(500).send("Server Error");
+  }
+});
+
 module.exports = router;

@@ -216,19 +216,21 @@ function deriveWeights(usage, pattern) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BUILD CANONICAL CostResult WITH DYNAMIC WEIGHTS + COST INTENT
+// BUILD CANONICAL CostResult (ENGINE ALREADY APPLIED MULTIPLIER)
 // ═══════════════════════════════════════════════════════════════════════════
 function buildCostResult(provider, pattern, totalCost, genericServices, usage = {}) {
     const providerLower = provider.toLowerCase();
 
-    // ═══════════════════════════════════════════════════════════════════
-    // COST INTENT: Apply multiplier based on usage scale
-    // ═══════════════════════════════════════════════════════════════════
-    const costIntent = inferCostIntent(usage);
-    const intentMultiplier = COST_INTENT_MULTIPLIER[costIntent];
-    const adjustedCost = totalCost * intentMultiplier;
-
-    console.log(`[COST INTENT] ${costIntent} (×${intentMultiplier}) → $${totalCost.toFixed(2)} → $${adjustedCost.toFixed(2)}`);
+    // 🔥 CRITICAL: Engine has ALREADY applied cost profile multiplier
+    // DO NOT apply cost intent here - that would double-apply it
+    // The totalCost passed in is the final, adjusted cost from the engine
+    
+    if (totalCost <= 0) {
+        console.error(`[COST RESULT] Invalid cost: $${totalCost} for ${providerLower}`);
+        throw new Error(`Invalid base cost $${totalCost} - cost engine must return positive value`);
+    }
+    
+    console.log(`[COST RESULT] Building result for ${providerLower}: $${totalCost.toFixed(2)}`);
 
     // Get dynamic weights based on usage
     const weights = deriveWeights(usage, pattern);
@@ -244,7 +246,7 @@ function buildCostResult(provider, pattern, totalCost, genericServices, usage = 
     genericServices.forEach(svc => {
         const weight = weights[svc] || (1 / genericServices.length);
         const normalizedWeight = allocatedWeight > 0 ? (weight / allocatedWeight) : weight;
-        const serviceCost = adjustedCost * normalizedWeight;  // Use adjusted cost
+        const serviceCost = totalCost * normalizedWeight;  // Use engine cost directly
 
         services.push({
             generic_name: svc,
@@ -258,19 +260,12 @@ function buildCostResult(provider, pattern, totalCost, genericServices, usage = 
     // Build quantified drivers
     const drivers = buildQuantifiedDrivers(pattern, usage, services);
 
-    // Apply practical minimum to avoid very low costs looking fake
-    const practicalMinimum = 5.00;
-    const finalCost = Math.max(adjustedCost, practicalMinimum);
-    
     return {
         provider: providerLower,
-        monthly_cost: parseFloat(finalCost.toFixed(2)),
-        formatted_cost: `$${finalCost.toFixed(2)}`,
+        monthly_cost: parseFloat(totalCost.toFixed(2)),
+        formatted_cost: `$${totalCost.toFixed(2)}`,
         services,
-        drivers,
-        cost_intent: costIntent,
-        cost_intent_multiplier: intentMultiplier,
-        cost_intent_description: COST_INTENT_DESCRIPTIONS[costIntent]
+        drivers
     };
 }
 

@@ -232,42 +232,270 @@ function generateConnectionLabel(from, to) {
 function mapToProvider(canonicalArchitecture, provider) {
     console.log(`[MAP TO PROVIDER] Mapping ${canonicalArchitecture.pattern} to ${provider}`);
     
-    // Validate that we have the canonical services contract
-    if (!canonicalArchitecture.services_contract) {
-        console.error('[MAP TO PROVIDER] Missing services_contract in canonical architecture');
-        throw new Error('Canonical architecture must include services_contract');
+    // Validate that we have canonical services
+    const services = canonicalArchitecture.services || [];
+    if (services.length === 0) {
+        console.error('[MAP TO PROVIDER] No services in canonical architecture');
+        throw new Error('Canonical architecture must include services');
     }
     
-    // Use the provider mapping service to map canonical services to provider
-    const providerArchitecture = providerMappingService.mapCanonicalToProvider(
-        canonicalArchitecture.services_contract,
-        provider
-    );
+    // CRITICAL VALIDATION: Minimum service count check per V1 Pattern Catalog
+    const minServicesByPattern = {
+        'STATIC_SITE': 2, // object_storage, cdn
+        'STATIC_SITE_WITH_AUTH': 3, // + identity_auth
+        'SERVERLESS_API': 2, // api_gateway, serverless_compute
+        'SERVERLESS_WEB_APP': 4, // cdn, api_gateway, serverless_compute, object_storage
+        'STATEFUL_WEB_PLATFORM': 6, // load_balancer, app_compute, relational_database, identity_auth, logging, monitoring
+        'HYBRID_PLATFORM': 6, // load_balancer, app_compute + serverless_compute, relational_database, logging, monitoring
+        'MOBILE_BACKEND_PLATFORM': 4, // api_gateway, serverless_compute, relational_database, identity_auth
+        'REALTIME_PLATFORM': 5, // websocket_gateway, app_compute, cache, message_queue, logging
+        'DATA_PLATFORM': 4, // analytical_database, object_storage, batch_compute, logging
+        'ML_INFERENCE_PLATFORM': 3, // ml_inference_service, object_storage, logging
+        'ML_TRAINING_PLATFORM': 3 // batch_compute, object_storage, logging
+    };
     
-    // Validate the mapping
-    providerMappingService.validateProviderMapping(providerArchitecture);
+    const pattern = canonicalArchitecture.pattern;
+    const minRequired = minServicesByPattern[pattern] || 1;
+    const actualCount = services.length;
     
-    // Build nodes for diagram from provider services
-    const nodes = providerArchitecture.services.map((service, idx) => ({
-        id: service.canonical_type,
-        label: service.provider_service,
-        type: service.canonical_type,
-        category: service.category,
-        position: calculateNodePosition(idx, service.category, []),
-        required: service.required,
-        provider_specific: true
-    }));
+    if (actualCount < minRequired) {
+        const error = `[DIAGRAM GENERATION FAILED] Pattern ${pattern} requires minimum ${minRequired} services, but only ${actualCount} provided. Cannot generate meaningful diagram.`;
+        console.error(error);
+        console.error('[DIAGRAM GENERATION FAILED] Services:', services.map(s => s.canonical_type || s.name).join(', '));
+        throw new Error(error);
+    }
+    
+    console.log(`[DIAGRAM VALIDATION] Pattern ${pattern} has ${actualCount} services (minimum: ${minRequired}) ✓`);
+    
+    // Build nodes for diagram from canonical services
+    const nodes = [];
+    const existingNodes = [];
+    
+    // Add client node for user-facing patterns
+    const userFacingPatterns = ['SERVERLESS_WEB_APP', 'STATEFUL_WEB_PLATFORM', 'HYBRID_PLATFORM', 'CONTAINERIZED_WEB_APP'];
+    if (userFacingPatterns.includes(pattern)) {
+        const clientNode = {
+            id: 'client',
+            label: 'Users / Browser',
+            type: 'client',
+            category: 'client',
+            position: calculateNodePosition(0, 'client', existingNodes),
+            required: true,
+            provider_specific: false
+        };
+        nodes.push(clientNode);
+        existingNodes.push(clientNode);
+    }
+    
+    // Map each canonical service to provider-specific node
+    services.forEach((service, idx) => {
+        const serviceType = service.canonical_type || service.service_class || service.name;
+        const category = service.category || getCategoryForService(serviceType);
+        
+        // 🔥 CRITICAL: Mark serverless_compute role in HYBRID pattern
+        let nodeLabel = getGenericServiceName(serviceType, provider.toUpperCase());
+        let nodeRole = null;
+        
+        if (pattern === 'HYBRID_PLATFORM' && serviceType === 'serverless_compute') {
+            nodeRole = 'background_worker';
+            nodeLabel += ' (Background Jobs)';  // Visual distinction
+            console.log('[DIAGRAM] serverless_compute marked as background_worker in HYBRID_PLATFORM');
+        }
+        
+        const node = {
+            id: serviceType,
+            label: nodeLabel,
+            type: serviceType,
+            category: category,
+            role: nodeRole,  // 🔥 ADDED: Role metadata for frontend
+            position: calculateNodePosition(idx + nodes.length, category, existingNodes),
+            required: service.required !== false,
+            provider_specific: true
+        };
+        nodes.push(node);
+        existingNodes.push(node);
+    });
     
     console.log(`[MAP TO PROVIDER] Generated ${nodes.length} nodes for ${provider}`);
+    
+    // Generate edges based on pattern and services
+    const edges = generateEdgesForPattern(pattern, nodes);
+    console.log(`[MAP TO PROVIDER] Generated ${edges.length} edges`);
     
     return {
         ...canonicalArchitecture,
         provider: provider.toUpperCase(),
-        provider_architecture: providerArchitecture,
         nodes: nodes,
-        // Keep edges from canonical architecture
-        edges: canonicalArchitecture.edges || []
+        edges: edges
     };
+}
+
+/**
+ * Get category for a service type
+ */
+function getCategoryForService(serviceType) {
+    const categoryMap = {
+        // Compute
+        'app_compute': 'compute',
+        'serverless_compute': 'compute',
+        'compute_container': 'compute',
+        'compute_vm': 'compute',
+        'batch_compute': 'compute',
+        'ml_inference_service': 'compute',
+        // Networking
+        'cdn': 'network',
+        'load_balancer': 'network',
+        'api_gateway': 'network',
+        'websocket_gateway': 'network',
+        'networking': 'network',
+        // Database
+        'relational_database': 'database',
+        'nosql_database': 'database',
+        'analytical_database': 'database',
+        'cache': 'database',
+        // Storage
+        'object_storage': 'storage',
+        'block_storage': 'storage',
+        // Messaging
+        'message_queue': 'messaging',
+        'messaging_queue': 'messaging',
+        'event_bus': 'messaging',
+        // Security
+        'identity_auth': 'security',
+        'authentication': 'security',
+        'secrets_management': 'security',
+        // Observability
+        'logging': 'observability',
+        'monitoring': 'observability',
+        // Integration
+        'payment_gateway': 'integration',
+        'push_notification_service': 'integration'
+    };
+    return categoryMap[serviceType] || 'other';
+}
+
+/**
+ * Generate edges (connections) based on pattern and available nodes
+ */
+function generateEdgesForPattern(pattern, nodes) {
+    const edges = [];
+    const nodeIds = nodes.map(n => n.id);
+    const hasNode = (id) => nodeIds.includes(id);
+    
+    // Helper to add edge
+    const addEdge = (from, to, label = 'connects') => {
+        if (hasNode(from) && hasNode(to)) {
+            edges.push({
+                from,
+                to,
+                label,
+                type: 'directional'
+            });
+        }
+    };
+    
+    // Pattern-specific edge generation
+    switch (pattern) {
+        case 'STATEFUL_WEB_PLATFORM':
+        case 'HYBRID_PLATFORM':
+        case 'CONTAINERIZED_WEB_APP':
+            // User → CDN → Load Balancer → App Compute
+            if (hasNode('client')) {
+                if (hasNode('cdn')) {
+                    addEdge('client', 'cdn', 'requests');
+                    addEdge('cdn', 'load_balancer', 'routes');
+                } else {
+                    addEdge('client', 'load_balancer', 'requests');
+                }
+            }
+            addEdge('load_balancer', 'app_compute', 'distributes');
+            
+            // App Compute connections
+            addEdge('app_compute', 'relational_database', 'reads/writes');
+            addEdge('app_compute', 'cache', 'caches');
+            addEdge('app_compute', 'object_storage', 'stores');
+            addEdge('app_compute', 'identity_auth', 'authenticates');
+            addEdge('app_compute', 'message_queue', 'queues');
+            addEdge('app_compute', 'messaging_queue', 'queues');
+            addEdge('app_compute', 'payment_gateway', 'processes');
+            addEdge('app_compute', 'logging', 'logs');
+            addEdge('app_compute', 'monitoring', 'metrics');
+            
+            // Background workers (if hybrid)
+            if (pattern === 'HYBRID_PLATFORM' && hasNode('serverless_compute')) {
+                addEdge('message_queue', 'serverless_compute', 'triggers');
+                addEdge('messaging_queue', 'serverless_compute', 'triggers');
+                addEdge('serverless_compute', 'relational_database', 'reads/writes');
+                addEdge('serverless_compute', 'object_storage', 'processes');
+            }
+            break;
+            
+        case 'SERVERLESS_WEB_APP':
+        case 'SERVERLESS_API':
+            // User → CDN (for web) or API Gateway (for API)
+            if (hasNode('client')) {
+                if (hasNode('cdn')) {
+                    addEdge('client', 'cdn', 'requests');
+                    addEdge('cdn', 'api_gateway', 'routes');
+                } else {
+                    addEdge('client', 'api_gateway', 'requests');
+                }
+            }
+            addEdge('api_gateway', 'serverless_compute', 'invokes');
+            
+            // Serverless connections
+            addEdge('serverless_compute', 'relational_database', 'reads/writes');
+            addEdge('serverless_compute', 'nosql_database', 'reads/writes');
+            addEdge('serverless_compute', 'cache', 'caches');
+            addEdge('serverless_compute', 'object_storage', 'stores');
+            addEdge('serverless_compute', 'identity_auth', 'authenticates');
+            addEdge('serverless_compute', 'logging', 'logs');
+            addEdge('serverless_compute', 'monitoring', 'metrics');
+            break;
+            
+        case 'MOBILE_BACKEND_PLATFORM':
+            // Mobile App → API Gateway → Serverless
+            if (hasNode('client')) {
+                addEdge('client', 'api_gateway', 'API calls');
+            }
+            addEdge('api_gateway', 'serverless_compute', 'invokes');
+            addEdge('serverless_compute', 'relational_database', 'reads/writes');
+            addEdge('serverless_compute', 'identity_auth', 'authenticates');
+            addEdge('serverless_compute', 'cache', 'caches');
+            addEdge('serverless_compute', 'push_notification_service', 'sends');
+            addEdge('serverless_compute', 'logging', 'logs');
+            break;
+            
+        case 'DATA_PLATFORM':
+            // Batch Compute → Data Storage/Database
+            addEdge('batch_compute', 'object_storage', 'reads/writes');
+            addEdge('batch_compute', 'analytical_database', 'loads');
+            addEdge('object_storage', 'analytical_database', 'imports');
+            addEdge('batch_compute', 'logging', 'logs');
+            addEdge('batch_compute', 'monitoring', 'metrics');
+            if (hasNode('message_queue')) {
+                addEdge('message_queue', 'batch_compute', 'triggers');
+            }
+            break;
+            
+        case 'STATIC_SITE':
+            // User → CDN → Object Storage
+            if (hasNode('client')) {
+                addEdge('client', 'cdn', 'requests');
+            }
+            addEdge('cdn', 'object_storage', 'serves');
+            if (hasNode('identity_auth')) {
+                addEdge('object_storage', 'identity_auth', 'authenticates');
+            }
+            break;
+            
+        default:
+            // Generic fallback edges
+            console.warn(`[EDGES] No specific edge pattern for ${pattern}, generating generic edges`);
+            break;
+    }
+    
+    return edges;
 }
 
 /**
@@ -290,10 +518,15 @@ function getGenericServiceName(serviceType, provider) {
             'GCP': 'Memorystore',
             'AZURE': 'Azure Cache for Redis'
         },
-        'compute_serverless': {
+        'serverless_compute': {
             'AWS': 'Lambda Function',
             'GCP': 'Cloud Functions',
             'AZURE': 'Azure Functions'
+        },
+        'app_compute': {  // 🔥 ADDED (was missing)
+            'AWS': 'ECS/Fargate',
+            'GCP': 'Cloud Run',
+            'AZURE': 'Container Instances'
         },
         'compute_container': {
             'AWS': 'ECS Container',
@@ -339,6 +572,41 @@ function getGenericServiceName(serviceType, provider) {
             'AWS': 'VPC',
             'GCP': 'Virtual Private Cloud',
             'AZURE': 'Virtual Network'
+        },
+        'logging': {  // 🔥 ADDED
+            'AWS': 'CloudWatch Logs',
+            'GCP': 'Cloud Logging',
+            'AZURE': 'Azure Monitor Logs'
+        },
+        'monitoring': {  // 🔥 ADDED
+            'AWS': 'CloudWatch',
+            'GCP': 'Cloud Monitoring',
+            'AZURE': 'Azure Monitor'
+        },
+        'payment_gateway': {  // 🔥 ADDED
+            'AWS': 'Lambda + Stripe',
+            'GCP': 'Cloud Function + Stripe',
+            'AZURE': 'Function + Stripe'
+        },
+        'websocket_gateway': {  // 🔥 ADDED
+            'AWS': 'API Gateway WebSocket',
+            'GCP': 'Cloud Endpoints',
+            'AZURE': 'SignalR Service'
+        },
+        'ml_inference_service': {  // 🔥 ADDED
+            'AWS': 'SageMaker Endpoint',
+            'GCP': 'Vertex AI',
+            'AZURE': 'Azure ML'
+        },
+        'batch_compute': {  // 🔥 ADDED
+            'AWS': 'AWS Batch',
+            'GCP': 'Cloud Dataflow',
+            'AZURE': 'Azure Batch'
+        },
+        'analytical_database': {  // 🔥 ADDED
+            'AWS': 'Redshift',
+            'GCP': 'BigQuery',
+            'AZURE': 'Synapse Analytics'
         }
     };
     

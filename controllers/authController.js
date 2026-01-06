@@ -143,11 +143,13 @@ const forgotPassword = async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60000); // 10 mins
 
-    // Upsert OTP
+    // Delete existing OTP for this email first
+    await pool.query('DELETE FROM password_resets WHERE email = $1', [email]);
+    
+    // Insert new OTP
     await pool.query(
       `INSERT INTO password_resets (email, otp, expires_at) 
-       VALUES ($1, $2, $3)
-       ON CONFLICT (email) DO UPDATE SET otp = $2, expires_at = $3`,
+       VALUES ($1, $2, $3)`,
       [email, otp, expiresAt]
     );
 
@@ -221,10 +223,16 @@ const updateProfile = async (req, res) => {
   try {
     const { name, email, company } = req.body;
 
-    // Check if email is being changed and if it's already taken
-    if (email !== req.user.email) {
+    // Get current user to compare email
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check if email is being changed and if it's already taken by another user
+    if (email && email !== currentUser.email) {
       const existingUser = await User.findByEmail(email);
-      if (existingUser) {
+      if (existingUser && existingUser.id !== req.user.id) {
         return res.status(400).json({ message: 'Email already in use' });
       }
     }
