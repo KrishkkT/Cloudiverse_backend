@@ -113,6 +113,8 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
                           normalizedService === 'ml_inference' ? 'ml_inference_service' :
                           normalizedService === 'websocket' ? 'websocket_gateway' :
                           normalizedService === 'serverless_compute' ? 'serverless_compute' :
+                          normalizedService === 'analytical_db' ? 'analytical_database' :
+                          normalizedService === 'push_notification' ? 'push_notification_service' :
                           normalizedService;
         
         const module = terraformModules.getModule(lookupName, providerLower);
@@ -175,7 +177,8 @@ function getModuleFolderName(service) {
         'ml_inference_service': 'ml_inference',
         'batch_compute': 'batch_compute',
         'websocket_gateway': 'websocket',
-        'payment_gateway': 'payment_gateway'  // 🔥 ADDED (was missing)
+        'payment_gateway': 'payment_gateway',
+        'push_notification_service': 'push_notification'  // 🔥 ADDED
     };
     return moduleMap[service] || service;
 }

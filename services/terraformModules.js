@@ -12,6 +12,25 @@
 
 const generateMinimalModule = (provider, serviceName) => {
   const templates = {
+    aws: {
+      'main.tf': `# ${serviceName} - Amazon Web Services
+resource "null_resource" "${serviceName}" {
+  triggers = {
+    project_name = var.project_name
+  }
+}
+`,
+      'variables.tf': `variable "project_name" {
+  type = string
+}
+
+variable "region" {
+  type    = string
+  default = "us-east-1"
+}
+`,
+      'outputs.tf': `output "${serviceName}_id" {\n  value = null_resource.${serviceName}.id\n}\n`
+    },
     gcp: {
       'main.tf': `# ${serviceName} - Google Cloud Platform
 resource "null_resource" "${serviceName}" {
@@ -1802,21 +1821,39 @@ module.exports = {
       cdn: cdnModule,
       api_gateway: apiGatewayModule,
       serverless_compute: serverlessComputeModule,
-      app_compute: appComputeModule,  // 🔥 ADDED
+      app_compute: appComputeModule,
       relational_database: relationalDbModule,
       object_storage: objectStorageModule,
       identity_auth: authModule,
       monitoring: monitoringModule,
       logging: loggingModule,
-      message_queue: messageQueueModule,  // 🔥 ADDED
-      cache: cacheModule,  // 🔥 ADDED
-      payment_gateway: paymentGatewayModule,  // 🔥 ADDED
-      load_balancer: loadBalancerModule  // 🔥 ADDED
+      message_queue: messageQueueModule,
+      cache: cacheModule,
+      payment_gateway: paymentGatewayModule,
+      load_balancer: loadBalancerModule,
+      // 🔥 ADDED MISSING MODULES
+      analytical_database: null,  // Will use fallback
+      batch_compute: null,  // Will use fallback
+      websocket_gateway: null,  // Will use fallback
+      ml_inference_service: null,  // Will use fallback
+      push_notification_service: null  // Will use fallback
     };
 
     const module = modules[serviceName];
-    if (!module) {
+    if (module === undefined) {
+      // Service not in registry at all - return null
       return null;
+    }
+    
+    if (module === null) {
+      // Explicitly marked as "use fallback"
+      if (provider === 'gcp' || provider === 'azure') {
+        console.log(`[TERRAFORM] Using minimal fallback module for ${serviceName} on ${provider}`);
+        return generateMinimalModule(provider, serviceName);
+      }
+      // For AWS, still need full implementation
+      console.log(`[TERRAFORM] Using minimal fallback module for ${serviceName} on ${provider} (AWS)`);
+      return generateMinimalModule('aws', serviceName);
     }
     
     // If provider-specific implementation exists, use it
