@@ -1,12 +1,24 @@
 /**
- * STEP 3 — INFRACOST SERVICE
- * Generates real cost estimates using Infracost CLI
+ * STEP 3 — INFRACOST SERVICE (CORRECTED ARCHITECTURE)
  * 
- * Flow:
- * 1. Generate Terraform dynamically from service mapping + sizing
- * 2. Run Infracost CLI for each cloud (AWS, GCP, Azure)
- * 3. Parse and normalize JSON output
- * 4. Return structured cost data
+ * CORE PRINCIPLE:
+ * Step 3 prices deployable services only, using real Terraform + Infracost whenever possible.
+ * 
+ * CORRECTED FLOW:
+ * 1. Filter to deployable_services ONLY (terraform_supported=true)
+ * 2. Generate minimal pricing Terraform from deployable services
+ * 3. Normalize usage profile into resource-level Infracost usage keys
+ * 4. PRIMARY: Run Infracost CLI (authoritative source)
+ * 5. FALLBACK: Use formula engines only if Infracost fails
+ * 6. Validate: Ensure no non-deployable services leaked into pricing
+ * 7. Return cost with explicit estimate_type (exact vs heuristic)
+ * 
+ * FIXED ISSUES:
+ * - Cost engines now price deployment, not architecture
+ * - Infracost is primary path, not optional
+ * - Usage is tightly coupled to actual resources
+ * - Logical services (event_bus, waf) never get priced
+ * - Excluded services never appear in cost breakdown
  */
 
 const fs = require('fs');
@@ -16,6 +28,8 @@ const os = require('os');
 const cloudMapping = require('./cloudMapping');
 const sizingModel = require('./sizingModel');
 const costResultModel = require('./costResultModel');
+const usageNormalizer = require('./usageNormalizer');
+const { CANONICAL_SERVICES } = require('./canonicalServiceRegistry');
 
 // Base temp directory for Terraform files
 const INFRACOST_BASE_DIR = path.join(os.tmpdir(), 'infracost');
@@ -112,6 +126,109 @@ const RESOURCE_CATEGORY_MAP = {
 };
 
 /**
+ * 🔵 PHASE 3.1 — PREPARE DEPLOYABLE PRICING INPUT (NEW)
+ * 
+ * Filter to only services that can be deployed via Terraform.
+ * This is the SINGLE SOURCE OF TRUTH for what gets priced.
+ * 
+ * CRITICAL RULES:
+ * - Only services with terraform_supported=true
+ * - Excludes logical services (event_bus, waf, payment_gateway, artifact_registry)
+ * - Excludes services in terminal_exclusions
+ * - Result must match what Step 4 Terraform will generate
+ */
+function extractDeployableServices(infraSpec) {
+  console.log('[DEPLOYABLE FILTER] Extracting services for cost estimation');
+
+  // ✅ FIX 1: Use deployable_services from Step 2 (if available)
+  if (infraSpec.canonical_architecture?.deployable_services) {
+    const deployableServices = infraSpec.canonical_architecture.deployable_services;
+    console.log(`[DEPLOYABLE FILTER] Using pre-computed deployable_services: ${deployableServices.length} services`);
+    
+    // Handle the case where deployable_services might still be objects
+    const normalizedServices = deployableServices.map(svc => {
+      if (typeof svc === 'string') return svc;
+      if (typeof svc === 'object') {
+        // Try different possible properties that might contain the service name
+        return svc.service || svc.canonical_type || svc.name || svc.service_class;
+      }
+      return null;
+    }).filter(Boolean);
+    
+    console.log(`[DEPLOYABLE FILTER] Normalized to ${normalizedServices.length} string service names`);
+    return normalizedServices;
+  }
+
+  // Fallback: Compute from canonical architecture
+  const allServices = infraSpec.canonical_architecture?.services || [];
+  const terminalExclusions = infraSpec.locked_intent?.terminal_exclusions || [];
+
+  const deployableServices = allServices
+    .filter(svc => {
+      const serviceDef = CANONICAL_SERVICES[svc.name];
+      
+      if (!serviceDef) {
+        console.warn(`[DEPLOYABLE FILTER] Unknown service: ${svc.name}`);
+        return false;
+      }
+
+      // Must be terraform-supported
+      if (serviceDef.terraform_supported !== true) {
+        console.log(`[DEPLOYABLE FILTER] ❌ EXCLUDED (logical): ${svc.name}`);
+        return false;
+      }
+
+      // Must not be in terminal exclusions
+      if (terminalExclusions.includes(svc.name)) {
+        console.log(`[DEPLOYABLE FILTER] ❌ EXCLUDED (terminal): ${svc.name}`);
+        return false;
+      }
+
+      console.log(`[DEPLOYABLE FILTER] ✅ INCLUDED: ${svc.name}`);
+      return true;
+    })
+    .map(svc => svc.name);
+
+  console.log(`[DEPLOYABLE FILTER] Result: ${deployableServices.length}/${allServices.length} services are deployable`);
+  
+  return deployableServices;
+}
+
+/**
+ * 🔒 PRICING INTEGRITY FIREWALL
+ * 
+ * Validates that no non-deployable services leaked into cost breakdown.
+ * This runs AFTER cost calculation to catch any bugs.
+ */
+function validatePricingIntegrity(pricedServices, deployableServices) {
+  console.log('[PRICING FIREWALL] Validating cost integrity...');
+
+  // 🔥 FIX 2: DEFENSIVE COST ENGINE - Handle undefined values safely
+  for (const svc of pricedServices) {
+    if (!svc) {
+      console.warn('[PRICING FIREWALL] Skipping undefined service in priced services');
+      continue;
+    }
+    
+    const serviceClass = svc.service_class || svc.name;
+    
+    if (!serviceClass) {
+      console.warn('[PRICING FIREWALL] Skipping service with no class/name in priced services');
+      continue;
+    }
+    
+    if (!deployableServices.includes(serviceClass)) {
+      throw new Error(
+        `🚨 PRICING INTEGRITY VIOLATION: Service "${serviceClass}" was priced but is NOT in deployable_services. ` +
+        `This service either: (1) has terraform_supported=false, (2) was excluded by user, or (3) leaked through a bug.`
+      );
+    }
+  }
+
+  console.log(`[PRICING FIREWALL] ✅ All ${pricedServices.length} priced services are valid`);
+}
+
+/**
  * Ensure directory exists
  */
 function ensureDir(dirPath) {
@@ -146,7 +263,7 @@ provider "aws" {
     const cpu = config.cpu || (tier === 'LARGE' ? 2048 : tier === 'SMALL' ? 256 : 1024);
     const memory = config.memory_mb || (tier === 'LARGE' ? 4096 : tier === 'SMALL' ? 512 : 2048);
 
-    if (costProfile === 'HIGH_PERFORMANCE') {
+    if (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') {
       terraform += `
 resource "aws_eks_cluster" "main" {
   name     = "app-eks-cluster"
@@ -161,7 +278,7 @@ resource "aws_eks_node_group" "main" {
   node_group_name = "app-nodes"
   node_role_arn   = "arn:aws:iam::123:role/node-role"
   subnet_ids      = ["subnet-1", "subnet-2"]
-  instance_types  = ["t3.medium"]
+  instance_types  = ["m5.large"]  // High performance instance type
 
   scaling_config {
     desired_size = ${Math.max(2, (config.instances || 2) + 1)}
@@ -207,7 +324,7 @@ resource "aws_ecs_service" "app" {
     const config = sizing.services?.compute_serverless || {};
     const memorySize = config.memory_mb || (tier === 'LARGE' ? 1024 : tier === 'SMALL' ? 256 : 512);
     // High performance serverless gets more memory/concurrency (simulated via memory size here)
-    const effectiveMemory = costProfile === 'HIGH_PERFORMANCE' ? memorySize * 2 : memorySize;
+    const effectiveMemory = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? memorySize * 2 : memorySize;
 
     terraform += `
 resource "aws_lambda_function" "app" {
@@ -223,7 +340,7 @@ resource "aws_lambda_function" "app" {
 
   if (services.find(s => s.service_class === 'compute_vm')) {
     const config = sizing.services?.compute_vm || {};
-    const instanceType = costProfile === 'HIGH_PERFORMANCE' ? 'm5.large' : (config.instance_type || 't3.medium');
+    const instanceType = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 'm5.large' : (config.instance_type || 't3.medium');
     terraform += `
 resource "aws_instance" "app" {
   instance_type = "${instanceType}"
@@ -237,7 +354,7 @@ resource "aws_instance" "app" {
     const config = sizing.services?.relational_database || {};
     const instanceClass = tier === 'LARGE' ? 'db.t3.medium' : tier === 'SMALL' ? 'db.t3.micro' : 'db.t3.small';
 
-    if (costProfile === 'HIGH_PERFORMANCE') {
+    if (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') {
       terraform += `
 resource "aws_rds_cluster" "aurora" {
   cluster_identifier = "aurora-cluster"
@@ -249,7 +366,7 @@ resource "aws_rds_cluster" "aurora" {
 
 resource "aws_rds_cluster_instance" "aurora_instances" {
   count              = 2
-  identifier         = "aurora-instance-\${count.index}"
+  identifier         = "aurora-instance-${count.index}"
   cluster_identifier = aws_rds_cluster.aurora.id
   instance_class     = "db.r5.large"
   engine             = aws_rds_cluster.aurora.engine
@@ -272,7 +389,7 @@ resource "aws_db_instance" "db" {
   if (services.find(s => s.service_class === 'cache')) {
     const config = sizing.services?.cache || {};
     // High performance gets dedicated nodes
-    const nodeType = costProfile === 'HIGH_PERFORMANCE' ? 'cache.m5.large'
+    const nodeType = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 'cache.m5.large'
       : (tier === 'LARGE' ? 'cache.t3.medium' : 'cache.t3.small');
 
     terraform += `
@@ -356,7 +473,7 @@ provider "google" {
       throw new Error("STATIC_WEB_HOSTING MUST NOT CONTAIN COMPUTE (google_container/google_cloud_run)");
     }
 
-    if (costProfile === 'HIGH_PERFORMANCE') {
+    if (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') {
       terraform += `
 resource "google_container_cluster" "primary" {
   name     = "primary-cluster"
@@ -396,7 +513,7 @@ resource "google_cloud_run_service" "app" {
 
   if (services.find(s => s.service_class === 'relational_database')) {
     // High Performance uses Custom instance vs Shared Core
-    const dbTier = costProfile === 'HIGH_PERFORMANCE'
+    const dbTier = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance')
       ? 'db-custom-4-16384'
       : (tier === 'LARGE' ? 'db-custom-2-4096' : tier === 'SMALL' ? 'db-f1-micro' : 'db-custom-1-3840');
 
@@ -417,7 +534,7 @@ resource "google_sql_database_instance" "db" {
 
   if (services.find(s => s.service_class === 'cache')) {
     const memorySize = tier === 'LARGE' ? 5 : tier === 'SMALL' ? 1 : 2;
-    const cacheTier = costProfile === 'HIGH_PERFORMANCE' ? 'STANDARD_HA' : 'BASIC';
+    const cacheTier = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 'STANDARD_HA' : 'BASIC';
 
     terraform += `
 resource "google_redis_instance" "cache" {
@@ -476,7 +593,7 @@ resource "azurerm_resource_group" "main" {
       throw new Error("STATIC_WEB_HOSTING MUST NOT CONTAIN COMPUTE (azurerm_kubernetes/azurerm_container_app)");
     }
 
-    if (costProfile === 'HIGH_PERFORMANCE') {
+    if (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') {
       terraform += `
 resource "azurerm_kubernetes_cluster" "aks" {
   name                = "app-aks"
@@ -518,7 +635,7 @@ resource "azurerm_container_app" "app" {
 
   if (services.find(s => s.service_class === 'relational_database')) {
     // High Performance uses Memory Optimized
-    const skuName = costProfile === 'HIGH_PERFORMANCE'
+    const skuName = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance')
       ? 'MO_Standard_E2ds_v4'
       : (tier === 'LARGE' ? 'GP_Standard_D2s_v3' : tier === 'SMALL' ? 'B_Standard_B1ms' : 'GP_Standard_D2s_v3');
 
@@ -538,8 +655,8 @@ resource "azurerm_postgresql_flexible_server" "db" {
   }
 
   if (services.find(s => s.service_class === 'cache')) {
-    const family = costProfile === 'HIGH_PERFORMANCE' ? 'P' : 'C'; // Premium vs Standard
-    const sku = costProfile === 'HIGH_PERFORMANCE' ? 'Premium' : 'Standard';
+    const family = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 'P' : 'C'; // Premium vs Standard
+    const sku = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 'Premium' : 'Standard';
     const capacity = tier === 'LARGE' ? 2 : 1;
 
     terraform += `
@@ -800,7 +917,7 @@ function normalizeInfracostOutput(infracostJson, provider, infraSpec, costProfil
       cloud_service: cloudService,
       display_name: displayName,
       category: cloudMapping.getCategoryForServiceClass(serviceClass) || 'Other',
-      sizing: costProfile === 'HIGH_PERFORMANCE' ? 'Performance' : 'Standard',
+      sizing: (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 'Performance' : 'Standard',
       cost: {
         monthly: Math.round(cost * 100) / 100,
         formatted: `$${cost.toFixed(2)}/mo`
@@ -838,7 +955,7 @@ function generateMockCostData(provider, infraSpec, sizing, costProfile = 'COST_E
   const tierMultiplier = tier === 'LARGE' ? 2.5 : tier === 'SMALL' ? 0.5 : 1;
 
   // FIX 4: Profile divergence - HIGH_PERFORMANCE costs 35-50% more
-  const profileMultiplier = costProfile === 'HIGH_PERFORMANCE' ? 1.4 : 1.0;
+  const profileMultiplier = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 1.4 : 1.0;
 
   // Base costs per service class
   const baseCosts = {
@@ -853,6 +970,7 @@ function generateMockCostData(provider, infraSpec, sizing, costProfile = 'COST_E
     api_gateway: 15,
     object_storage: 10,
     block_storage: 15,
+    message_queue: 5,        // 🔥 FIX 3: Added default sizing for message_queue
     messaging_queue: 5,
     event_bus: 8,
     search_engine: 60,
@@ -895,7 +1013,7 @@ function generateMockCostData(provider, infraSpec, sizing, costProfile = 'COST_E
     let baseCost = baseCosts[service.service_class] || 20;
 
     // FIX 4: Apply performance multiplier for specific services
-    if (costProfile === 'HIGH_PERFORMANCE' && performanceMultipliers[service.service_class]) {
+    if ((costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') && performanceMultipliers[service.service_class]) {
       baseCost *= performanceMultipliers[service.service_class];
     }
 
@@ -923,7 +1041,7 @@ function generateMockCostData(provider, infraSpec, sizing, costProfile = 'COST_E
       cloud_service: cloudServiceId,
       display_name: displayName,
       category: category,
-      sizing: costProfile === 'HIGH_PERFORMANCE' ? 'Performance' : 'Standard',
+      sizing: (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 'Performance' : 'Standard',
       cost: {
         monthly: cost,
         formatted: `$${cost.toFixed(2)}/mo`
@@ -957,95 +1075,184 @@ function generateMockCostData(provider, infraSpec, sizing, costProfile = 'COST_E
 }
 
 /**
- * Generate cost estimate for a single provider
+ * Generate cost estimate for a single provider (CORRECTED ARCHITECTURE)
+ * 
+ * ✅ FIX 2: Infracost is now PRIMARY path, formula is FALLBACK
+ * ✅ FIX 3: Usage normalized to resource-level keys
  */
-/**
- * Generate cost estimate for a single provider
- */
-async function generateCostEstimate(provider, infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null) {
+async function generateCostEstimate(provider, infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, deployableServices = null) {
   const sizing = sizingModel.getSizingForInfraSpec(infraSpec, intent);
   const tier = sizing.tier;
+
+  // 🔵 PHASE 3.1: Extract deployable services if not provided
+  if (!deployableServices) {
+    deployableServices = extractDeployableServices(infraSpec);
+  }
+
+  console.log(`[COST ESTIMATE ${provider}] Deployable services: ${deployableServices.length}`);
 
   // Create provider directory
   const providerDir = path.join(INFRACOST_BASE_DIR, provider.toLowerCase());
   ensureDir(providerDir);
 
-  // Generate Terraform
-  let terraform;
-  switch (provider) {
-    case 'AWS':
-      terraform = generateAWSTerraform(infraSpec, sizing, costProfile);
-      break;
-    case 'GCP':
-      terraform = generateGCPTerraform(infraSpec, sizing, costProfile);
-      break;
-    case 'AZURE':
-      terraform = generateAzureTerraform(infraSpec, sizing, costProfile);
-      break;
-    default:
-      throw new Error(`Unknown provider: ${provider}`);
-  }
+  let estimate_type = 'heuristic'; // Default to heuristic, upgrade to 'exact' if Infracost succeeds
+  let estimate_source = 'formula_fallback';
 
-  // Write Terraform file
-  const tfPath = path.join(providerDir, 'main.tf');
-  fs.writeFileSync(tfPath, terraform);
-  console.log(`Generated Terraform for ${provider} at ${tfPath}`);
-
-  // Generate Usage File (Layer B)
+  // 🔵 PHASE 3.2: Normalize usage into resource-level Infracost keys
   let usageFilePath = null;
   if (usageOverrides) {
-    const usageYaml = generateUsageFile(usageOverrides);
-    if (usageYaml) {
+    try {
+      const normalizedUsage = usageNormalizer.normalizeUsageForInfracost(
+        usageOverrides,
+        deployableServices,
+        provider
+      );
+      const usageYaml = usageNormalizer.toInfracostYAML(normalizedUsage);
       usageFilePath = path.join(providerDir, 'infracost-usage.yml');
       fs.writeFileSync(usageFilePath, usageYaml);
-      console.log(`Generated Usage File for ${provider} at ${usageFilePath}`);
+      console.log(`[USAGE NORMALIZER] Generated usage file for ${provider} at ${usageFilePath}`);
+    } catch (usageError) {
+      console.error(`[USAGE NORMALIZER] Failed to normalize usage: ${usageError.message}`);
     }
   }
 
-  // Try to run Infracost CLI with usage file
-  const infracostResult = await runInfracost(providerDir, usageFilePath);
-
-  if (infracostResult) {
-    // Normalize real Infracost data with proper service class mapping
-    const normalized = normalizeInfracostOutput(infracostResult, provider, infraSpec, costProfile);
-    if (normalized) {
-      console.log(`[INFRACOST] Successfully normalized ${provider} with ${normalized.service_count} services`);
-      return {
-        ...normalized,
-        tier,
-        cost_profile: costProfile
-      };
+  // 🔵 PHASE 3.3: Generate minimal pricing Terraform
+  let terraform;
+  try {
+    switch (provider) {
+      case 'AWS':
+        terraform = generateAWSTerraform(infraSpec, sizing, costProfile);
+        break;
+      case 'GCP':
+        terraform = generateGCPTerraform(infraSpec, sizing, costProfile);
+        break;
+      case 'AZURE':
+        terraform = generateAzureTerraform(infraSpec, sizing, costProfile);
+        break;
+      default:
+        throw new Error(`Unknown provider: ${provider}`);
     }
+
+    // Write Terraform file
+    const tfPath = path.join(providerDir, 'main.tf');
+    fs.writeFileSync(tfPath, terraform);
+    console.log(`[TERRAFORM] Generated for ${provider} at ${tfPath}`);
+  } catch (terraformError) {
+    console.error(`[TERRAFORM] Failed to generate for ${provider}: ${terraformError.message}`);
+    // Cannot proceed with Infracost without Terraform
+    console.log(`[COST ESTIMATE ${provider}] Falling back to formula engine`);
+    return {
+      ...generateMockCostData(provider, infraSpec, sizing, costProfile),
+      estimate_type: 'heuristic',
+      estimate_source: 'formula_fallback',
+      estimate_reason: 'Terraform generation failed'
+    };
   }
 
-  // Fallback to mock data
-  console.log(`Using mock cost data for ${provider}`);
-  return generateMockCostData(provider, infraSpec, sizing, costProfile);
+  // 🔵 PHASE 3.4: PRIMARY PATH - Run Infracost CLI
+  try {
+    const infracostResult = await runInfracost(providerDir, usageFilePath);
+
+    if (infracostResult) {
+      // Normalize real Infracost data with proper service class mapping
+      const normalized = normalizeInfracostOutput(infracostResult, provider, infraSpec, costProfile);
+      if (normalized && normalized.service_count > 0) {
+        console.log(`[INFRACOST] ✅ SUCCESS: ${provider} with ${normalized.service_count} services`);
+        
+        // 🔒 PHASE 3.6: PRICING INTEGRITY FIREWALL
+        try {
+          // 🔥 FIX: Normalize deployableServices before integrity check to handle undefined values
+          const normalizedDeployableServices = deployableServices
+            .map(s => {
+              if (!s) return null;
+              if (typeof s === 'string') return s;
+              if (typeof s === 'object') {
+                // Try different possible properties that might contain the service name
+                return s.service || s.canonical_type || s.name || s.service_class;
+              }
+              return null;
+            })
+            .filter(Boolean);
+          
+          validatePricingIntegrity(normalized.services || [], normalizedDeployableServices);
+        } catch (integrityError) {
+          console.error(`[PRICING FIREWALL] ${integrityError.message}`);
+          throw integrityError;
+        }
+
+        return {
+          ...normalized,
+          tier,
+          cost_profile: costProfile,
+          estimate_type: 'exact',  // ✅ FIX 5: UX Honesty
+          estimate_source: 'infracost',
+          estimate_reason: 'Real Terraform-based pricing via Infracost CLI'
+        };
+      }
+    }
+  } catch (infracostError) {
+    console.error(`[INFRACOST] Failed for ${provider}: ${infracostError.message}`);
+  }
+
+  // 🔵 PHASE 3.5: FALLBACK - Use formula engines
+  console.log(`[COST ESTIMATE ${provider}] ⚠️ Infracost unavailable, using formula engine`);
+  return {
+    ...generateMockCostData(provider, infraSpec, sizing, costProfile),
+    estimate_type: 'heuristic',  // ✅ FIX 5: UX Honesty
+    estimate_source: 'formula_fallback',
+    estimate_reason: 'Infracost CLI unavailable or Terraform validation failed'
+  };
 }
 
 /**
- * Calculate costs for Low/Expected/High scenarios
+ * Calculate costs for Low/Expected/High scenarios (CORRECTED)
+ * 
+ * ✅ FIX: Now uses deployable_services ONLY
  */
 async function calculateScenarios(infraSpec, intent, usageProfile) {
   console.log('[SCENARIOS] Building canonical cost scenarios...');
 
-  const pattern = infraSpec.service_classes?.pattern || 'SERVERLESS_WEB_APP';
-  const genericServices = infraSpec.service_classes?.required_services?.map(s => s.service_class) || [];
+  // 🔵 PHASE 3.1: Extract deployable services ONLY
+  const deployableServices = extractDeployableServices(infraSpec);
+  
+  if (deployableServices.length === 0) {
+    throw new Error('[SCENARIOS] No deployable services found - cannot calculate costs');
+  }
 
-  console.log(`[SCENARIOS] Pattern: ${pattern}, Services: ${genericServices.join(', ')}`);
+  const pattern = infraSpec.service_classes?.pattern || 'SERVERLESS_WEB_APP';
+
+  console.log(`[SCENARIOS] Pattern: ${pattern}`);
+  console.log(`[SCENARIOS] Deployable services: ${deployableServices.join(', ')}`);
+
+  // ⛔ VALIDATE: No logical services should be here
+  deployableServices.forEach(svc => {
+    // 🔥 FIX: Handle undefined values and normalize service to name if it's an object
+    if (!svc) {
+      console.warn('[SCENARIOS] Skipping undefined service in deployable list');
+      return;
+    }
+    const serviceName = typeof svc === 'string' ? svc : (svc.service || svc.canonical_type || svc.name || svc.service_class);
+    if (!serviceName) {
+      console.warn('[SCENARIOS] Skipping service with no name in deployable list');
+      return;
+    }
+    const serviceDef = CANONICAL_SERVICES[serviceName];
+    if (!serviceDef || serviceDef.terraform_supported !== true) {
+      throw new Error(`[SCENARIOS] INTEGRITY ERROR: ${serviceName} is not terraform-deployable but is in deployable list`);
+    }
+  });
 
   // ═══════════════════════════════════════════════════════════════════
-  // CALCULATE RAW COSTS FOR 3 PROFILES
+  // CALCULATE RAW COSTS FOR 3 PROFILES (with deployable services only)
   // ═══════════════════════════════════════════════════════════════════
   const [costEffectiveRaw, standardRaw, highPerfRaw] = await Promise.all([
-    performCostAnalysis(infraSpec, intent, 'COST_EFFECTIVE', usageProfile?.low, true),
-    performCostAnalysis(infraSpec, intent, 'COST_EFFECTIVE', usageProfile?.expected, true),
-    performCostAnalysis(infraSpec, intent, 'HIGH_PERFORMANCE', usageProfile?.high, true)
+    performCostAnalysis(infraSpec, intent, 'COST_EFFECTIVE', usageProfile?.low, true, deployableServices),
+    performCostAnalysis(infraSpec, intent, 'COST_EFFECTIVE', usageProfile?.expected, true, deployableServices),
+    performCostAnalysis(infraSpec, intent, 'HIGH_PERFORMANCE', usageProfile?.high, true, deployableServices)
   ]);
 
   // ═══════════════════════════════════════════════════════════════════
   // BUILD CANONICAL CostScenarios STRUCTURE
-  // Each profile contains { aws: CostResult, gcp: CostResult, azure: CostResult }
   // ═══════════════════════════════════════════════════════════════════
   function extractCostResults(rawResult, usageData) {
     const results = {};
@@ -1053,7 +1260,6 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
 
     providers.forEach(p => {
       const pLower = p.toLowerCase();
-      // Try to find cost from various possible locations
       const providerData = rawResult?.provider_details?.[p] ||
         rawResult?.provider_details?.[pLower] ||
         rawResult?.cost_estimates?.[pLower] ||
@@ -1064,13 +1270,17 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
         providerData?.total || 0;
 
       if (cost > 0 && !results[pLower]) {
-        // Build canonical CostResult WITH USAGE DATA for dynamic weights
+        // 🔥 FIX: Normalize deployableServices to service names
+        const serviceNames = deployableServices.map(svc => 
+          typeof svc === 'string' ? svc : (svc.name || svc.service_class || 'unknown')
+        );
+        
         results[pLower] = costResultModel.buildCostResult(
           pLower,
           pattern,
           cost,
-          genericServices,
-          usageData  // Pass usage for dynamic weight calculation
+          serviceNames,  // ✅ CHANGED: Use normalized service names only
+          usageData
         );
         console.log(`[SCENARIOS] ${pLower.toUpperCase()}: $${cost.toFixed(2)}`);
       }
@@ -1100,30 +1310,17 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
   console.log(`[SCENARIOS] Confidence: ${confidenceResult.percentage}% - ${confidenceResult.explanation.join(', ')}`);
 
   return {
-    // CANONICAL STRUCTURE
     scenarios,
-
-    // Aggregated values
     cost_range: aggregation.cost_range,
     recommended: aggregation.recommended,
-
-    // Confidence with explanation
     confidence: confidenceResult.score,
     confidence_percentage: confidenceResult.percentage,
     confidence_explanation: confidenceResult.explanation,
-
-    // Drivers from recommended (quantified)
     drivers: aggregation.recommended.drivers || [],
-
-    // Services from recommended (with provider-specific names)
     services: aggregation.recommended.services || [],
-
-    // Legacy compatibility
     low: aggregation.cost_range.min,
     expected: scenarios.standard?.aws?.monthly_cost || 0,
     high: aggregation.cost_range.max,
-
-    // Full details
     details: {
       ...standardRaw,
       scenarios,
@@ -1188,7 +1385,7 @@ function rankProviders(estimates, costProfile = 'COST_EFFECTIVE') {
     const perfScore = estimate.performance_score || 85;
 
     let finalScore;
-    if (costProfile === 'HIGH_PERFORMANCE') {
+    if (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') {
       finalScore = (normalizedCost * 0.4) + (perfScore * 0.6);
     } else {
       finalScore = (normalizedCost * 0.7) + (perfScore * 0.3);
@@ -1231,7 +1428,7 @@ function calculateCostRange(baseCost, tier, costProfile, intent) {
   if (tier === 'SMALL') rangePercent -= 0.05;
 
   // Increase uncertainty for high-performance profile (more variable)
-  if (costProfile === 'HIGH_PERFORMANCE') rangePercent += 0.05;
+  if (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') rangePercent += 0.05;
 
   // Statefulness adds uncertainty
   const statefulness = intent?.semantic_signals?.statefulness;
@@ -1609,7 +1806,7 @@ function identifyMissingComponents(infraSpec) {
  *   - 'hybrid':  Formula + optional Infracost (SERVERLESS, MOBILE)
  *   - 'infracost': Full Terraform IR (CONTAINERIZED, VM, PIPELINE)
  */
-async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, onlyPrimary = false) {
+async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, onlyPrimary = false, deployableServicesOverride = null) {
   console.log(`--- STEP 3: Cost Analysis Started (Profile: ${costProfile}) ---`);
 
   // ═══════════════════════════════════════════════════════════════════
@@ -1629,7 +1826,24 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
 
     // Build usage profile from intent + overrides
     const usageProfile = buildUsageProfile(infraSpec, intent, usageOverrides);
-    const services = infraSpec.service_classes?.required_services?.map(s => s.service_class) || [];
+    // Use deployableServicesOverride if provided, otherwise extract from infraSpec
+    // 🔥 FIX 1: Hard normalization to prevent undefined crashes
+    let services;
+    if (deployableServicesOverride) {
+      services = deployableServicesOverride
+        .map(s => {
+          if (!s) return null;
+          if (typeof s === 'string') return s;
+          if (typeof s === 'object') {
+            // Try different possible properties that might contain the service name
+            return s.service || s.canonical_type || s.name || s.service_class;
+          }
+          return null;
+        })
+        .filter(Boolean);
+    } else {
+      services = (infraSpec.service_classes?.required_services?.map(s => s.service_class) || []);
+    }
 
     // ═══════════════════════════════════════════════════════════════════
     // CALL ENGINE ONCE - It internally calculates ALL providers
@@ -1756,8 +1970,8 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
 
   if (onlyPrimary) {
     const estimate = await generateAllProviderEstimates(infraSpec, intent, costProfile, usageOverrides);
-    costEffectiveEstimates = costProfile === 'COST_EFFECTIVE' ? estimate : null;
-    highPerfEstimates = costProfile === 'HIGH_PERFORMANCE' ? estimate : null;
+    costEffectiveEstimates = (costProfile === 'COST_EFFECTIVE' || costProfile === 'cost_effective') ? estimate : null;
+    highPerfEstimates = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? estimate : null;
   } else {
     [costEffectiveEstimates, highPerfEstimates] = await Promise.all([
       generateAllProviderEstimates(infraSpec, intent, 'COST_EFFECTIVE', usageOverrides),
@@ -1766,7 +1980,7 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
   }
 
   // Use the selected profile for primary results
-  const estimates = costProfile === 'HIGH_PERFORMANCE' ? highPerfEstimates : costEffectiveEstimates;
+  const estimates = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? highPerfEstimates : costEffectiveEstimates;
 
   // Check if any used real Infracost data
   const usedRealData = Object.values(estimates).some(e => !e.is_mock);

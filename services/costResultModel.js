@@ -236,15 +236,18 @@ function buildCostResult(provider, pattern, totalCost, genericServices, usage = 
     const weights = deriveWeights(usage, pattern);
 
     // Calculate allocated weight total for normalization
+    // 🔥 FIX: Filter out undefined/null services to prevent crashes
+    const validServices = genericServices.filter(svc => svc != null);
+    
     let allocatedWeight = 0;
-    genericServices.forEach(svc => {
+    validServices.forEach(svc => {
         if (weights[svc]) allocatedWeight += weights[svc];
     });
 
     // Build service-level costs with provider-specific names
     const services = [];
-    genericServices.forEach(svc => {
-        const weight = weights[svc] || (1 / genericServices.length);
+    validServices.forEach(svc => {
+        const weight = weights[svc] || (1 / validServices.length);
         const normalizedWeight = allocatedWeight > 0 ? (weight / allocatedWeight) : weight;
         const serviceCost = totalCost * normalizedWeight;  // Use engine cost directly
 
@@ -528,58 +531,88 @@ function aggregateCostResults(results) {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPUTE CONFIDENCE WITH EXPLANATION (deterministic)
+// ✅ FIX 4: Align confidence with data quality
+//
+// NEW FORMULA:
+// confidence = (usage_confidence * 0.5) + (estimate_type_score * 0.4) + (axis_resolution * 0.1)
+//
+// - Infracost (exact) earns 0.4 points
+// - Heuristic earns only 0.15 points
+// - Usage quality contributes 0-0.5 points
+// - Architecture resolution contributes 0-0.1 points
 // ═══════════════════════════════════════════════════════════════════════════
-function computeConfidence(infraSpec, scenarios, usage = {}) {
+function computeConfidence(infraSpec, scenarios, usage = {}, estimate_type = 'heuristic') {
     let score = 0;
     const explanation = [];
 
-    // Service completeness (max 0.25)
-    const serviceCount = infraSpec?.service_classes?.required_services?.length || 0;
-    if (serviceCount >= 4) {
-        score += 0.25;
-        explanation.push('All required services identified');
-    } else if (serviceCount >= 2) {
-        score += 0.15;
-        explanation.push('Core services identified');
-    } else if (serviceCount >= 1) {
-        score += 0.05;
-        explanation.push('Minimal services identified');
-    }
-
-    // Scenario completeness (max 0.45)
-    let scenarioCount = 0;
-    if (scenarios?.cost_effective?.aws?.monthly_cost > 0) scenarioCount++;
-    if (scenarios?.standard?.aws?.monthly_cost > 0) scenarioCount++;
-    if (scenarios?.high_performance?.aws?.monthly_cost > 0) scenarioCount++;
-
-    if (scenarioCount === 3) {
-        score += 0.45;
-        explanation.push('Multi-cloud comparison completed');
-    } else if (scenarioCount >= 1) {
-        score += 0.15 * scenarioCount;
-        explanation.push('Partial cloud comparison');
-    }
-
-    // Usage data quality (max 0.20)
-    const usageFields = ['monthly_users', 'requests_per_user', 'data_transfer_gb'];
+    // ═══════════════════════════════════════════════════════════════════════
+    // 1. USAGE CONFIDENCE (max 0.50) - User-provided data beats inferred
+    // ═══════════════════════════════════════════════════════════════════════
+    const usageFields = ['monthly_users', 'requests_per_user', 'data_transfer_gb', 'data_storage_gb'];
     const filledFields = usageFields.filter(f => usage[f] !== undefined).length;
-    if (filledFields === usageFields.length) {
-        score += 0.20;
-        explanation.push('Usage data provided');
-    } else if (filledFields > 0) {
-        score += 0.10;
-        explanation.push('Partial usage inferred');
+    
+    let usageConfidence = 0;
+    if (usage.confidence && typeof usage.confidence === 'number') {
+        // Explicit confidence provided from AI or user
+        usageConfidence = usage.confidence * 0.5;
+        explanation.push(`Usage confidence: ${Math.round(usage.confidence * 100)}%`);
+    } else if (filledFields === usageFields.length) {
+        usageConfidence = 0.5;
+        explanation.push('Complete usage data provided');
+    } else if (filledFields >= 2) {
+        usageConfidence = 0.3;
+        explanation.push('Partial usage data provided');
     } else {
-        explanation.push('Usage inferred (not user-provided)');
+        usageConfidence = 0.15;
+        explanation.push('Usage assumptions applied (no user data)');
     }
+    score += usageConfidence;
 
-    // Always add this (honest limitation)
-    explanation.push('Heuristic pricing (not SKU-level)');
+    // ═══════════════════════════════════════════════════════════════════════
+    // 2. ESTIMATE TYPE (max 0.40) - Infracost earns trust, heuristics don't
+    // ═══════════════════════════════════════════════════════════════════════
+    let estimateScore = 0;
+    if (estimate_type === 'infracost' || estimate_type === 'exact') {
+        estimateScore = 0.4;
+        explanation.push('Exact pricing from Terraform + Infracost CLI');
+    } else {
+        estimateScore = 0.15;
+        explanation.push('Heuristic pricing (not SKU-level)');
+    }
+    score += estimateScore;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 3. ARCHITECTURE RESOLUTION (max 0.10) - Service completeness
+    // ═══════════════════════════════════════════════════════════════════════
+    const serviceCount = infraSpec?.service_classes?.required_services?.length || 0;
+    let archScore = 0;
+    if (serviceCount >= 5) {
+        archScore = 0.10;
+        explanation.push(`Architecture complete (${serviceCount} services)`);
+    } else if (serviceCount >= 3) {
+        archScore = 0.07;
+        explanation.push(`Core architecture (${serviceCount} services)`);
+    } else if (serviceCount >= 1) {
+        archScore = 0.03;
+        explanation.push(`Minimal architecture (${serviceCount} services)`);
+    }
+    score += archScore;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 4. VALIDATION: Cap at 0.95 (never 100% certain)
+    // ═══════════════════════════════════════════════════════════════════════
+    const finalScore = Math.min(score, 0.95);
 
     return {
-        score: parseFloat(Math.min(score, 0.95).toFixed(2)),
-        percentage: Math.round(Math.min(score, 0.95) * 100),
-        explanation
+        score: parseFloat(finalScore.toFixed(2)),
+        percentage: Math.round(finalScore * 100),
+        explanation,
+        // Breakdown for debugging
+        breakdown: {
+            usage_confidence: parseFloat(usageConfidence.toFixed(2)),
+            estimate_type_score: parseFloat(estimateScore.toFixed(2)),
+            architecture_score: parseFloat(archScore.toFixed(2))
+        }
     };
 }
 

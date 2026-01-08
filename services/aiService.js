@@ -15,24 +15,38 @@ You are an AI sub-component inside a deterministic infrastructure planning syste
 ... (legacy master prompt content kept for safety if used elsewhere) ...
 `;
 
+// ═══════════════════════════════════════════════════════════════════
 const STEP_1_SYSTEM_PROMPT = `
 STEP 1 — INTENT EXTRACTION AGENT
 You are an intent extraction engine for cloud infrastructure planning.
 
 CORE PRINCIPLES:
 1. EXPLICIT OVER INFERRED: Explicit user intent (e.g. "no database") always beats inference.
-2. CONSERVATIVE INFERENCE: Do NOT assume features unless explicitly stated.
-3. THREE-STATE MODEL: Every feature is either TRUE (explicit), FALSE (explicitly excluded), or UNKNOWN (not mentioned).
+2. CONSERVATIVE INFERENCE: Do NOT assume capabilities unless explicitly stated.
+3. THREE-STATE MODEL: Every capability is either TRUE (explicit), FALSE (explicitly excluded), or UNKNOWN (not mentioned).
 4. NO INFRASTRUCTURE: Do not suggest cloud services or architectures.
+5. CAPABILITIES NOT SERVICES: Output user intent as capabilities (data_persistence), NOT services (database, RDS, S3).
 
-FEATURES TO TRACK:
-- static_content, payments, real_time, case_management, document_storage, multi_user_roles, identity_auth, messaging_queue, api_backend.
+CAPABILITIES TO TRACK (provider-agnostic intent):
+- data_persistence: User needs to store/retrieve data
+- identity_access: User needs authentication/authorization
+- content_delivery: User needs CDN/edge delivery
+- payments: User needs payment processing
+- eventing: User needs event-driven architecture
+- messaging: User needs async messaging
+- realtime: User needs real-time communication
+- document_storage: User needs document/file management
+- static_content: User serves static assets
+- api_backend: User needs backend API
+- case_management: Workflow/case tracking
+- multi_user_roles: RBAC/multi-tenancy
 
 RULES:
-- If a feature is explicitly mentioned as present -> Add to explicit_features.
-- If a feature is explicitly mentioned as NOT needed (e.g. "no database", "don't need X") -> Add to explicit_exclusions.
-- If a feature is NOT mentioned, mark it in inferred_features with a low confidence or skip it.
+- If a capability is explicitly mentioned as present -> Add to explicit_capabilities.
+- If a capability is explicitly mentioned as NOT needed (e.g. "no database", "don't need X") -> Add to explicit_exclusions.
+- If a capability is NOT mentioned, mark it in inferred_capabilities with a low confidence or skip it.
 - AI is allowed to say "unknown" (confidence < 0.3).
+- NEVER output service names (EventBridge, RDS, S3, Lambda, etc.) - only capabilities.
 `;
 
 /**
@@ -56,14 +70,14 @@ const normalizeIntent = async (userInput, conversationHistory = [], optionalHint
             "workload_type": "string (e.g. web_application, batch_processing, static_website)",
             "user_facing": boolean
           },
-          "explicit_features": {
-             "feature_name": true // Only for features explicitly mentioned as present
+          "explicit_capabilities": {
+             "capability_name": true // Only for capabilities explicitly mentioned as present
           },
           "explicit_exclusions": [
-             "List features explicitly mentioned as NOT needed (database, payments, real_time, etc.)"
+             "List capabilities explicitly mentioned as NOT needed (data_persistence, payments, realtime, etc.)"
           ],
-          "inferred_features": {
-             "feature_name": { 
+          "inferred_capabilities": {
+             "capability_name": { 
                 "value": boolean, 
                 "confidence": number (0-1), 
                 "reason": "Why this inference?" 
@@ -83,8 +97,9 @@ const normalizeIntent = async (userInput, conversationHistory = [], optionalHint
         
         🔹 EXCLUSION DETECTION (CRITICAL)
         Look for phrases like: "no database", "don't need X", "without cache", "skip the API", "no auth needed".
+        Map these to capabilities: "no database" -> "data_persistence", "no auth" -> "identity_access"
         
-        ❌ AI MUST NOT RETURN: questions, options, defaults, compliance frameworks, infra details.
+        ❌ AI MUST NOT RETURN: questions, options, defaults, compliance frameworks, infra details, service names (RDS, S3, Lambda, EventBridge).
         `;
 
     const messages = [
@@ -107,9 +122,9 @@ const normalizeIntent = async (userInput, conversationHistory = [], optionalHint
       console.error("AI JSON Parse Error:", parseErr);
       result = {
         intent_classification: { primary_domain: "unknown", workload_type: "general", user_facing: true },
-        explicit_features: {},
+        explicit_capabilities: {},
         explicit_exclusions: [],
-        inferred_features: {},
+        inferred_capabilities: {},
         semantic_signals: { statefulness: "mixed", latency_sensitivity: "medium", read_write_ratio: "balanced" },
         risk_domains: [],
         missing_decision_axes: ["processing_error"],
@@ -125,7 +140,9 @@ const normalizeIntent = async (userInput, conversationHistory = [], optionalHint
     // Don't throw 500, return a safe failure state
     return {
       intent_classification: { primary_domain: "error_fallback", workload_type: "general", user_facing: true },
-      feature_signals: {},
+      explicit_capabilities: {},
+      explicit_exclusions: [],
+      inferred_capabilities: {},
       semantic_signals: { statefulness: "mixed", latency_sensitivity: "medium", read_write_ratio: "balanced" },
       risk_domains: [],
       missing_decision_axes: [],
@@ -160,6 +177,71 @@ You MUST:
 - Avoid guessing numbers
 
 Think like a senior architect doing a design review.
+`;
+
+// 🔥 FINAL SYSTEM PROMPT (STEP 2 → STEP 5 SAFE)
+// Use this verbatim (or extremely close).
+const TERRAFORM_SAFE_PROMPT = `
+You are an infrastructure planning engine for Cloudiverse.
+
+Your job is to produce a Terraform-safe infrastructure plan that MUST
+successfully generate Terraform code for the selected cloud provider.
+
+STRICT RULES (NON-NEGOTIABLE):
+
+1. Only select services from the Canonical Service Registry.
+2. NEVER include logical-only services in deployable_services.
+   Logical-only services include but are not limited to:
+   - event_bus
+   - waf
+   - payment_gateway
+   - artifact_registry
+
+3. A service may be included in deployable_services ONLY IF:
+   - terraform_supported === true
+   - a module exists OR a minimal fallback module is allowed
+
+4. If a project type normally requires a service that is NOT fully implemented
+   for the selected provider, you MUST:
+   - downgrade the architecture to a Terraform-safe alternative, OR
+   - replace it with a simpler deployable service, OR
+   - exclude it with a clear reason
+
+5. Terraform generation MUST NEVER fail due to missing modules.
+   If full fidelity is not possible, prioritize:
+   - deployability over completeness
+   - minimal viable infrastructure over ideal architecture
+
+6. Always prefer these Terraform-safe core services when possible:
+   - networking
+   - app_compute OR serverless_compute
+   - relational_database
+   - object_storage
+   - load_balancer
+   - cdn
+   - logging
+   - monitoring
+   - message_queue
+   - identity_auth
+
+7. If the user input is vague, incomplete, or extreme, you MUST:
+   - select a safe baseline pattern
+   - include only universally supported services
+   - avoid advanced or niche services
+
+8. The final output MUST include:
+   - canonical_architecture.deployable_services (Terraform-safe only)
+   - a clear list of excluded_services with reasons
+   - sizing that matches deployable services
+
+FAILURE CONDITIONS:
+- Do NOT output services that cannot be deployed with Terraform.
+- Do NOT output provider-incompatible services.
+- Do NOT assume future module availability.
+
+SUCCESS CONDITION:
+Terraform code must be generated successfully for the selected provider
+with no missing modules.
 `;
 
 /**

@@ -226,7 +226,7 @@ function generateOutputsTf(provider, pattern, services) {
   let outputs = `# Infrastructure Outputs\n\n`;
 
   // Pattern-specific outputs
-  if (services.includes('cdn')) {
+  if (Array.isArray(services) && services.includes('cdn')) {
     outputs += `output "cdn_endpoint" {
   description = "CDN endpoint URL"
   value       = module.cdn.endpoint
@@ -235,7 +235,7 @@ function generateOutputsTf(provider, pattern, services) {
 `;
   }
 
-  if (services.includes('api_gateway')) {
+  if (Array.isArray(services) && services.includes('api_gateway')) {
     outputs += `output "api_endpoint" {
   description = "API Gateway endpoint URL"
   value       = module.api_gateway.endpoint
@@ -244,7 +244,7 @@ function generateOutputsTf(provider, pattern, services) {
 `;
   }
 
-  if (services.includes('relational_database')) {
+  if (Array.isArray(services) && services.includes('relational_database')) {
     outputs += `output "database_endpoint" {
   description = "Database connection endpoint"
   value       = module.relational_db.endpoint
@@ -254,7 +254,7 @@ function generateOutputsTf(provider, pattern, services) {
 `;
   }
 
-  if (services.includes('object_storage')) {
+  if (Array.isArray(services) && services.includes('object_storage')) {
     outputs += `output "storage_bucket" {
   description = "Object storage bucket name"
   value       = module.object_storage.bucket_name
@@ -293,12 +293,14 @@ function generateMainTf(provider, pattern, services) {
   }
 
   // Add modules for each service
-  services.forEach(service => {
-    const moduleConfig = getModuleConfig(service, provider);
-    if (moduleConfig) {
-      mainTf += moduleConfig + '\n\n';
-    }
-  });
+  if (Array.isArray(services)) {
+    services.forEach(service => {
+      const moduleConfig = getModuleConfig(service, provider);
+      if (moduleConfig) {
+        mainTf += moduleConfig + '\n\n';
+      }
+    });
+  }
 
   return mainTf;
 }

@@ -115,8 +115,8 @@ async function calculate(usageProfile, options = {}) {
         const totalCost = Object.values(costs).reduce((sum, cost) => sum + cost, 0);
         
         // Apply cost profile multipliers
-        const multiplier = costProfile === 'cost_effective' ? 0.85 : 
-                          costProfile === 'high_performance' ? 1.4 : 1.0;
+        const multiplier = (costProfile === 'cost_effective' || costProfile === 'COST_EFFECTIVE') ? 0.85 : 
+                          (costProfile === 'high_performance' || costProfile === 'HIGH_PERFORMANCE') ? 1.4 : 1.0;
         
         const adjustedCost = totalCost * multiplier;
         

@@ -32,18 +32,30 @@ const DECISION_AXES = [
     'observability_level'
 ];
 
-// TRACKED FEATURES (Three-State Model)
-const TRACKED_FEATURES = [
-    'static_content',
-    'payments',
-    'real_time',
-    'case_management',
-    'document_storage',
-    'multi_user_roles',
-    'identity_auth',
-    'messaging_queue',
-    'api_backend'
+// ═══════════════════════════════════════════════════════════════════
+// TRACKED CAPABILITIES (Provider-Agnostic Intent, NOT Services)
+// ═══════════════════════════════════════════════════════════════════
+// RULE: Step 1 outputs CAPABILITIES, not services.
+// Capabilities represent user intent WITHOUT deployment assumptions.
+// Mapping to services happens later in Step 2 (pattern resolution).
+// ═══════════════════════════════════════════════════════════════════
+const TRACKED_CAPABILITIES = [
+    'data_persistence',      // User needs to store/retrieve data (NOT database/storage service)
+    'identity_access',       // User needs authentication/authorization (NOT Cognito/Auth0)
+    'content_delivery',      // User needs CDN/edge delivery (NOT CloudFront/CDN service)
+    'payments',              // User needs payment processing (NOT Stripe module)
+    'eventing',              // User needs event-driven architecture (NOT EventBridge)
+    'messaging',             // User needs async messaging (NOT SQS/queue)
+    'realtime',              // User needs real-time communication (NOT WebSocket service)
+    'document_storage',      // User needs document/file management (NOT S3/blob storage)
+    'static_content',        // User serves static assets (NOT static hosting service)
+    'api_backend',           // User needs backend API (NOT compute service)
+    'case_management',       // Domain-specific: workflow/case tracking
+    'multi_user_roles'       // User needs RBAC/multi-tenancy
 ];
+
+// LEGACY ALIAS (for backward compatibility during migration)
+const TRACKED_FEATURES = TRACKED_CAPABILITIES;
 
 // LAYER 2: Axis Importance Scoring Weights
 // Higher score = more important to ask first
@@ -523,45 +535,60 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             console.log("--- STEP 1: AI Intent Normalization (ONCE) ---");
             const rawStep1 = await aiService.normalizeIntent(userInput, conversationHistory || []);
 
-            // --- STEP 1.5: FEATURE RESOLUTION (DETERMINISTIC) ---
-            const resolvedFeatures = {};
+            // ═════════════════════════════════════════════════════════════════
+            // STEP 1.5: CAPABILITY RESOLUTION (DETERMINISTIC)
+            // ═════════════════════════════════════════════════════════════════
+            // CRITICAL RULE: Capabilities are INTENT, not SERVICES.
+            // Mapping to services happens in Step 2 (pattern resolution).
+            // ═════════════════════════════════════════════════════════════════
+            const resolvedCapabilities = {};
             const explicitExclusions = [...new Set([...(rawStep1.explicit_exclusions || []), ...manualExclusions])];
-            const explicitFeatures = rawStep1.explicit_features || {};
-            const inferredFeatures = rawStep1.inferred_features || {};
+            const explicitCapabilities = rawStep1.explicit_capabilities || {};
+            const inferredCapabilities = rawStep1.inferred_capabilities || {};
 
-            TRACKED_FEATURES.forEach(feature => {
-                // Priority 1: Explicit Exclusions
-                if (explicitExclusions.includes(feature) || explicitExclusions.includes(feature.split('_')[0])) {
-                    resolvedFeatures[feature] = false;
+            TRACKED_CAPABILITIES.forEach(capability => {
+                // Priority 1: Explicit Exclusions (HIGHEST - TERMINAL)
+                if (explicitExclusions.includes(capability) || explicitExclusions.includes(capability.split('_')[0])) {
+                    resolvedCapabilities[capability] = false;
                 }
-                // Priority 2: Explicit Features
-                else if (explicitFeatures[feature] === true) {
-                    resolvedFeatures[feature] = true;
+                // Priority 2: Explicit Capabilities
+                else if (explicitCapabilities[capability] === true) {
+                    resolvedCapabilities[capability] = true;
                 }
                 // Priority 3: Inferred (Threshold 0.6)
-                else if (inferredFeatures[feature] && inferredFeatures[feature].confidence >= 0.6) {
-                    resolvedFeatures[feature] = inferredFeatures[feature].value;
+                else if (inferredCapabilities[capability] && inferredCapabilities[capability].confidence >= 0.6) {
+                    resolvedCapabilities[capability] = inferredCapabilities[capability].value;
                 }
                 // Default: Unknown
                 else {
-                    resolvedFeatures[feature] = 'unknown';
+                    resolvedCapabilities[capability] = 'unknown';
                 }
             });
 
-            // Special handling for 'database' (common exclusion target)
-            if (explicitExclusions.includes('database')) {
-                resolvedFeatures['database'] = false;
-            } else if (explicitFeatures['database']) {
-                resolvedFeatures['database'] = true;
-            }
+            // ═════════════════════════════════════════════════════════════════
+            // TERMINAL EXCLUSIONS: Once excluded, NEVER reappear
+            // ═════════════════════════════════════════════════════════════════
+            // These are user authority - AI/patterns cannot override them.
+            // They must propagate through ALL downstream steps:
+            // - Step 2: Architecture/Pattern Resolution
+            // - Step 3: Cost Estimation
+            // - Step 4: Terraform Generation
+            // ═════════════════════════════════════════════════════════════════
+            const terminalExclusions = Object.keys(resolvedCapabilities)
+                .filter(cap => resolvedCapabilities[cap] === false);
 
             step1Result = {
                 ...rawStep1,
-                feature_signals: resolvedFeatures, // Override with resolved ones
-                explicit_exclusions: explicitExclusions
+                capabilities: resolvedCapabilities,           // 🆕 NEW: Provider-agnostic intent
+                terminal_exclusions: terminalExclusions,      // 🔒 NEW: Immutable exclusions
+                explicit_exclusions: explicitExclusions,      // Original AI output (preserved)
+                
+                // ⚠️ LEGACY COMPATIBILITY: Keep for gradual migration
+                feature_signals: resolvedCapabilities         // Alias for backward compat
             };
             console.log("AI Snapshot Created & Resolved");
-            console.log("Resolved Features:", JSON.stringify(resolvedFeatures));
+            console.log("Resolved Capabilities:", JSON.stringify(resolvedCapabilities));
+            console.log("Terminal Exclusions:", JSON.stringify(terminalExclusions));
         }
 
         // AMBIGUITY CHECK (Backend Logic Step 1)
@@ -690,16 +717,38 @@ router.post('/analyze', authMiddleware, async (req, res) => {
                     status: 'WAITING_FOR_CONFIRMATION',
                     intent: step1Result.intent_classification,
                     semantic_signals: step1Result.semantic_signals,
+                    
+                    // 🆕 NEW: Capabilities (provider-agnostic intent)
+                    capabilities: step1Result.capabilities,
+                    
+                    // 🔒 NEW: Terminal exclusions (immutable)
+                    terminal_exclusions: step1Result.terminal_exclusions,
+                    
+                    // Backward compatibility
                     features: step1Result.feature_signals,
+                    exclusions: step1Result.explicit_exclusions,
+                    
                     risk_domains: step1Result.risk_domains,
-                    exclusions: step1Result.explicit_exclusions, // Add explicit exclusions here
                     full_analysis: step1Result // Send full result to be sent back as 'approvedIntent'
                 }
             });
         }
 
+        // ═════════════════════════════════════════════════════════════════
+        // LOCK APPROVED INTENT (immutable from this point)
+        // ═════════════════════════════════════════════════════════════════
+        // CRITICAL RULE: Terminal exclusions cannot be modified by any downstream step.
+        // If a capability is in terminal_exclusions, it must NEVER appear in:
+        // - Architecture diagram
+        // - Cost estimation
+        // - Terraform generation
+        // - AI scoring
+        // ═════════════════════════════════════════════════════════════════
         // If approvedIntent IS present (req.body.approvedIntent), we fall through to Step 2.
-        step1Result = req.body.approvedIntent; // Ensure we use the approved version format
+        step1Result = {
+            ...req.body.approvedIntent,
+            locked: true  // 🔒 Mark as immutable
+        };
 
         // === STEP 2: INFRA SPEC GENERATION (PATTERN-BASED CONSTRUCTION) ===
         console.log("--- STEP 2: Starting Pattern-Based InfraSpec Construction ---");
@@ -1160,6 +1209,14 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             // This becomes the single source of truth for all downstream steps
             canonical_architecture: patternResolution,
 
+            // Region information (FIX 2: Ensure region is set in Step 2)
+            region: {
+                logical_region: "US_PRIMARY", // Default to US_PRIMARY
+                resolved_region: "us-east-1",   // Default to us-east-1 for AWS
+                provider: null,                 // Will be set in Step 3 after provider selection
+                intent: "AUTO"                  // Auto-select based on provider
+            },
+
             // Tier 2 Data (Engineering View)
             components: activeComponents,
             service_classes: skeleton, // 15 provider-agnostic service classes
@@ -1223,6 +1280,19 @@ router.post('/analyze', authMiddleware, async (req, res) => {
         // Enforce hard constraints on the finalized spec
         integrityService.sanitizeInfraSpec(step2Result.architecture_pattern, infraSpec);
         integrityService.enforcePatternMinimums(step2Result.architecture_pattern, infraSpec);
+
+        // 🔒 FREEZE INFRASPEC: Step 3+ must be pure consumers
+        // Prevent accidental mutation of canonical architecture and service classes
+        Object.freeze(infraSpec.canonical_architecture);
+        Object.freeze(infraSpec.service_classes);
+        if (infraSpec.canonical_architecture?.deployable_services) {
+            Object.freeze(infraSpec.canonical_architecture.deployable_services);
+        }
+        if (infraSpec.service_classes?.required_services) {
+            Object.freeze(infraSpec.service_classes.required_services);
+        }
+        
+        console.log('[STEP 2] ✓ InfraSpec frozen: canonical_architecture and service_classes are immutable');
 
         res.json({
             step: 'infra_spec_generated',
@@ -1288,6 +1358,19 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
         console.log("--- STEP 3: Cost Analysis Started ---");
         console.log(`Cost Profile: ${cost_profile || 'COST_EFFECTIVE'}`);
 
+        // 🔒 INVARIANT CHECK: Step 2 must complete before Step 3
+        if (!infraSpec?.canonical_architecture?.deployable_services || 
+            infraSpec.canonical_architecture.deployable_services.length === 0) {
+            return res.status(400).json({
+                error: 'Step-to-Step Invariant Violation',
+                message: 'Step 3 requires Step 2 to complete first. infraSpec.canonical_architecture.deployable_services must exist.',
+                step_required: 'Step 2 (Infrastructure Specification)',
+                current_step: 'Step 3 (Cost Analysis)'
+            });
+        }
+        
+        console.log(`[INVARIANT CHECK] ✓ Step 2 completed: ${infraSpec.canonical_architecture.deployable_services.length} deployable services`);
+
         // BUG #1: Prevent Step 3 loop
         if (req.body.step3_completed) {
             console.log("STEP 3 already completed — skipping to prevent state overwrite");
@@ -1301,9 +1384,26 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
             });
         }
 
-        const costProfile = cost_profile || 'COST_EFFECTIVE';
+        const costProfile = cost_profile || 'cost_effective';
+        const selected_provider = req.body.selected_provider || 'AWS'; // Need to extract provider from request
         let costAnalysis;
         let scenarios = null;
+
+        // 🔒 STEP 3: Profile → Sizing resolver (CORE IMPLEMENTATION)
+        // Same services, different numbers + tiers
+        function resolveSizingForAllServices(deployableServices, profile, provider) {
+            const sizingModel = require('../services/sizingModel');
+            
+            const resolvedSizing = {};
+            
+            for (const service of deployableServices) {
+                // Use the sizing model to get appropriate sizing based on profile
+                const sizing = sizingModel.getSizing(service, 'MEDIUM', profile);
+                resolvedSizing[service] = sizing;
+            }
+            
+            return resolvedSizing;
+        }
 
         // 🔒 INFRASPEC VALIDATION (Problem 1 Fix)
         // InfraSpec must have services before cost analysis can proceed
@@ -1319,6 +1419,50 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
             });
         }
         console.log(`[VALIDATION] InfraSpec has ${requiredServices.length} services - proceeding`);
+
+        // 🔒 STEP 3 INVARIANT CHECK: Ensure canonical architecture deployable_services are frozen
+        if (!infraSpec.canonical_architecture?.deployable_services || 
+            infraSpec.canonical_architecture.deployable_services.length === 0) {
+            return res.status(400).json({
+                error: 'Step 3 Invariant Violation',
+                message: 'Step 3 requires canonical architecture deployable services to exist. These must never change between cost profiles.',
+                step_required: 'Step 2 (Infrastructure Specification)',
+                current_step: 'Step 3 (Cost Analysis)'
+            });
+        }
+
+        // ✅ FIX 3: Calculate and persist sizing from Step 3
+        // This locks Terraform (Step 4) to the exact sizing used for cost calculation
+        const sizingModel = require('../services/sizingModel');
+        const calculatedSizing = sizingModel.getSizingForInfraSpec(infraSpec, intent, costProfile);
+        
+        // Persist to infraSpec (will be returned to frontend and saved to workspace)
+        infraSpec.sizing = calculatedSizing;
+        
+        console.log(`[STEP 3] ✓ Sizing calculated and persisted: tier=${calculatedSizing.tier}, profile=${calculatedSizing.profile}, services=${Object.keys(calculatedSizing.services).length}`);
+
+        // 🔥 FIX 1: HARD NORMALIZATION of deployable services to prevent undefined crashes
+        if (infraSpec.canonical_architecture && infraSpec.canonical_architecture.deployable_services) {
+            const originalLength = infraSpec.canonical_architecture.deployable_services.length;
+            infraSpec.canonical_architecture.deployable_services = infraSpec.canonical_architecture.deployable_services
+                .map(s => {
+                    if (!s) return null;
+                    if (typeof s === "string") return s;
+                    // Extract service name from canonical service object
+                    if (typeof s === "object") {
+                        return s.service || s.canonical_type || s.name || s.service_class || null;
+                    }
+                    return null;
+                })
+                .filter(Boolean);
+            
+            console.log(`[NORMALIZATION] Deployable services: ${originalLength} → ${infraSpec.canonical_architecture.deployable_services.length} (after removing undefined/null)`);
+            
+            // Debug log the actual services
+            if (originalLength > 0 && infraSpec.canonical_architecture.deployable_services.length === 0) {
+                console.log(`[NORMALIZATION DEBUG] Original services sample:`, infraSpec.canonical_architecture.deployable_services?.slice(0, 3));
+            }
+        }
 
         // LAYER B: If usage_profile is provided, convert ranges to scenarios and calculate range
         if (usage_profile && usage_profile.monthly_users) {
@@ -1465,6 +1609,60 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
         const safeDetails = costAnalysis.provider_details?.[safeProvider] || {};
         const safeRange = costAnalysis.recommended_cost_range || { formatted: '$0 - $0/month' };
 
+        // ✅ FIX 2: Update region with provider-specific resolved region
+        const regionResolver = require('../services/regionResolver');
+        const selectedProvider = safeProvider.toLowerCase();
+        
+        // Update region with provider-specific resolved region
+        if (infraSpec.region) {
+            const logicalRegion = infraSpec.region.logical_region || 'US_PRIMARY';
+            const resolvedRegion = regionResolver.resolveRegion(logicalRegion, selectedProvider);
+            
+            infraSpec.region = {
+                ...infraSpec.region,
+                logical_region: logicalRegion,
+                resolved_region: resolvedRegion,
+                provider: selectedProvider,
+                intent: 'AUTO'
+            };
+            
+            console.log(`[STEP 3] Region updated: logical=${logicalRegion} → resolved=${resolvedRegion} for ${selectedProvider}`);
+        }
+        
+        // ✅ FIX 3: Save updated infraSpec back to workspace with step completion flag
+        if (workspace_id) {
+            const { pool } = require('../config/db');
+            try {
+                // Fetch existing workspace
+                const wsResult = await pool.query(
+                    'SELECT state_json FROM workspaces WHERE id = $1',
+                    [workspace_id]
+                );
+                
+                if (wsResult.rows.length > 0) {
+                    let stateJson = wsResult.rows[0].state_json || {};
+                    
+                    // Update the infraSpec in the state
+                    stateJson.infraSpec = infraSpec;
+                    
+                    // Mark step 3 as completed
+                    if (!stateJson.workflow_state) stateJson.workflow_state = {};
+                    stateJson.workflow_state.step3_completed = true;
+                    stateJson.workflow_state.last_step_completed = 'cost_estimation';
+                    
+                    // Update workspace with new state
+                    await pool.query(
+                        'UPDATE workspaces SET state_json = $1, updated_at = NOW() WHERE id = $2',
+                        [JSON.stringify(stateJson), workspace_id]
+                    );
+                    
+                    console.log(`[STEP 3] Updated workspace ${workspace_id} with completed region and sizing`);
+                }
+            } catch (saveError) {
+                console.error('[STEP 3] Error saving updated infraSpec to workspace:', saveError);
+            }
+        }
+        
         // Ensure explicit undefined checks for critical fields
         const responseData = {
             step: 'cost_estimation',
@@ -1608,7 +1806,11 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                     costAnalysis.scenarios, 
                     usage_profile, 
                     infraSpec.architecture_pattern
-                )
+                ),
+
+                // ✅ FIX 3: Include sizing in response for frontend persistence
+                // This ensures Step 4 Terraform uses the EXACT sizing from Step 3 cost calculation
+                sizing: infraSpec.sizing
             }
         };
 
@@ -1836,9 +2038,77 @@ router.post('/terraform', authMiddleware, async (req, res) => {
         const { workspace_id, infraSpec, provider, profile, project_name, requirements } = req.body;
 
         console.log(`[TERRAFORM] Generating modular code for ${provider} (${profile})`);
+        
+        // 🔒 INVARIANT CHECK: Step 3 must complete before Step 5
+        if (!infraSpec?.sizing) {
+            return res.status(400).json({
+                error: 'Step-to-Step Invariant Violation',
+                message: 'Step 5 requires Step 3 to complete first. infraSpec.sizing must exist (locked from Step 3).',
+                step_required: 'Step 3 (Cost Analysis)',
+                current_step: 'Step 5 (Terraform Generation)'
+            });
+        }
+        
+        // 🔒 INVARIANT CHECK: Step 2 region resolution must complete
+        if (!infraSpec?.region?.resolved_region && !requirements?.region?.primary_region) {
+            return res.status(400).json({
+                error: 'Step-to-Step Invariant Violation',
+                message: 'Step 5 requires Step 2 region resolution. infraSpec.region.resolved_region must exist.',
+                step_required: 'Step 2 (Infrastructure Specification)',
+                current_step: 'Step 5 (Terraform Generation)'
+            });
+        }
+        
+        console.log(`[INVARIANT CHECK] ✓ Step 3 completed: sizing.tier=${infraSpec.sizing.tier}`);
+        console.log(`[INVARIANT CHECK] ✓ Step 2 region resolved: ${infraSpec.region?.resolved_region || requirements.region?.primary_region}`);
+        
         console.log(`[TERRAFORM] InfraSpec:`, JSON.stringify(infraSpec, null, 2));
         console.log(`[TERRAFORM] InfraSpec pattern:`, infraSpec?.service_classes?.pattern);
         console.log(`[TERRAFORM] Services:`, infraSpec?.service_classes?.required_services?.map(s => s.service_class));
+        
+        // 🔥 TERRAFORM-SAFE MODE: Validate that deployable services have modules available for the selected provider
+        if (infraSpec.canonical_architecture?.deployable_services && Array.isArray(infraSpec.canonical_architecture.deployable_services)) {
+            const terraformModules = require('../services/terraformModules');
+            const providerLower = provider.toLowerCase();
+            
+            // Check if all deployable services have modules for the selected provider
+            const missingModules = [];
+            const availableServices = [];
+            
+            infraSpec.canonical_architecture.deployable_services.forEach(service => {
+                // Normalize service name for module lookup
+                const moduleFolderName = terraformService.getModuleFolderName(service);
+                const lookupName = moduleFolderName === 'relational_db' ? 'relational_database' :
+                                  moduleFolderName === 'auth' ? 'identity_auth' :
+                                  moduleFolderName === 'ml_inference' ? 'ml_inference_service' :
+                                  moduleFolderName === 'websocket' ? 'websocket_gateway' :
+                                  moduleFolderName === 'serverless_compute' ? 'serverless_compute' :
+                                  moduleFolderName === 'analytical_db' ? 'analytical_database' :
+                                  moduleFolderName === 'push_notification' ? 'push_notification_service' :
+                                  moduleFolderName;
+                
+                const module = terraformModules.getModule(lookupName, providerLower);
+                if (module) {
+                    availableServices.push(service);
+                } else {
+                    missingModules.push({
+                        service,
+                        normalized: lookupName,
+                        provider: providerLower,
+                        reason: 'MODULE_NOT_IMPLEMENTED'
+                    });
+                }
+            });
+            
+            if (missingModules.length > 0) {
+                console.warn(`[TERRAFORM-SAFE] Missing modules for services: ${missingModules.map(m => m.service).join(', ')}`);
+                console.warn(`[TERRAFORM-SAFE] Proceeding with available services only: ${availableServices.join(', ')}`);
+                
+                // Update the canonical architecture to only include services with modules
+                infraSpec.canonical_architecture.deployable_services = availableServices;
+                console.log(`[TERRAFORM-SAFE] Filtered deployable services from ${infraSpec.canonical_architecture.deployable_services.length + missingModules.length} to ${availableServices.length}`);
+            }
+        }
 
         // Validate required fields
         if (!infraSpec || !provider) {
@@ -1862,18 +2132,24 @@ router.post('/terraform', authMiddleware, async (req, res) => {
         const terraformService = require('../services/terraformService');
         
         console.log('[TERRAFORM] Calling generateModularTerraform...');
-        const terraformProject = await terraformService.generateModularTerraform(
+        const terraformResult = await terraformService.generateModularTerraform(
             infraSpec,
             provider,
             project_name || 'cloudiverse-project',
             requirements || {}
         );
         console.log('[TERRAFORM] Project generated successfully');
+        
+        // Extract components from result
+        const terraformProject = terraformResult.projectFolder;
+        const terraformHash = terraformResult.terraform_hash;
+        const deploymentManifest = terraformResult.deployment_manifest;
 
         // Get services list
         const services = terraformService.getTerraformServices(infraSpec, provider);
         console.log(`[TERRAFORM] Generated modular project with ${Object.keys(terraformProject).length} root files`);
         console.log(`[TERRAFORM] Modules:`, Object.keys(terraformProject.modules || {}));
+        console.log(`[TERRAFORM] Hash: ${terraformHash.substring(0, 16)}...`);
 
         // ═══════════════════════════════════════════════════════════════════════════
         // TERRAFORM INTEGRITY GATE (CRITICAL - NO BYPASS)
@@ -1904,6 +2180,18 @@ router.post('/terraform', authMiddleware, async (req, res) => {
         console.log(`[TERRAFORM INTEGRITY] ✓ ${Object.keys(terraformProject.modules).length} modules generated`);
         console.log(`[TERRAFORM INTEGRITY] ✓ main.tf exists with ${terraformProject['main.tf'].split('\n').length} lines`);
 
+        // 🔒 MANDATORY: Validate hash and manifest exist
+        if (!terraformHash || !deploymentManifest) {
+            console.error('[TERRAFORM INTEGRITY] ✗ FAILED: Missing hash or manifest');
+            return res.status(500).json({
+                error: 'Terraform integrity check failed',
+                message: 'Terraform hash and deployment manifest are mandatory but missing.',
+                terraform_valid: false
+            });
+        }
+        
+        console.log('[TERRAFORM INTEGRITY] ✓ Hash and manifest validated');
+
         res.json({
             success: true,
             terraform: {
@@ -1914,6 +2202,8 @@ router.post('/terraform', authMiddleware, async (req, res) => {
             },
             services,
             terraform_valid: true,
+            terraform_hash: terraformHash,
+            deployment_manifest: deploymentManifest,
             message: 'Terraform generated successfully (modular structure)'
         });
     } catch (error) {

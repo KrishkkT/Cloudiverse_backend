@@ -265,6 +265,43 @@ function addConditionalServices(services, pattern, intent = {}) {
 }
 
 /**
+ * Filter services to only include Terraform-supported ones
+ * This ensures that Terraform generation will never fail due to unsupported services
+ */
+function filterTerraformSafeServices(services) {
+    const { getServiceDefinition } = require('./canonicalServiceRegistry');
+    
+    const terraformSupportedServices = [];
+    const excludedServices = [];
+    
+    services.forEach(service => {
+        const serviceName = service.service_class || service.canonical_type || service.name;
+        const serviceDef = getServiceDefinition(serviceName);
+        
+        // Include service if it's terraform_supported and belongs to terraform_core or terraform_optional class
+        if (serviceDef && serviceDef.terraform_supported === true && 
+            (serviceDef.class === 'terraform_core' || serviceDef.class === 'terraform_optional')) {
+            terraformSupportedServices.push(service);
+        } else {
+            excludedServices.push({
+                service: serviceName,
+                reason: serviceDef ? `Not terraform-supported or wrong class (${serviceDef.class})` : 'Unknown service'
+            });
+        }
+    });
+    
+    if (excludedServices.length > 0) {
+        console.warn('[TERRAFORM-SAFE] Excluded services that are not terraform-supported:', 
+                     excludedServices.map(e => e.service).join(', '));
+        excludedServices.forEach(ex => {
+            console.warn(`[TERRAFORM-SAFE] Service excluded: ${ex.service} - ${ex.reason}`);
+        });
+    }
+    
+    return terraformSupportedServices;
+}
+
+/**
  * Main validation function - validates and fixes canonical architecture
  */
 function validateAndFixCanonicalArchitecture(canonicalArchitecture, intent = {}) {
@@ -288,7 +325,16 @@ function validateAndFixCanonicalArchitecture(canonicalArchitecture, intent = {})
         intent
     );
     
-    // Step 3: Validate
+    // Step 3: Apply Terraform-Safe Mode - filter to only terraform-supported services
+    const originalServiceCount = canonicalArchitecture.services.length;
+    canonicalArchitecture.services = filterTerraformSafeServices(canonicalArchitecture.services);
+    const filteredServiceCount = canonicalArchitecture.services.length;
+    
+    if (filteredServiceCount < originalServiceCount) {
+        console.warn(`[TERRAFORM-SAFE] Filtered services from ${originalServiceCount} to ${filteredServiceCount} (terraform-safe mode)`);
+    }
+    
+    // Step 4: Validate
     const validation = validateCanonicalArchitecture(canonicalArchitecture, intent);
     
     if (!validation.valid) {
@@ -313,5 +359,6 @@ module.exports = {
     deduplicateServices,
     validateCanonicalArchitecture,
     validateAndFixCanonicalArchitecture,
-    addConditionalServices
+    addConditionalServices,
+    filterTerraformSafeServices
 };

@@ -6,6 +6,9 @@
  * Extensions add services, patterns never combine
  */
 
+const { CANONICAL_SERVICES, getServiceDefinition, isDeployable } = require('./canonicalServiceRegistry');
+const { CAPABILITY_TO_SERVICE, resolveServicesFromCapabilities, getBlockedServices } = require('./capabilityMap');
+
 // ═══════════════════════════════════════════════════════════════════════════
 // V1 PATTERN CATALOG (AUTHORITATIVE)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -79,11 +82,11 @@ const PATTERN_CATALOG = {
   // 5️⃣ STATEFUL_WEB_PLATFORM
   STATEFUL_WEB_PLATFORM: {
     name: 'Stateful Web Platform',
-    use_case: 'SaaS, CRMs, dashboards, ERPs (NO payments, NO queues)',
+    use_case: 'SaaS, CRMs, dashboards, ERPs (supports async workflows, messaging)',
     mandatory_services: ['cdn', 'load_balancer', 'app_compute', 'relational_database', 'identity_auth', 'logging', 'monitoring'],
-    optional_services: ['object_storage', 'cache'],
-    forbidden_services: ['message_queue', 'payment_gateway', 'serverless_compute'],
-    invalid_if: ['payments', 'background_jobs', 'async_workflows'],
+    optional_services: ['object_storage', 'cache', 'message_queue', 'websocket_gateway'],
+    forbidden_services: ['serverless_compute'],
+    invalid_if: [],  // 🔥 FIX 2: Removed outdated restrictions
     requirements: {
       stateful: true,
       backend: true,
@@ -355,6 +358,13 @@ class PatternResolver {
       const semanticSignals = intent.semantic_signals || {};
       const intentClassification = intent.intent_classification || {};
       
+      // 🆕 NEW: Pass through capabilities and terminal_exclusions from Step 1
+      const capabilities = intent.capabilities || {};
+      const terminalExclusions = intent.terminal_exclusions || [];
+      
+      console.log('[EXTRACT REQUIREMENTS] Capabilities:', capabilities);
+      console.log('[EXTRACT REQUIREMENTS] Terminal Exclusions:', terminalExclusions);
+      
       // 🔒 FIX 1: Detect mobile_app_backend domain from intent_classification
       const primaryDomain = intentClassification.primary_domain || '';
       if (primaryDomain === 'mobile_app_backend' || primaryDomain.includes('mobile')) {
@@ -500,6 +510,10 @@ class PatternResolver {
         }
       }
 
+      // 🆕 NEW: Include capabilities and terminal_exclusions in final requirements
+      requirements.capabilities = capabilities;
+      requirements.terminal_exclusions = terminalExclusions;
+
       return requirements;
     } catch (error) {
       console.error('Error in extractRequirements:', error);
@@ -515,6 +529,11 @@ class PatternResolver {
         public_facing: true,
         compliance: [],
         data_sensitivity: "low",
+            
+        // 🆕 NEW: Pass through from Step 1
+        capabilities: {},
+        terminal_exclusions: [],
+            
         // Non-functional requirements
         nfr: {
           availability: "99.5", // default
@@ -561,6 +580,16 @@ class PatternResolver {
       workload_types: requirements.workload_types
     });
     
+    // 🔥 FIX 1: Validate pattern compatibility with terminal exclusions
+    // CRITICAL: Prevent stateful patterns when data_persistence is excluded
+    if (requirements.terminal_exclusions && requirements.terminal_exclusions.includes('data_persistence')) {
+      if (requirements.stateful) {
+        console.warn(`[🔥 PATTERN FIX] Stateful architecture requires data persistence`);
+        console.warn(`[🔥 PATTERN FIX] Forcing stateful=false due to data_persistence exclusion`);
+        requirements.stateful = false;  // 🔥 FIX: Downgrade to stateless
+      }
+    }
+
     // 🔥 HARD REJECTION RULES - These patterns are ILLEGAL for certain requirements
     // NO silent downgrades, NO defaults, MUST escalate
     
@@ -708,6 +737,148 @@ class PatternResolver {
     // Default fallback (should rarely be reached)
     console.log('[PATTERN FALLBACK] No specific pattern matched, defaulting to SERVERLESS_WEB_APP');
     return 'SERVERLESS_WEB_APP';
+  }
+
+  /**
+   * ═════════════════════════════════════════════════════════════════
+   * CORE SERVICE RESOLUTION FUNCTION (FIX 2 - CORRECTED PRECEDENCE)
+   * ═════════════════════════════════════════════════════════════════
+   * CRITICAL: Rule precedence hierarchy (DO NOT VIOLATE):
+   * 
+   * 1. PATTERN CONTRACT (highest authority)
+   *    - Pattern mandatory services ALWAYS added
+   *    - Pattern forbidden services ALWAYS blocked
+   * 2. TERMINAL EXCLUSIONS (user authority)
+   *    - User exclusions remove services (unless pattern requires)
+   * 3. CAPABILITY-DRIVEN ADDITIONS (lowest authority)
+   *    - Capabilities suggest services (pattern can override)
+   * 
+   * CRITICAL RULES:
+   * - Pattern contract ALWAYS wins over capabilities
+   * - Terminal exclusions respected UNLESS pattern requires service
+   * - All services must exist in CANONICAL_SERVICES registry
+   * ═════════════════════════════════════════════════════════════════
+   */
+  resolveServices({ capabilities, terminal_exclusions, pattern }) {
+    const selected = new Map();
+
+    console.log(`[SERVICE RESOLUTION] Starting resolution for pattern: ${pattern}`);
+    console.log(`[SERVICE RESOLUTION] Capabilities:`, capabilities);
+    console.log(`[SERVICE RESOLUTION] Terminal Exclusions:`, terminal_exclusions);
+
+    // ═════════════════════════════════════════════════════════════════
+    // 1️⃣ PATTERN CONTRACT (HIGHEST AUTHORITY)
+    // ═════════════════════════════════════════════════════════════════
+    const patternDef = PATTERN_CATALOG[pattern];
+    if (!patternDef) {
+      throw new Error(`Unknown pattern: ${pattern}`);
+    }
+
+    // Add mandatory services from pattern (these CANNOT be removed)
+    const patternMandatory = new Set(patternDef.mandatory_services);
+    patternDef.mandatory_services.forEach(svc => {
+      selected.set(svc, { source: 'pattern_mandatory', pattern, removable: false });
+      console.log(`[SERVICE RESOLUTION] 🔒 Added ${svc} from pattern (MANDATORY)`);
+    });
+
+    // Build forbidden services set
+    const forbidden = new Set(patternDef.forbidden_services || []);
+
+    // ═════════════════════════════════════════════════════════════════
+    // 2️⃣ CAPABILITIES → SERVICES (filtered by pattern)
+    // ═════════════════════════════════════════════════════════════════
+    for (const [capability, value] of Object.entries(capabilities || {})) {
+      if (value !== true) continue;
+
+      const services = CAPABILITY_TO_SERVICE[capability] || [];
+      services.forEach(svc => {
+        // 🔥 FIX 1: Pattern contract overrides capability suggestions
+        if (forbidden.has(svc)) {
+          console.log(`[SERVICE RESOLUTION] ⛔ BLOCKED ${svc} from capability ${capability} (pattern forbids)`);
+          return;
+        }
+
+        if (!selected.has(svc)) {
+          selected.set(svc, { source: 'capability', capability, removable: true });
+          console.log(`[SERVICE RESOLUTION] Added ${svc} from capability: ${capability}`);
+        }
+      });
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // 3️⃣ TERMINAL EXCLUSIONS (user authority, but pattern can override)
+    // ═════════════════════════════════════════════════════════════════
+    (terminal_exclusions || []).forEach(cap => {
+      const blockedServices = CAPABILITY_TO_SERVICE[cap] || [];
+      blockedServices.forEach(svc => {
+        if (selected.has(svc)) {
+          const entry = selected.get(svc);
+          
+          // 🔥 FIX 2: Pattern mandatory services CANNOT be removed
+          if (entry.removable === false || patternMandatory.has(svc)) {
+            console.log(`[SERVICE RESOLUTION] ⚠️ CANNOT REMOVE ${svc} (required by pattern ${pattern})`);
+            return;
+          }
+
+          selected.delete(svc);
+          console.log(`[SERVICE RESOLUTION] ❌ REMOVED ${svc} due to terminal exclusion: ${cap}`);
+        }
+      });
+    });
+
+    // ═════════════════════════════════════════════════════════════════
+    // 4️⃣ PATTERN SANITIZATION (enforce compute model)
+    // ═════════════════════════════════════════════════════════════════
+    // 🔥 FIX 3: Auto-clean conflicting services before validation
+    if (pattern === 'SERVERLESS_WEB_APP' || pattern === 'SERVERLESS_API') {
+      if (selected.has('app_compute')) {
+        selected.delete('app_compute');
+        console.log(`[SERVICE RESOLUTION] 🔧 SANITIZED: Removed app_compute (serverless pattern)`);
+      }
+      if (!selected.has('serverless_compute')) {
+        selected.set('serverless_compute', { source: 'pattern_sanitization', pattern, removable: false });
+        console.log(`[SERVICE RESOLUTION] 🔧 SANITIZED: Added serverless_compute (serverless pattern)`);
+      }
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // 5️⃣ CANONICAL REGISTRY VALIDATION
+    // ═════════════════════════════════════════════════════════════════
+    for (const svc of selected.keys()) {
+      const serviceDef = getServiceDefinition(svc);
+      if (!serviceDef) {
+        throw new Error(`Unknown canonical service: ${svc}. Must be defined in CANONICAL_SERVICES registry.`);
+      }
+    }
+
+    // 🔥 TERRAFORM-SAFE MODE: Filter to only services that are terraform-supported
+    const terraformSafeServices = [];
+    const excludedServices = [];
+    
+    for (const [svc, metadata] of selected.entries()) {
+      const serviceDef = getServiceDefinition(svc);
+      if (serviceDef && serviceDef.terraform_supported === true) {
+        terraformSafeServices.push(svc);
+      } else {
+        excludedServices.push({
+          service: svc,
+          reason: serviceDef ? 'terraform_supported=false' : 'unknown_service'
+        });
+      }
+    }
+    
+    if (excludedServices.length > 0) {
+      console.warn('[TERRAFORM-SAFE] Excluded services that are not terraform-supported:', 
+                   excludedServices.map(e => e.service).join(', '));
+      excludedServices.forEach(ex => {
+        console.warn(`[TERRAFORM-SAFE] Service excluded: ${ex.service} - ${ex.reason}`);
+      });
+    }
+    
+    const finalServices = terraformSafeServices;
+    console.log(`[SERVICE RESOLUTION] Final services (${finalServices.length}):`, finalServices);
+
+    return finalServices;
   }
 
   /**
@@ -890,15 +1061,37 @@ class PatternResolver {
   /**
    * Generate canonical architecture based on pattern and services
    * THIS IS THE SINGLE SOURCE OF TRUTH - All downstream systems MUST read from this
+   * 
+   * 🔧 REDESIGNED: Now uses resolveServices() with proper precedence
    */
   generateCanonicalArchitecture(requirements, selectedPattern) {
-    const services = this.selectServices(requirements, selectedPattern);
+    // ═════════════════════════════════════════════════════════════════
+    // 🆕 NEW: Use resolveServices() with proper precedence
+    // ═════════════════════════════════════════════════════════════════
+    const serviceNames = this.resolveServices({
+      capabilities: requirements.capabilities || {},
+      terminal_exclusions: requirements.terminal_exclusions || [],
+      pattern: selectedPattern
+    });
     
-    console.log(`[CANONICAL ARCHITECTURE] Pattern: ${selectedPattern}, Services: ${services.length}`);
-    console.log(`[CANONICAL ARCHITECTURE] Service List: ${services.map(s => s.name).join(', ')}`);
+    console.log(`[CANONICAL ARCHITECTURE] Pattern: ${selectedPattern}, Services: ${serviceNames.length}`);
+    console.log(`[CANONICAL ARCHITECTURE] Service List: ${serviceNames.join(', ')}`);
+    
+    // Build services array with full metadata from canonical registry
+    const services = serviceNames.map(name => {
+      const serviceDef = getServiceDefinition(name);
+      return {
+        name: name,
+        description: serviceDef.description,
+        category: serviceDef.category,
+        kind: serviceDef.kind,
+        terraform_supported: serviceDef.terraform_supported
+      };
+    });
     
     // 🔥 VALIDATION: Fail if required services are missing for pattern
-    this.validateServicesForPattern(services, selectedPattern);
+    // 🔒 Pass terminalExclusions to respect user authority
+    this.validateServicesForPattern(services, selectedPattern, requirements.terminal_exclusions || []);
     
     // Create canonical architecture based on pattern
     const pattern = PATTERN_CATALOG[selectedPattern];
@@ -909,7 +1102,9 @@ class PatternResolver {
       canonical_type: service.name,
       category: service.category,
       description: service.description,
-      required: true, // All services from selectServices are required
+      kind: service.kind,
+      terraform_supported: service.terraform_supported,
+      required: true, // All services from resolveServices are required
       pattern_enforced: true
     }));
     
@@ -923,6 +1118,8 @@ class PatternResolver {
         label: service.name.replace('_', ' ').toUpperCase(),
         type: service.name, // Use canonical type, not category
         category: service.category,
+        kind: service.kind,
+        terraform_supported: service.terraform_supported,
         position: position,
         required: true
       });
@@ -1016,6 +1213,51 @@ class PatternResolver {
     
     console.log(`[CANONICAL CONTRACT] ${servicesContract.total_services} services finalized for ${selectedPattern}`);
     
+    // ═════════════════════════════════════════════════════════════════
+    // 🔒 VALIDATION CHECKPOINT: Split Architecture vs Deployable Services
+    // ═════════════════════════════════════════════════════════════════
+    // CRITICAL: Architecture services ≠ Deployable services
+    // - Architecture services: All services (including logical like event_bus, waf)
+    // - Deployable services: Services that can reach Terraform
+    // - Blocking services: Services that MUST have Terraform modules (blocks generation if missing)
+    // ═════════════════════════════════════════════════════════════════
+    const architecture_services = canonicalServices;  // All services (for diagram, cost, scoring)
+    
+    // Deployable services: Services that can be included in Terraform (both core and optional)
+    const deployable_services = canonicalServices.filter(
+      s => s.terraform_supported === true
+    );
+    
+    // Blocking services: Services that MUST have Terraform modules (blocks generation if missing)
+    const blocking_services = canonicalServices.filter(
+      s => s.class === 'terraform_core' && s.terraform_supported === true
+    );
+    
+    console.log(`[SERVICE SPLIT] Architecture: ${architecture_services.length}, Deployable: ${deployable_services.length}, Blocking: ${blocking_services.length}`);
+    
+    // List logical services (excluded from Terraform)
+    const logical_services = canonicalServices.filter(s => s.terraform_supported === false);
+    if (logical_services.length > 0) {
+      console.log(`[LOGICAL SERVICES] ${logical_services.map(s => s.canonical_type).join(', ')} will NOT reach Terraform`);
+    }
+    
+    // List optional services (may appear in Terraform if modules exist, otherwise logical)
+    const optional_services = canonicalServices.filter(s => s.class === 'terraform_optional');
+    if (optional_services.length > 0) {
+      console.log(`[OPTIONAL SERVICES] ${optional_services.map(s => s.canonical_type).join(', ')} may appear in Terraform if modules exist`);
+    }
+    
+    // 🚨 VALIDATION: Ensure no non-Terraform-supported service leaked into deployables
+    deployable_services.forEach(svc => {
+      if (svc.terraform_supported !== true) {
+        throw new Error(
+          `VALIDATION ERROR: Non-deployable service leaked into deployable list: ${svc.canonical_type}. ` +
+          `This service has terraform_supported=${svc.terraform_supported} but should be filtered out.`
+        );
+      }
+    });
+    console.log(`[✅ VALIDATION PASSED] All deployable services have terraform_supported=true`);
+    // ═════════════════════════════════════════════════════════════════
     return {
       // Pattern metadata
       pattern: selectedPattern,
@@ -1024,6 +1266,11 @@ class PatternResolver {
       
       // 🔥 THE CANONICAL SERVICES CONTRACT - SINGLE SOURCE OF TRUTH
       services_contract: servicesContract,
+      
+      // 🆕 NEW: Split services for different purposes
+      architecture_services: architecture_services,   // All services (diagram, cost, scoring)
+      deployable_services: deployable_services,       // Only terraform_supported=true (Terraform)
+      logical_services: logical_services,             // Architecture-only (no Terraform)
       
       // Graph representation for diagrams
       nodes,
@@ -1053,7 +1300,7 @@ class PatternResolver {
    * Validate that required services exist for the given pattern
    * Uses V1 Pattern Catalog mandatory services as validation baseline
    */
-  validateServicesForPattern(services, pattern) {
+  validateServicesForPattern(services, pattern, terminalExclusions = []) {
     const serviceNames = new Set(services.map(s => s.name));
     
     const patternDef = PATTERN_CATALOG[pattern];
@@ -1062,8 +1309,31 @@ class PatternResolver {
       return; // Pattern not in V1 catalog, skip validation
     }
     
+    // 🔒 TERMINAL EXCLUSIONS: Services excluded by user authority cannot be required
+    // Map capabilities to services they would create
+    const capabilityToService = {
+      'data_persistence': ['relational_database', 'nosql_database', 'block_storage'],  // 🔥 FIX: REMOVED object_storage
+      'document_storage': ['object_storage'],  // 🔥 FIX: Added separate capability
+      'messaging': ['message_queue'],
+      'realtime': ['websocket_gateway'],
+      'payments': ['payment_gateway']
+    };
+
+    // Build set of excluded services based on terminal exclusions
+    const excludedServices = new Set();
+    terminalExclusions.forEach(capability => {
+      const services = capabilityToService[capability] || [];
+      services.forEach(svc => excludedServices.add(svc));
+    });
+
+    if (terminalExclusions.length > 0) {
+      console.log(`[VALIDATION] Terminal exclusions: ${terminalExclusions.join(', ')}`);
+      console.log(`[VALIDATION] Excluded services: ${Array.from(excludedServices).join(', ')}`);
+    }
+    
     const required = patternDef.mandatory_services;
-    const missing = required.filter(r => !serviceNames.has(r));
+    // 🔒 FIX: Exclude user-excluded services from validation
+    const missing = required.filter(r => !serviceNames.has(r) && !excludedServices.has(r));
     
     if (missing.length > 0) {
       const error = `[VALIDATION FAILED] Pattern ${pattern} requires services: ${required.join(', ')}. Missing: ${missing.join(', ')}`;

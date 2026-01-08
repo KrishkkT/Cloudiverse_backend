@@ -253,7 +253,7 @@ function mapServiceToCloud(provider, serviceClass, costProfile = 'COST_EFFECTIVE
     // Handle database engine variants
     if (serviceClass === 'relational_database') {
         const engine = options.engine || 'postgres';
-        const perfKey = costProfile === 'HIGH_PERFORMANCE' ? 'PERF' : 'COST';
+        const perfKey = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 'PERF' : 'COST';
         const key = `${engine.toUpperCase()}_${perfKey}`;
         return serviceMapping[key] || serviceMapping[`${engine.toUpperCase()}_COST`] || serviceMapping.DEFAULT;
     }
