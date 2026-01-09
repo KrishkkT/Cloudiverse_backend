@@ -1,0 +1,415 @@
+{
+    "patterns": {
+        "STATIC_SITE": {
+            "description": "Pure static content hosting",
+            "required_capabilities": [
+                "static_content"
+            ],
+            "forbidden_capabilities": [
+                "data_persistence",
+                "api_backend",
+                "identity_access"
+            ],
+            "services": [
+                "cdn",
+                "object_storage"
+            ],
+            "score_weights": {
+                "static_content": 1.0,
+                "data_persistence": -1.0
+            },
+            "complexity": "simple"
+        },
+        "STATIC_SITE_WITH_AUTH": {
+            "description": "Static site with protected content",
+            "required_capabilities": [
+                "static_content",
+                "identity_access"
+            ],
+            "forbidden_capabilities": [
+                "api_backend",
+                "data_persistence"
+            ],
+            "services": [
+                "cdn",
+                "object_storage",
+                "identity_auth"
+            ],
+            "score_weights": {
+                "static_content": 0.8,
+                "identity_access": 1.0
+            },
+            "complexity": "simple"
+        },
+        "SERVERLESS_API": {
+            "description": "Pure serverless API backend",
+            "required_capabilities": [
+                "api_backend"
+            ],
+            "forbidden_capabilities": [
+                "static_content"
+            ],
+            "services": [
+                "api_gateway",
+                "compute_serverless",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "api_backend": 1.0
+            },
+            "complexity": "simple"
+        },
+        "SERVERLESS_WEB_APP": {
+            "description": "Static frontend + serverless backend",
+            "required_capabilities": [
+                "static_content",
+                "api_backend"
+            ],
+            "forbidden_capabilities": [],
+            "services": [
+                "cdn",
+                "api_gateway",
+                "compute_serverless",
+                "identity_auth",
+                "logging",
+                "monitoring",
+                "object_storage"
+            ],
+            "score_weights": {
+                "static_content": 0.9,
+                "api_backend": 0.8,
+                "data_persistence": -0.5
+            },
+            "complexity": "simple"
+        },
+        "STATEFUL_WEB_PLATFORM": {
+            "description": "Web app with database",
+            "required_capabilities": [
+                "static_content",
+                "api_backend",
+                "data_persistence"
+            ],
+            "forbidden_capabilities": [],
+            "services": [
+                "cdn",
+                "api_gateway",
+                "compute_serverless",
+                "relational_database",
+                "identity_auth",
+                "logging",
+                "monitoring",
+                "object_storage"
+            ],
+            "score_weights": {
+                "static_content": 0.7,
+                "api_backend": 0.8,
+                "data_persistence": 1.0
+            },
+            "complexity": "complex"
+        },
+        "MOBILE_BACKEND_PLATFORM": {
+            "description": "Native mobile apps backend",
+            "required_capabilities": [
+                "mobile_clients",
+                "api_backend",
+                "identity_access"
+            ],
+            "forbidden_capabilities": [],
+            "services": [
+                "api_gateway",
+                "compute_serverless",
+                "identity_auth",
+                "object_storage",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "mobile_clients": 1.0,
+                "api_backend": 0.8,
+                "identity_access": 0.7
+            },
+            "complexity": "complex"
+        },
+        "REALTIME_PLATFORM": {
+            "description": "Chat, collaboration, gaming",
+            "required_capabilities": [
+                "realtime",
+                "identity_access"
+            ],
+            "forbidden_capabilities": [],
+            "services": [
+                "api_gateway",
+                "compute_serverless",
+                "identity_auth",
+                "cache",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "realtime": 1.0,
+                "identity_access": 0.6
+            },
+            "complexity": "complex"
+        },
+        "DATA_PLATFORM": {
+            "description": "ETL, analytics, batch processing",
+            "required_capabilities": [
+                "data_persistence",
+                "scheduled_jobs"
+            ],
+            "forbidden_capabilities": [
+                "static_content"
+            ],
+            "services": [
+                "object_storage",
+                "relational_database",
+                "compute_serverless",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "data_persistence": 1.0,
+                "scheduled_jobs": 0.9
+            },
+            "complexity": "complex"
+        },
+        "ML_INFERENCE_PLATFORM": {
+            "description": "GPU-accelerated ML inference with vector search",
+            "required_capabilities": [
+                "domain_ml_heavy",
+                "api_backend"
+            ],
+            "forbidden_capabilities": [],
+            "services": [
+                "api_gateway",
+                "ml_inference_gpu",
+                "vector_database",
+                "object_storage",
+                "cache",
+                "identity_auth",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "domain_ml_heavy": 1.2,
+                "api_backend": 1.0,
+                "mobile_clients": 0.8,
+                "realtime": 0.6
+            },
+            "complexity": "complex"
+        },
+        "ML_TRAINING_PLATFORM": {
+            "description": "ML model training pipelines",
+            "required_capabilities": [
+                "domain_ml_heavy",
+                "scheduled_jobs"
+            ],
+            "forbidden_capabilities": [
+                "static_content"
+            ],
+            "services": [
+                "object_storage",
+                "compute_serverless",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "domain_ml_heavy": 1.0,
+                "scheduled_jobs": 0.8
+            },
+            "complexity": "complex"
+        },
+        "HYBRID_PLATFORM": {
+            "description": "Complex multi-capability platform",
+            "required_capabilities": [
+                "data_persistence",
+                "api_backend",
+                "identity_access"
+            ],
+            "forbidden_capabilities": [],
+            "services": [
+                "api_gateway",
+                "compute_serverless",
+                "relational_database",
+                "identity_auth",
+                "cache",
+                "object_storage",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "data_persistence": 0.8,
+                "api_backend": 0.8,
+                "identity_access": 0.7
+            },
+            "is_fallback": true,
+            "complexity": "complex"
+        },
+        "EVENT_DRIVEN_PLATFORM": {
+            "description": "Highly decoupled event-based apps",
+            "required_capabilities": [
+                "eventing"
+            ],
+            "forbidden_capabilities": [],
+            "services": [
+                "messaging_queue",
+                "compute_serverless",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "eventing": 1.0
+            },
+            "complexity": "complex"
+        },
+        "IOT_PLATFORM": {
+            "description": "IoT device management with time-series telemetry",
+            "required_capabilities": [
+                "domain_iot"
+            ],
+            "forbidden_capabilities": [],
+            "services": [
+                "iot_core",
+                "time_series_db",
+                "event_streaming",
+                "api_gateway",
+                "object_storage",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "domain_iot": 1.2,
+                "scheduled_jobs": 0.8,
+                "realtime": 0.8,
+                "eventing": 0.8
+            },
+            "complexity": "complex"
+        },
+        "FINTECH_PAYMENT_PLATFORM": {
+            "description": "PCI-DSS compliant payment processing API",
+            "required_capabilities": [
+                "payments",
+                "domain_fintech"
+            ],
+            "forbidden_capabilities": [],
+            "services": [
+                "api_gateway",
+                "compute_serverless",
+                "relational_database",
+                "payment_gateway",
+                "identity_auth",
+                "secrets_manager",
+                "audit_logging",
+                "load_balancer",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "payments": 1.2,
+                "domain_fintech": 1.1,
+                "data_persistence": 0.8,
+                "identity_access": 0.7
+            },
+            "complexity": "complex"
+        },
+        "HEALTHCARE_PLATFORM": {
+            "description": "HIPAA-compliant healthcare data platform",
+            "required_capabilities": [
+                "domain_healthcare",
+                "data_persistence"
+            ],
+            "forbidden_capabilities": [],
+            "services": [
+                "api_gateway",
+                "compute_serverless",
+                "relational_database",
+                "identity_auth",
+                "secrets_manager",
+                "audit_logging",
+                "object_storage",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "domain_healthcare": 1.1,
+                "data_persistence": 0.9,
+                "identity_access": 0.8
+            },
+            "complexity": "complex"
+        },
+        "GAMING_BACKEND": {
+            "description": "Real-time gaming backend with leaderboards",
+            "required_capabilities": [
+                "realtime"
+            ],
+            "forbidden_capabilities": [],
+            "services": [
+                "api_gateway",
+                "compute_serverless",
+                "cache",
+                "relational_database",
+                "identity_auth",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "realtime": 1.1,
+                "identity_access": 0.6
+            },
+            "complexity": "complex"
+        },
+        "E_COMMERCE_BACKEND": {
+            "description": "E-commerce with payments and inventory",
+            "required_capabilities": [
+                "payments",
+                "data_persistence"
+            ],
+            "forbidden_capabilities": [],
+            "services": [
+                "cdn",
+                "api_gateway",
+                "compute_serverless",
+                "relational_database",
+                "payment_gateway",
+                "identity_auth",
+                "object_storage",
+                "cache",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "payments": 1.0,
+                "data_persistence": 0.9,
+                "static_content": 0.7
+            },
+            "complexity": "complex"
+        },
+        "HIGH_AVAILABILITY_PLATFORM": {
+            "description": "Multi-region high availability platform (99.99%+)",
+            "required_capabilities": [
+                "high_availability",
+                "api_backend"
+            ],
+            "forbidden_capabilities": [],
+            "services": [
+                "global_load_balancer",
+                "api_gateway",
+                "compute_serverless",
+                "relational_database",
+                "cache",
+                "identity_auth",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "high_availability": 1.2,
+                "api_backend": 0.8,
+                "data_persistence": 0.7
+            },
+            "complexity": "complex"
+        }
+    },
+    "fallback_pattern": "HYBRID_PLATFORM",
+    "minimum_score_threshold": 0.6
+}

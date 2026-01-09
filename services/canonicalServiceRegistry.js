@@ -303,8 +303,128 @@ const CANONICAL_SERVICES = {
     class: ServiceClass.SAAS_API_ONLY,
     blocks_terraform: false,
     description: 'Artifact and model registry (policy, not infra)'
+  },
+
+  // ═════════════════════════════════════════════════════════════════
+  // HIGH-AVAILABILITY / MULTI-REGION SERVICES
+  // ═════════════════════════════════════════════════════════════════
+  global_load_balancer: {
+    category: 'networking',
+    kind: ServiceKind.DEPLOYABLE,
+    terraform_supported: true,
+    cost_effective: true,
+    class: ServiceClass.TERRAFORM_CORE,
+    blocks_terraform: true,
+    description: 'Global load balancer for multi-region routing'
+  },
+  multi_region_db: {
+    category: 'database',
+    kind: ServiceKind.DEPLOYABLE,
+    terraform_supported: true,
+    cost_effective: false,
+    class: ServiceClass.TERRAFORM_CORE,
+    blocks_terraform: true,
+    description: 'Multi-region replicated database'
+  },
+
+  // ═════════════════════════════════════════════════════════════════
+  // IOT SERVICES
+  // ═════════════════════════════════════════════════════════════════
+  iot_core: {
+    category: 'iot',
+    kind: ServiceKind.DEPLOYABLE,
+    terraform_supported: true,
+    cost_effective: true,
+    class: ServiceClass.TERRAFORM_CORE,
+    blocks_terraform: true,
+    description: 'IoT device management and messaging'
+  },
+  time_series_db: {
+    category: 'database',
+    kind: ServiceKind.DEPLOYABLE,
+    terraform_supported: true,
+    cost_effective: true,
+    class: ServiceClass.TERRAFORM_CORE,
+    blocks_terraform: true,
+    description: 'Time-series database for telemetry'
+  },
+  event_streaming: {
+    category: 'messaging',
+    kind: ServiceKind.DEPLOYABLE,
+    terraform_supported: true,
+    cost_effective: true,
+    class: ServiceClass.TERRAFORM_CORE,
+    blocks_terraform: true,
+    description: 'Event streaming platform (Kafka, Kinesis)'
+  },
+  sms_alerts: {
+    category: 'notifications',
+    kind: ServiceKind.LOGICAL,
+    terraform_supported: false,
+    cost_effective: true,
+    class: ServiceClass.SAAS_API_ONLY,
+    blocks_terraform: false,
+    description: 'SMS notification service (Twilio, SNS)'
+  },
+
+  // ═════════════════════════════════════════════════════════════════
+  // COMPLIANCE / FINTECH SERVICES
+  // ═════════════════════════════════════════════════════════════════
+  secrets_manager: {
+    category: 'security',
+    kind: ServiceKind.DEPLOYABLE,
+    terraform_supported: true,
+    cost_effective: true,
+    class: ServiceClass.TERRAFORM_CORE,
+    blocks_terraform: true,
+    description: 'Secrets and key vault management'
+  },
+  audit_logging: {
+    category: 'observability',
+    kind: ServiceKind.DEPLOYABLE,
+    terraform_supported: true,
+    cost_effective: true,
+    class: ServiceClass.TERRAFORM_CORE,
+    blocks_terraform: true,
+    description: 'Compliance audit trail logging'
+  },
+
+  // ═════════════════════════════════════════════════════════════════
+  // ML / AI SERVICES (Extended)
+  // ═════════════════════════════════════════════════════════════════
+  ml_inference_gpu: {
+    category: 'ml',
+    kind: ServiceKind.DEPLOYABLE,
+    terraform_supported: true,
+    cost_effective: false,
+    class: ServiceClass.TERRAFORM_CORE,
+    blocks_terraform: true,
+    description: 'GPU-accelerated ML inference'
+  },
+  vector_database: {
+    category: 'database',
+    kind: ServiceKind.DEPLOYABLE,
+    terraform_supported: true,
+    cost_effective: true,
+    class: ServiceClass.TERRAFORM_OPTIONAL,
+    blocks_terraform: false,
+    description: 'Vector database for ML embeddings'
+  },
+
+  // ═════════════════════════════════════════════════════════════════
+  // DATA LAKE / STORAGE (Extended)
+  // ═════════════════════════════════════════════════════════════════
+  data_lake: {
+    category: 'storage',
+    kind: ServiceKind.DEPLOYABLE,
+    terraform_supported: true,
+    cost_effective: true,
+    class: ServiceClass.TERRAFORM_CORE,
+    blocks_terraform: true,
+    description: 'Data lake for raw data storage'
   }
 };
+
 
 /**
  * Get service classification by name
@@ -322,8 +442,8 @@ function getServiceDefinition(serviceName) {
  */
 function isDeployable(serviceName) {
   const service = CANONICAL_SERVICES[serviceName];
-  return service && service.terraform_supported === true && 
-         (service.class === 'terraform_core' || service.class === 'terraform_optional');
+  return service && service.terraform_supported === true &&
+    (service.class === 'terraform_core' || service.class === 'terraform_optional');
 }
 
 /**

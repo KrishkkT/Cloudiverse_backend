@@ -1,0 +1,388 @@
+{
+    "axes": {
+        "static_content": {
+            "type": "boolean",
+            "impact": 0.7
+        },
+        "api_backend": {
+            "type": "boolean",
+            "impact": 0.8
+        },
+        "user_authentication": {
+            "type": "boolean",
+            "impact": 0.9
+        },
+        "multi_tenancy": {
+            "type": "boolean",
+            "impact": 0.7
+        },
+        "file_storage": {
+            "type": "boolean",
+            "impact": 0.7
+        },
+        "realtime_updates": {
+            "type": "boolean",
+            "impact": 0.7
+        },
+        "messaging_queue": {
+            "type": "boolean",
+            "impact": 0.6
+        },
+        "scheduled_jobs": {
+            "type": "boolean",
+            "impact": 0.6
+        },
+        "payments": {
+            "type": "boolean",
+            "impact": 1.0
+        },
+        "search": {
+            "type": "boolean",
+            "impact": 0.6
+        },
+        "admin_dashboard": {
+            "type": "boolean",
+            "impact": 0.5
+        },
+        "mobile_clients": {
+            "type": "boolean",
+            "impact": 0.6
+        },
+        "third_party_integrations": {
+            "type": "boolean",
+            "impact": 0.6
+        },
+        "stateful": {
+            "type": "boolean",
+            "impact": 1.0
+        },
+        "primary_data_model": {
+            "type": "enum",
+            "impact": 0.8
+        },
+        "data_volume": {
+            "type": "enum",
+            "impact": 0.8
+        },
+        "data_growth_rate": {
+            "type": "enum",
+            "impact": 0.7
+        },
+        "data_sensitivity": {
+            "type": "enum",
+            "impact": 1.0
+        },
+        "data_residency_required": {
+            "type": "boolean",
+            "impact": 0.9
+        },
+        "backup_retention_days": {
+            "type": "enum",
+            "impact": 0.7
+        },
+        "estimated_mau": {
+            "type": "enum",
+            "impact": 0.8
+        },
+        "peak_rps": {
+            "type": "enum",
+            "impact": 0.8
+        },
+        "traffic_pattern": {
+            "type": "enum",
+            "impact": 0.7
+        },
+        "performance_sensitivity": {
+            "type": "enum",
+            "impact": 0.8
+        },
+        "burstiness": {
+            "type": "enum",
+            "impact": 0.6
+        },
+        "availability_target": {
+            "type": "enum",
+            "impact": 0.9
+        },
+        "recovery_time_objective": {
+            "type": "enum",
+            "impact": 0.8
+        },
+        "recovery_point_objective": {
+            "type": "enum",
+            "impact": 0.8
+        },
+        "multi_region_required": {
+            "type": "boolean",
+            "impact": 0.8
+        },
+        "authentication_strength": {
+            "type": "enum",
+            "impact": 0.9
+        },
+        "authorization_complexity": {
+            "type": "enum",
+            "impact": 0.8
+        },
+        "regulatory_compliance": {
+            "type": "array",
+            "impact": 1.0
+        },
+        "security_posture": {
+            "type": "enum",
+            "impact": 0.9
+        },
+        "observability_level": {
+            "type": "enum",
+            "impact": 0.7
+        },
+        "deployment_frequency": {
+            "type": "enum",
+            "impact": 0.6
+        },
+        "change_risk_tolerance": {
+            "type": "enum",
+            "impact": 0.7
+        },
+        "ops_team_maturity": {
+            "type": "enum",
+            "impact": 0.6
+        },
+        "allowed_providers": {
+            "type": "array",
+            "impact": 0.9
+        },
+        "primary_region_hint": {
+            "type": "string",
+            "impact": 0.8
+        },
+        "provider_lock_in_sensitivity": {
+            "type": "enum",
+            "impact": 0.7
+        },
+        "ops_model": {
+            "type": "enum",
+            "impact": 0.7
+        },
+        "managed_db_preference": {
+            "type": "enum",
+            "impact": 0.6
+        },
+        "kubernetes_required": {
+            "type": "boolean",
+            "impact": 0.8
+        },
+        "domain_fintech": {
+            "type": "boolean",
+            "impact": 1.0
+        },
+        "domain_healthcare": {
+            "type": "boolean",
+            "impact": 1.0
+        },
+        "domain_iot": {
+            "type": "boolean",
+            "impact": 0.8
+        },
+        "domain_gaming": {
+            "type": "boolean",
+            "impact": 0.8
+        },
+        "domain_ml_heavy": {
+            "type": "boolean",
+            "impact": 0.8
+        },
+        "domain_internal_it": {
+            "type": "boolean",
+            "impact": 0.5
+        },
+        "web_ui": {
+            "type": "boolean",
+            "impact": 0.5
+        },
+        "mobile_apps": {
+            "type": "boolean",
+            "impact": 0.5
+        },
+        "public_api": {
+            "type": "boolean",
+            "impact": 0.7
+        },
+        "cost_sensitivity": {
+            "type": "enum",
+            "impact": 0.8
+        },
+        "project_lifetime": {
+            "type": "enum",
+            "impact": 0.6
+        }
+    },
+    "enums": {
+        "primary_data_model": [
+            "none",
+            "relational",
+            "document",
+            "key_value",
+            "time_series",
+            "graph",
+            "mixed"
+        ],
+        "data_volume": [
+            "tiny",
+            "small",
+            "medium",
+            "large",
+            "huge"
+        ],
+        "data_growth_rate": [
+            "slow",
+            "moderate",
+            "fast"
+        ],
+        "estimated_mau": [
+            "very_low",
+            "low",
+            "medium",
+            "high",
+            "very_high"
+        ],
+        "peak_rps": [
+            "very_low",
+            "low",
+            "medium",
+            "high",
+            "very_high"
+        ],
+        "traffic_pattern": [
+            "steady",
+            "spiky",
+            "seasonal"
+        ],
+        "performance_sensitivity": [
+            "low",
+            "medium",
+            "high"
+        ],
+        "burstiness": [
+            "low",
+            "medium",
+            "high"
+        ],
+        "availability_target": [
+            "99.0",
+            "99.5",
+            "99.9",
+            "99.99"
+        ],
+        "recovery_time_objective": [
+            "hours",
+            "1_hour",
+            "30_minutes",
+            "5_minutes"
+        ],
+        "recovery_point_objective": [
+            "24_hours",
+            "4_hours",
+            "1_hour",
+            "5_minutes"
+        ],
+        "authentication_strength": [
+            "basic",
+            "standard",
+            "strong_mfa"
+        ],
+        "authorization_complexity": [
+            "simple_roles",
+            "role_based",
+            "fine_grained"
+        ],
+        "regulatory_compliance": [
+            "GDPR",
+            "HIPAA",
+            "PCI_DSS",
+            "SOC2",
+            "ISO27001"
+        ],
+        "security_posture": [
+            "basic",
+            "hardened",
+            "zero_trust_like"
+        ],
+        "observability_level": [
+            "basic",
+            "standard",
+            "advanced"
+        ],
+        "deployment_frequency": [
+            "monthly",
+            "weekly",
+            "daily",
+            "multiple_times_per_day"
+        ],
+        "change_risk_tolerance": [
+            "low",
+            "medium",
+            "high"
+        ],
+        "ops_team_maturity": [
+            "none",
+            "junior",
+            "experienced",
+            "dedicated_sre"
+        ],
+        "provider_lock_in_sensitivity": [
+            "low",
+            "medium",
+            "high"
+        ],
+        "ops_model": [
+            "serverless_pref",
+            "managed_services_pref",
+            "kubernetes_pref",
+            "no_preference"
+        ],
+        "managed_db_preference": [
+            "prefer_managed",
+            "self_managed_ok",
+            "no_db"
+        ],
+        "cost_sensitivity": [
+            "low",
+            "medium",
+            "high"
+        ],
+        "project_lifetime": [
+            "poc",
+            "short_term",
+            "long_term"
+        ],
+        "backup_retention_days": [
+            "7",
+            "30",
+            "90",
+            "365"
+        ]
+    },
+    "complexity_rules": {
+        "simple_indicators": [
+            "static_content=true AND api_backend=false",
+            "estimated_mau IN [very_low, low]",
+            "data_sensitivity=low",
+            "regulatory_compliance=[]"
+        ],
+        "complex_indicators": [
+            "domain_fintech=true",
+            "domain_healthcare=true",
+            "payments=true",
+            "multi_region_required=true",
+            "regulatory_compliance NOT EMPTY",
+            "estimated_mau IN [high, very_high]",
+            "data_sensitivity=high"
+        ]
+    },
+    "question_limits": {
+        "SIMPLE": 3,
+        "COMPLEX": 6
+    },
+    "priority_threshold": 0.3
+}

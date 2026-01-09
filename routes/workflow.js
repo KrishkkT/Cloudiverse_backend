@@ -12,10 +12,285 @@ const integrityService = require('../services/integrityService');
 const terraformService = require('../services/terraformService');
 const costResultModel = require('../services/costResultModel');
 const canonicalValidator = require('../services/canonicalValidator');
+const { generateServiceDisplay, groupServicesByCategory, getCategoryDisplayName } = require('../services/serviceDisplay');
 const pool = require('../config/db');
 
+
+// ═══════════════════════════════════════════════════════════════════
+// NEW STEP 1 CONFIG-BASED SYSTEM (from Step1.txt specification)
+// ═══════════════════════════════════════════════════════════════════
+const axesConfig = require('../config/axesConfig.json');
+const questionBank = require('../config/questionBank.json');
+
+// ═══════════════════════════════════════════════════════════════════
+// CONFIDENCE THRESHOLDS (from user specification)
+// ═══════════════════════════════════════════════════════════════════
+const CONFIDENCE_THRESHOLDS = {
+    HIGH_CONFIDENCE_SKIP: 0.85,  // ≥0.85 → LOCKED (no question)
+    LOW_PRIORITY: 0.75,          // 0.75-0.84 → OPTIONAL (low priority)
+    MUST_ASK: 0.74,              // ≤0.74 → MUST ASK
+    AUTO_LOCK_RATIO: 0.8         // 80%+ high confidence → auto-lock
+};
+
+const MAX_QUESTIONS = {
+    SIMPLE: 1,
+    MEDIUM: 2,
+    COMPLEX: 3
+};
+
+/**
+ * NEW: Check if intent should auto-lock based on high-confidence ratio
+ * @param {Object} axes - The axes object with confidence scores
+ * @returns {boolean} - True if should auto-lock
+ */
+function shouldAutoLock(axes) {
+    if (!axes || typeof axes !== 'object') return false;
+
+    const allAxes = Object.values(axes);
+    if (allAxes.length === 0) return false;
+
+    const highConfidenceCount = allAxes.filter(axis =>
+        axis?.confidence >= CONFIDENCE_THRESHOLDS.HIGH_CONFIDENCE_SKIP
+    ).length;
+
+    const ratio = highConfidenceCount / allAxes.length;
+
+    if (ratio >= CONFIDENCE_THRESHOLDS.AUTO_LOCK_RATIO) {
+        console.log(`[AUTO-LOCK] ${highConfidenceCount}/${allAxes.length} axes ≥0.85 confidence (${(ratio * 100).toFixed(0)}%)`);
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * NEW: Prioritize axes for questions using config-based impact × (1 - confidence)
+ * SKIPS high-confidence axes (≥0.85) - they don't need confirmation
+ * @param {Object} aiResult - The AI result with axes and confidence scores
+ * @returns {Array} - Array of {axis_key, priority} sorted by priority descending
+ */
+function prioritizeAxesForQuestions(aiResult) {
+    const { axes, complexity, ranked_axes_for_questions } = aiResult;
+
+    // Use reduced question limits based on complexity
+    const maxQuestions = MAX_QUESTIONS[complexity] || MAX_QUESTIONS.MEDIUM;
+    const threshold = axesConfig.priority_threshold || 0.3;
+
+    // If AI already ranked axes, filter out high-confidence ones
+    if (ranked_axes_for_questions && ranked_axes_for_questions.length > 0) {
+        return ranked_axes_for_questions
+            .filter(a => {
+                // Skip high-confidence axes
+                const axisData = axes?.[a.axis_key];
+                if (axisData?.confidence >= CONFIDENCE_THRESHOLDS.HIGH_CONFIDENCE_SKIP) {
+                    console.log(`[SKIP] ${a.axis_key}: ${axisData.confidence} confidence (high)`);
+                    return false;
+                }
+                return a.priority >= threshold;
+            })
+            .slice(0, maxQuestions);
+    }
+
+    // Fallback: Calculate priority from axes if AI didn't rank
+    if (!axes || typeof axes !== 'object') return [];
+
+    const priorities = Object.entries(axes)
+        .filter(([key, data]) => {
+            // SKIP if AI confidence is HIGH (≥0.85)
+            if (data?.confidence >= CONFIDENCE_THRESHOLDS.HIGH_CONFIDENCE_SKIP) {
+                console.log(`[SKIP] ${key}: ${data.confidence} confidence (high)`);
+                return false;
+            }
+            return true;
+        })
+        .map(([key, data]) => {
+            const impact = axesConfig.axes[key]?.impact || 0.5;
+            const confidence = data?.confidence || 0;
+
+            // Higher priority for low-confidence, high-impact axes
+            let priority = impact * (1 - confidence);
+
+            // Boost priority if MUST_ASK threshold
+            if (confidence <= CONFIDENCE_THRESHOLDS.MUST_ASK) {
+                priority *= 1.2;
+            }
+
+            return { axis_key: key, priority };
+        })
+        .filter(a => a.priority >= threshold)
+        .sort((a, b) => b.priority - a.priority)
+        .slice(0, maxQuestions);
+
+    return priorities;
+}
+
+
+/**
+ * NEW: Generate questions from config for given axes
+ * @param {Array} prioritizedAxes - Array of {axis_key, priority}
+ * @returns {Array} - Array of question objects for frontend
+ */
+function generateQuestionsFromConfig(prioritizedAxes) {
+    return prioritizedAxes
+        .map(({ axis_key }) => {
+            const template = questionBank[axis_key];
+            if (!template) return null;
+            return {
+                axis_key,
+                question: template.question,
+                suggested_answers: template.suggested_answers || []
+            };
+        })
+        .filter(q => q !== null);
+}
+
+/**
+ * NEW: Merge user answers into the intent object
+ * @param {Object} currentIntent - The current intent object
+ * @param {Array} answers - Array of {axis_key, value} pairs
+ * @returns {Object} - Updated intent object
+ */
+function mergeAnswersIntoIntent(currentIntent, answers) {
+    if (!currentIntent.axes) currentIntent.axes = {};
+
+    answers.forEach(({ axis_key, value }) => {
+        const mappedValue = mapAnswerToAxisValue(axis_key, value);
+        currentIntent.axes[axis_key] = {
+            value: mappedValue,
+            confidence: 1.0 // User-provided = full confidence
+        };
+    });
+
+    return currentIntent;
+}
+
+/**
+ * NEW: Map user's answer text to axis enum value
+ * @param {string} axisKey - The axis key
+ * @param {string} answerText - The user's selected answer text
+ * @returns {*} - The mapped value
+ */
+function mapAnswerToAxisValue(axisKey, answerText) {
+    const axisType = axesConfig.axes[axisKey]?.type;
+    const template = questionBank[axisKey];
+
+    if (!template || !template.suggested_answers) return answerText;
+
+    const answerIndex = template.suggested_answers.indexOf(answerText);
+
+    // Special handling for boolean axes
+    if (axisType === 'boolean') {
+        // First answer typically means "no/false", middle means "some/true", last means "yes/true"
+        if (answerIndex === 0) return false;
+        return true;
+    }
+
+    // For enum axes, map to enum values from config
+    const enumValues = axesConfig.enums[axisKey];
+    if (enumValues && answerIndex >= 0 && answerIndex < enumValues.length) {
+        return enumValues[answerIndex];
+    }
+
+    // For arrays like regulatory_compliance
+    if (axisType === 'array') {
+        if (answerText.toLowerCase().includes('none') || answerText.toLowerCase().includes('not sure')) {
+            return [];
+        }
+        if (answerText.toLowerCase().includes('multiple')) {
+            return ['multiple_selected']; // Frontend may need to handle this
+        }
+        // Return as single-item array matching the answer
+        const complianceValues = axesConfig.enums.regulatory_compliance || [];
+        const matched = complianceValues.find(v => answerText.toUpperCase().includes(v.replace('_', '-')));
+        return matched ? [matched] : [answerText];
+    }
+
+    // For provider selection
+    if (axisKey === 'allowed_providers') {
+        if (answerText.toLowerCase().includes('no strong preference') || answerText.toLowerCase().includes('any')) {
+            return ['aws', 'azure', 'gcp'];
+        }
+        const providers = [];
+        if (answerText.toLowerCase().includes('aws')) providers.push('aws');
+        if (answerText.toLowerCase().includes('azure')) providers.push('azure');
+        if (answerText.toLowerCase().includes('gcp')) providers.push('gcp');
+        return providers.length > 0 ? providers : ['aws', 'azure', 'gcp'];
+    }
+
+    // Default: return the answer text as-is
+    return answerText;
+}
+
+/**
+ * NEW: Check if intent should be locked (no more questions needed)
+ * @param {Object} intent - The current intent object
+ * @param {number} questionsAsked - Number of questions already asked
+ * @returns {boolean} - True if intent should be locked
+ */
+function shouldLockIntent(intent, questionsAsked) {
+    const maxQuestions = intent.complexity === 'COMPLEX' ?
+        axesConfig.question_limits.COMPLEX :
+        axesConfig.question_limits.SIMPLE;
+
+    // Lock if we've asked max questions
+    if (questionsAsked >= maxQuestions) return true;
+
+    // Lock if no high-priority axes remaining
+    const remainingHighPriority = prioritizeAxesForQuestions(intent);
+    if (remainingHighPriority.length === 0) return true;
+
+    return false;
+}
+
+/**
+ * NEW: Map axes to capabilities (FIX for Bug 3)
+ * Converts the new axes format to the legacy capabilities format
+ * @param {Object} axes - The axes object with {value, confidence} pairs
+ * @returns {Object} - Legacy capabilities object
+ */
+function mapAxesToCapabilities(axes) {
+    if (!axes || typeof axes !== 'object') return {};
+
+    return {
+        // Map boolean axes to capabilities
+        data_persistence: resolveAxisToCapability(axes.stateful),
+        identity_access: resolveAxisToCapability(axes.user_authentication),
+        content_delivery: resolveAxisToCapability(axes.static_content),
+        payments: resolveAxisToCapability(axes.payments),
+        realtime: resolveAxisToCapability(axes.realtime_updates),
+        messaging: resolveAxisToCapability(axes.messaging_queue),
+        document_storage: resolveAxisToCapability(axes.file_storage),
+        static_content: resolveAxisToCapability(axes.static_content),
+        api_backend: resolveAxisToCapability(axes.api_backend),
+        multi_user_roles: resolveAxisToCapability(axes.multi_tenancy),
+
+        // Additional mappings
+        search: resolveAxisToCapability(axes.search),
+        scheduled_jobs: resolveAxisToCapability(axes.scheduled_jobs),
+        admin_dashboard: resolveAxisToCapability(axes.admin_dashboard),
+        mobile_clients: resolveAxisToCapability(axes.mobile_clients),
+        third_party_integrations: resolveAxisToCapability(axes.third_party_integrations)
+    };
+}
+
+/**
+ * Helper to resolve axis {value, confidence} to capability value
+ */
+function resolveAxisToCapability(axis) {
+    if (!axis) return 'unknown';
+
+    // If confidence is high enough, use the value
+    if (axis.confidence >= 0.6) {
+        return axis.value === true ? true : (axis.value === false ? false : 'unknown');
+    }
+
+    // Low confidence = unknown
+    return 'unknown';
+}
+
+
 // =====================================================
-// 3-LAYER QUESTION SELECTION SYSTEM
+// LEGACY 3-LAYER QUESTION SELECTION SYSTEM (kept for backward compatibility)
 // =====================================================
 
 // LAYER 1: Fixed Decision Axes
@@ -512,9 +787,65 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             step1Result = req.body.approvedIntent;
         } else if (input_type === 'AXIS_ANSWER' && ai_snapshot) {
             // User answered an MCQ - DO NOT CALL AI
-            // Reuse the frozen AI snapshot
+            // Reuse the frozen AI snapshot BUT UPDATE with user's answer
             console.log("--- AXIS ANSWER RECEIVED (NO AI CALL) ---");
-            step1Result = ai_snapshot;
+            step1Result = { ...ai_snapshot };
+
+            // ═══════════════════════════════════════════════════════════════════
+            // FIX: Extract and apply user's answer to the axes object
+            // ═══════════════════════════════════════════════════════════════════
+            const answeredAxis = req.body.answered_axis || req.body.axis;
+            const userAnswer = req.body.answer || req.body.userInput;
+
+            // Get the axis from conversation history if not in request body
+            let axisKey = answeredAxis;
+            let answerValue = userAnswer;
+
+            // Try to extract from conversation history (last user message after question)
+            if (!axisKey && conversationHistory && conversationHistory.length > 0) {
+                const lastAssistantMsg = [...conversationHistory].reverse().find(m => m.role === 'assistant');
+                const lastUserMsg = [...conversationHistory].reverse().find(m => m.role === 'user');
+
+                // Find which axis was being asked
+                if (lastAssistantMsg) {
+                    for (const [key, template] of Object.entries(questionBank)) {
+                        if (lastAssistantMsg.content.includes(template.question)) {
+                            axisKey = key;
+                            break;
+                        }
+                    }
+                }
+                if (lastUserMsg) {
+                    answerValue = lastUserMsg.content;
+                }
+            }
+
+            if (axisKey && answerValue) {
+                console.log(`[FIX] Updating axis '${axisKey}' with answer: ${answerValue}`);
+
+                // Ensure axes object exists
+                if (!step1Result.axes) step1Result.axes = {};
+
+                // Map answer text to canonical value
+                const mappedValue = mapAnswerToAxisValue(axisKey, answerValue);
+
+                // UPDATE the axis with user's answer and full confidence
+                step1Result.axes[axisKey] = {
+                    value: mappedValue,
+                    confidence: 1.0  // User answered = 100% confidence
+                };
+
+                // Remove this axis from ranked_axes_for_questions if present
+                if (step1Result.ranked_axes_for_questions) {
+                    step1Result.ranked_axes_for_questions = step1Result.ranked_axes_for_questions
+                        .filter(a => a.axis_key !== axisKey);
+                }
+
+                console.log(`[FIX] Updated axes[${axisKey}] = { value: ${JSON.stringify(mappedValue)}, confidence: 1.0 }`);
+            } else {
+                console.warn("[WARNING] Could not determine axis or answer from request");
+            }
+
         } else {
             // DESCRIPTION input - Call AI ONCE
             if (!userInput) return res.status(400).json({ msg: "User input required" });
@@ -541,7 +872,11 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             // CRITICAL RULE: Capabilities are INTENT, not SERVICES.
             // Mapping to services happens in Step 2 (pattern resolution).
             // ═════════════════════════════════════════════════════════════════
-            const resolvedCapabilities = {};
+
+            // START with capabilities derived from NEW axes format (if present)
+            let resolvedCapabilities = mapAxesToCapabilities(rawStep1.axes);
+
+            // MERGE with legacy explicit_capabilities and inferred_capabilities
             const explicitExclusions = [...new Set([...(rawStep1.explicit_exclusions || []), ...manualExclusions])];
             const explicitCapabilities = rawStep1.explicit_capabilities || {};
             const inferredCapabilities = rawStep1.inferred_capabilities || {};
@@ -551,13 +886,17 @@ router.post('/analyze', authMiddleware, async (req, res) => {
                 if (explicitExclusions.includes(capability) || explicitExclusions.includes(capability.split('_')[0])) {
                     resolvedCapabilities[capability] = false;
                 }
-                // Priority 2: Explicit Capabilities
+                // Priority 2: Explicit Capabilities (from legacy format)
                 else if (explicitCapabilities[capability] === true) {
                     resolvedCapabilities[capability] = true;
                 }
-                // Priority 3: Inferred (Threshold 0.6)
+                // Priority 3: Inferred from legacy format (Threshold 0.6)
                 else if (inferredCapabilities[capability] && inferredCapabilities[capability].confidence >= 0.6) {
                     resolvedCapabilities[capability] = inferredCapabilities[capability].value;
+                }
+                // Priority 4: Already resolved from axes (keep if not unknown)
+                else if (resolvedCapabilities[capability] !== undefined && resolvedCapabilities[capability] !== 'unknown') {
+                    // Already set from axes mapping, keep it
                 }
                 // Default: Unknown
                 else {
@@ -568,12 +907,6 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             // ═════════════════════════════════════════════════════════════════
             // TERMINAL EXCLUSIONS: Once excluded, NEVER reappear
             // ═════════════════════════════════════════════════════════════════
-            // These are user authority - AI/patterns cannot override them.
-            // They must propagate through ALL downstream steps:
-            // - Step 2: Architecture/Pattern Resolution
-            // - Step 3: Cost Estimation
-            // - Step 4: Terraform Generation
-            // ═════════════════════════════════════════════════════════════════
             const terminalExclusions = Object.keys(resolvedCapabilities)
                 .filter(cap => resolvedCapabilities[cap] === false);
 
@@ -582,7 +915,7 @@ router.post('/analyze', authMiddleware, async (req, res) => {
                 capabilities: resolvedCapabilities,           // 🆕 NEW: Provider-agnostic intent
                 terminal_exclusions: terminalExclusions,      // 🔒 NEW: Immutable exclusions
                 explicit_exclusions: explicitExclusions,      // Original AI output (preserved)
-                
+
                 // ⚠️ LEGACY COMPATIBILITY: Keep for gradual migration
                 feature_signals: resolvedCapabilities         // Alias for backward compat
             };
@@ -591,148 +924,101 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             console.log("Terminal Exclusions:", JSON.stringify(terminalExclusions));
         }
 
-        // AMBIGUITY CHECK (Backend Logic Step 1)
-        // Check for "missing_decision_axes"
 
-        let missingAxes = step1Result.missing_decision_axes || [];
+        // ═══════════════════════════════════════════════════════════════════
+        // NEW: CONFIG-BASED QUESTION SELECTION (from Step1.txt specification)
+        // Uses axesConfig.json impact scores and AI confidence for prioritization
+        // ═══════════════════════════════════════════════════════════════════
 
-        // Filter out axes that might have been answered in conversation history if AI didn't catch them?
-        // Actually, let's trust the AI's "missing_decision_axes" output if we are feeding it history.
-        // But if this is the FIRST run (no history), the list is full.
-
-        // Store conversation history for filtering
+        // Store conversation history for tracking questions asked
         const storedHistory = conversationHistory || [];
-
-        // === 3-LAYER QUESTION SELECTION ===
-        // Layer 1: Fixed axes (DECISION_AXES array)
-        // Layer 2: Importance scoring based on domain/features/risk
-        // Layer 3: Context-specific question templates
-
-        // Get domain from intent for scoring
-        const domain = step1Result.intent_classification?.primary_domain || 'default';
-        const features = step1Result.feature_signals || {};
-        const confirmedFeatures = Object.keys(features).filter(k => features[k] === true);
-        const excludedFeatures = Object.keys(features).filter(k => features[k] === false);
-        const unknownFeatures = Object.keys(features).filter(k => features[k] === 'unknown');
-
-        // FILTER: Remove axes already asked in conversation history
-        const filteredMissingAxes = missingAxes.filter(axis => {
-            // Get the template for this axis
-            const template = getQuestionTemplate(axis, domain);
-            if (!template) return false;
-
-            // Check if any question for this axis was already asked
-            const alreadyAsked = storedHistory.some(msg =>
-                msg.role === 'assistant' &&
-                (msg.content.includes(template.question) ||
-                    (QUESTION_TEMPLATES[axis] && Object.values(QUESTION_TEMPLATES[axis]).some(t =>
-                        t && t.question && msg.content.includes(t.question)
-                    )))
-            );
-            return !alreadyAsked;
-        });
-        // Build context for feature guards and askable logic
-        const questionContext = {
-            domain: domain,
-            features: confirmedFeatures,
-            excluded_features: excludedFeatures,
-            unknown_features: unknownFeatures,
-            user_facing: step1Result.intent_classification?.user_facing,
-            data_sensitivity: step1Result.semantic_signals?.data_sensitivity,
-            has_pii: step1Result.risk_domains?.includes('pii'),
-            regulatory_exposure: step1Result.intent_classification?.regulatory_exposure,
-            ai_confidence: step1Result.confidence || 0.8
-        };
-
-        // SCORE AND PRIORITIZE using Layer 2 weights
-        const prioritizedAxes = scoreAndPrioritizeAxes(filteredMissingAxes, {
-            primary_domain: domain,
-            features: confirmedFeatures,
-            excluded_features: excludedFeatures,
-            user_facing: step1Result.intent_classification?.user_facing,
-            data_sensitivity: step1Result.semantic_signals?.data_sensitivity,
-            has_pii: step1Result.risk_domains?.includes('pii')
-        });
-
-        console.log(`Question Selection: Domain=${domain}, Prioritized=${prioritizedAxes.slice(0, 3).join(', ')}`);
-
-        // LIMIT: Ask at most 3 questions TOTAL (across history)
         const questionsAskedCount = storedHistory.filter(m => m.role === 'assistant').length;
 
-        if (prioritizedAxes.length > 0 && questionsAskedCount < 3) {
-            // Pick the HIGHEST SCORED axis (first in prioritized list)
-            const nextAxis = prioritizedAxes[0];
+        // ═══════════════════════════════════════════════════════════════════
+        // AUTO-LOCK CHECK: If 80%+ axes have high confidence, skip questions
+        // ═══════════════════════════════════════════════════════════════════
+        if (shouldAutoLock(step1Result.axes)) {
+            console.log('[AUTO-LOCK] Skipping questions - high confidence intent');
+            step1Result.lock_status = 'auto_locked';
+            // Fall through to confirmation gate (no questions needed)
+        } else {
+            // Get prioritized axes using the new config-based system
+            const prioritizedAxes = prioritizeAxesForQuestions(step1Result);
+            const questions = generateQuestionsFromConfig(prioritizedAxes);
 
-            // Get context-specific template (Layer 3) with feature guards
-            const template = getQuestionTemplate(nextAxis, domain, questionContext);
+            // Use updated question limits
+            const maxQuestions = MAX_QUESTIONS[step1Result.complexity] || MAX_QUESTIONS.MEDIUM;
 
-            if (template) {
-                console.log(`Asking about ${nextAxis} (domain: ${domain}): "${template.question}"`);
+            console.log(`[NEW SYSTEM] Complexity: ${step1Result.complexity || 'SIMPLE'}`);
+            console.log(`[NEW SYSTEM] Questions asked: ${questionsAskedCount}`);
+            console.log(`[NEW SYSTEM] Prioritized axes: ${prioritizedAxes.map(a => a.axis_key).join(', ')}`);
+
+            // Check if we should ask more questions
+            if (questions.length > 0 && questionsAskedCount < maxQuestions) {
+                // Ask the highest priority question
+                const nextQuestion = questions[0];
+
+                console.log(`[NEW SYSTEM] Asking: ${nextQuestion.axis_key} - "${nextQuestion.question}"`);
+
+                // Format options for frontend (maintain backward compatibility)
+                const formattedOptions = nextQuestion.suggested_answers.map(answer => ({
+                    label: answer,
+                    value: answer // Frontend will send this back
+                }));
+
                 return res.json({
                     step: 'refine_requirements',
                     data: {
                         status: 'NEEDS_CLARIFICATION',
-                        clarifying_question: template.question,
-                        suggested_options: template.options, // Labels for UI
-                        axis: nextAxis, // Include axis name for provenance tracking
+                        clarifying_question: nextQuestion.question,
+                        suggested_options: formattedOptions,
+                        axis: nextQuestion.axis_key,
+                        complexity: step1Result.complexity,
+                        questions_asked: questionsAskedCount,
+                        max_questions: maxQuestions,
                         extracted_data: step1Result.intent_classification,
                         full_analysis: step1Result
                     }
                 });
-            } else {
-                console.warn(`Missing Template or axis not askable: ${nextAxis}`);
-                // If config missing or askable=false, skip it and try next
-                // Recursively try next axis
-                const remainingAxes = prioritizedAxes.slice(1);
-                for (const axis of remainingAxes) {
-                    const fallbackTemplate = getQuestionTemplate(axis, domain, questionContext);
-                    if (fallbackTemplate) {
-                        console.log(`Fallback: Asking about ${axis} (domain: ${domain})`);
-                        return res.json({
-                            step: 'refine_requirements',
-                            data: {
-                                status: 'NEEDS_CLARIFICATION',
-                                clarifying_question: fallbackTemplate.question,
-                                suggested_options: fallbackTemplate.options,
-                                axis: axis,
-                                extracted_data: step1Result.intent_classification,
-                                full_analysis: step1Result
-                            }
-                        });
-                    }
-                }
             }
         }
 
 
+
         // --- STEP 1: CONFIRMATION GATE (MANDATORY per Step1.txt) ---
-        // If we get here, either no ambiguities exist, or we hit the 3-question limit.
+        // If we get here, either no ambiguities exist, or we hit the question limit.
         // We MUST ask the user to confirm the intent before generating the spec.
 
         if (!req.body.approvedIntent) {
             console.log("--- WAITING FOR USER CONFIRMATION ---");
+            console.log(`[NEW SYSTEM] Intent complexity: ${step1Result.complexity || 'SIMPLE'}`);
+
+            // Mark intent as ready for locking
+            step1Result.lock_status = 'ready_to_lock';
+
             return res.json({
                 step: 'confirm_intent',
                 data: {
                     status: 'WAITING_FOR_CONFIRMATION',
                     intent: step1Result.intent_classification,
+
+                    // 🆕 NEW: Axes with confidence (from new 50+ axis system)
+                    axes: step1Result.axes,
+                    complexity: step1Result.complexity,
+
+                    // Legacy compatibility
                     semantic_signals: step1Result.semantic_signals,
-                    
-                    // 🆕 NEW: Capabilities (provider-agnostic intent)
                     capabilities: step1Result.capabilities,
-                    
-                    // 🔒 NEW: Terminal exclusions (immutable)
                     terminal_exclusions: step1Result.terminal_exclusions,
-                    
-                    // Backward compatibility
                     features: step1Result.feature_signals,
                     exclusions: step1Result.explicit_exclusions,
-                    
                     risk_domains: step1Result.risk_domains,
+
                     full_analysis: step1Result // Send full result to be sent back as 'approvedIntent'
                 }
             });
         }
+
 
         // ═════════════════════════════════════════════════════════════════
         // LOCK APPROVED INTENT (immutable from this point)
@@ -766,7 +1052,7 @@ router.post('/analyze', authMiddleware, async (req, res) => {
                 message: patternError.message
             });
         }
-        
+
         if (!patternResolution || !patternResolution.pattern) {
             console.error("Pattern Resolution failed - no pattern returned");
             return res.status(500).json({
@@ -774,7 +1060,7 @@ router.post('/analyze', authMiddleware, async (req, res) => {
                 message: 'Could not determine appropriate architecture pattern'
             });
         }
-        
+
         const fixedPattern = patternResolution.pattern;
         console.log(`Pattern Resolved: ${fixedPattern} (${patternResolution.pattern_name})`);
         console.log(`Services Selected: ${patternResolution.services.map(s => s.name).join(', ')}`);
@@ -834,7 +1120,7 @@ router.post('/analyze', authMiddleware, async (req, res) => {
 
         // 3️⃣ Architecture Skeleton - PATTERN-DRIVEN SERVICE SELECTION
         // The pattern resolver determines exactly which services are needed
-        
+
         // Map canonical service names to expected service class names
         const canonicalToServiceClassMap = {
             'relational_db': 'relational_database',
@@ -856,7 +1142,7 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             'logging': 'logging',
             'cdn': 'cdn'  // 🔥 ADDED: Direct mapping
         };
-        
+
         const selectedServiceClasses = new Set(patternResolution.services.map(s => {
             // Map canonical name to expected service class name
             return canonicalToServiceClassMap[s.name] || s.name;
@@ -1258,7 +1544,7 @@ router.post('/analyze', authMiddleware, async (req, res) => {
         // ═══════════════════════════════════════════════════════════════════════════
         // CANONICAL VALIDATION & ENFORCEMENT (CRITICAL)
         // ═══════════════════════════════════════════════════════════════════════════
-        
+
         // Step 1: Validate and fix canonical architecture
         try {
             const validated = canonicalValidator.validateAndFixCanonicalArchitecture(
@@ -1291,7 +1577,7 @@ router.post('/analyze', authMiddleware, async (req, res) => {
         if (infraSpec.service_classes?.required_services) {
             Object.freeze(infraSpec.service_classes.required_services);
         }
-        
+
         console.log('[STEP 2] ✓ InfraSpec frozen: canonical_architecture and service_classes are immutable');
 
         res.json({
@@ -1360,7 +1646,7 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
         console.log(`Cost Profile: ${cost_profile || 'COST_EFFECTIVE'}`);
 
         // 🔒 INVARIANT CHECK: Step 2 must complete before Step 3
-        if (!infraSpec?.canonical_architecture?.deployable_services || 
+        if (!infraSpec?.canonical_architecture?.deployable_services ||
             infraSpec.canonical_architecture.deployable_services.length === 0) {
             return res.status(400).json({
                 error: 'Step-to-Step Invariant Violation',
@@ -1369,7 +1655,7 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                 current_step: 'Step 3 (Cost Analysis)'
             });
         }
-        
+
         console.log(`[INVARIANT CHECK] ✓ Step 2 completed: ${infraSpec.canonical_architecture.deployable_services.length} deployable services`);
 
         // BUG #1: Prevent Step 3 loop
@@ -1394,15 +1680,15 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
         // Same services, different numbers + tiers
         function resolveSizingForAllServices(deployableServices, profile, provider) {
             const sizingModel = require('../services/sizingModel');
-            
+
             const resolvedSizing = {};
-            
+
             for (const service of deployableServices) {
                 // Use the sizing model to get appropriate sizing based on profile
                 const sizing = sizingModel.getSizing(service, 'MEDIUM', profile);
                 resolvedSizing[service] = sizing;
             }
-            
+
             return resolvedSizing;
         }
 
@@ -1422,7 +1708,7 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
         console.log(`[VALIDATION] InfraSpec has ${requiredServices.length} services - proceeding`);
 
         // 🔒 STEP 3 INVARIANT CHECK: Ensure canonical architecture deployable_services are frozen
-        if (!infraSpec.canonical_architecture?.deployable_services || 
+        if (!infraSpec.canonical_architecture?.deployable_services ||
             infraSpec.canonical_architecture.deployable_services.length === 0) {
             return res.status(400).json({
                 error: 'Step 3 Invariant Violation',
@@ -1436,10 +1722,10 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
         // This locks Terraform (Step 4) to the exact sizing used for cost calculation
         const sizingModel = require('../services/sizingModel');
         const calculatedSizing = sizingModel.getSizingForInfraSpec(infraSpec, intent, costProfile);
-        
+
         // Persist to infraSpec (will be returned to frontend and saved to workspace)
         infraSpec.sizing = calculatedSizing;
-        
+
         console.log(`[STEP 3] ✓ Sizing calculated and persisted: tier=${calculatedSizing.tier}, profile=${calculatedSizing.profile}, services=${Object.keys(calculatedSizing.services).length}`);
 
         // 🔥 FIX 1: HARD NORMALIZATION of deployable services to prevent undefined crashes
@@ -1456,9 +1742,9 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                     return null;
                 })
                 .filter(Boolean);
-            
+
             console.log(`[NORMALIZATION] Deployable services: ${originalLength} → ${infraSpec.canonical_architecture.deployable_services.length} (after removing undefined/null)`);
-            
+
             // Debug log the actual services
             if (originalLength > 0 && infraSpec.canonical_architecture.deployable_services.length === 0) {
                 console.log(`[NORMALIZATION DEBUG] Original services sample:`, infraSpec.canonical_architecture.deployable_services?.slice(0, 3));
@@ -1475,7 +1761,7 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
             description.includes('blast radius') ||
             description.includes('mitigation')) {
             console.log(`[OPERATIONAL ANALYSIS] Detected operational analysis request: ${description.substring(0, 100)}...`);
-            
+
             // For operational analysis, we return a specialized response
             // The cost calculation will handle this as an operational analysis
             console.log(`[OPERATIONAL ANALYSIS] Proceeding with operational analysis cost calculation...`);
@@ -1496,7 +1782,7 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                     data_storage_gb: typeof usage_profile.data_storage_gb === 'object' ? usage_profile.data_storage_gb.min : 5
                 },
                 expected: {
-                    monthly_users: typeof usage_profile.monthly_users === 'object' 
+                    monthly_users: typeof usage_profile.monthly_users === 'object'
                         ? Math.round((usage_profile.monthly_users.min + usage_profile.monthly_users.max) / 2)
                         : usage_profile.monthly_users,
                     requests_per_user: typeof usage_profile.requests_per_user === 'object'
@@ -1535,7 +1821,7 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                 console.error('[SCENARIO CALCULATION ERROR]:', scenarioError);
                 // Fallback will be handled after this if block
             }
-            
+
             if (scenarioSuccess && scenarioResults) {
                 // Use the new canonical scenario results
                 costAnalysis = scenarioResults.details;
@@ -1547,7 +1833,7 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                 costAnalysis.confidence = scenarioResults.confidence;
                 costAnalysis.services = scenarioResults.services;
                 costAnalysis.drivers = scenarioResults.drivers;
-                
+
                 // Set recommended provider to avoid fallback to AWS
                 costAnalysis.recommended_provider = scenarioResults.recommended?.provider;
 
@@ -1584,113 +1870,113 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                             cost_mode: 'FALLBACK_MODE',
                             pricing_method_used: 'fallback_calculation',
                             rankings: [
-                              {
-                                provider: 'AWS',
-                                monthly_cost: 100,
-                                formatted_cost: '$100.00',
-                                rank: 1,
-                                recommended: true,
-                                confidence: 0.5,
-                                score: 50,
-                                cost_range: { formatted: '$80 - $120/month' }
-                              },
-                              {
-                                provider: 'GCP',
-                                monthly_cost: 110,
-                                formatted_cost: '$110.00',
-                                rank: 2,
-                                recommended: false,
-                                confidence: 0.5,
-                                score: 45,
-                                cost_range: { formatted: '$90 - $130/month' }
-                              },
-                              {
-                                provider: 'AZURE',
-                                monthly_cost: 105,
-                                formatted_cost: '$105.00',
-                                rank: 3,
-                                recommended: false,
-                                confidence: 0.5,
-                                score: 48,
-                                cost_range: { formatted: '$85 - $125/month' }
-                              }
+                                {
+                                    provider: 'AWS',
+                                    monthly_cost: 100,
+                                    formatted_cost: '$100.00',
+                                    rank: 1,
+                                    recommended: true,
+                                    confidence: 0.5,
+                                    score: 50,
+                                    cost_range: { formatted: '$80 - $120/month' }
+                                },
+                                {
+                                    provider: 'GCP',
+                                    monthly_cost: 110,
+                                    formatted_cost: '$110.00',
+                                    rank: 2,
+                                    recommended: false,
+                                    confidence: 0.5,
+                                    score: 45,
+                                    cost_range: { formatted: '$90 - $130/month' }
+                                },
+                                {
+                                    provider: 'AZURE',
+                                    monthly_cost: 105,
+                                    formatted_cost: '$105.00',
+                                    rank: 3,
+                                    recommended: false,
+                                    confidence: 0.5,
+                                    score: 48,
+                                    cost_range: { formatted: '$85 - $125/month' }
+                                }
                             ],
                             provider_details: {
-                              AWS: {
-                                provider: 'AWS',
-                                total_monthly_cost: 100,
-                                formatted_cost: '$100.00/month',
-                                service_count: 1,
-                                is_mock: true,
-                                confidence: 0.5,
-                                cost_range: { formatted: '$80 - $120/month' }
-                              },
-                              GCP: {
-                                provider: 'GCP',
-                                total_monthly_cost: 110,
-                                formatted_cost: '$110.00/month',
-                                service_count: 1,
-                                is_mock: true,
-                                confidence: 0.5,
-                                cost_range: { formatted: '$90 - $130/month' }
-                              },
-                              AZURE: {
-                                provider: 'AZURE',
-                                total_monthly_cost: 105,
-                                formatted_cost: '$105.00/month',
-                                service_count: 1,
-                                is_mock: true,
-                                confidence: 0.5,
-                                cost_range: { formatted: '$85 - $125/month' }
-                              }
+                                AWS: {
+                                    provider: 'AWS',
+                                    total_monthly_cost: 100,
+                                    formatted_cost: '$100.00/month',
+                                    service_count: 1,
+                                    is_mock: true,
+                                    confidence: 0.5,
+                                    cost_range: { formatted: '$80 - $120/month' }
+                                },
+                                GCP: {
+                                    provider: 'GCP',
+                                    total_monthly_cost: 110,
+                                    formatted_cost: '$110.00/month',
+                                    service_count: 1,
+                                    is_mock: true,
+                                    confidence: 0.5,
+                                    cost_range: { formatted: '$90 - $130/month' }
+                                },
+                                AZURE: {
+                                    provider: 'AZURE',
+                                    total_monthly_cost: 105,
+                                    formatted_cost: '$105.00/month',
+                                    service_count: 1,
+                                    is_mock: true,
+                                    confidence: 0.5,
+                                    cost_range: { formatted: '$85 - $125/month' }
+                                }
                             },
                             recommended_provider: 'AWS',
                             recommended: {
-                              provider: 'AWS',
-                              monthly_cost: 100,
-                              formatted_cost: '$100.00',
-                              service_count: 1,
-                              score: 50,
-                              cost_range: {
-                                formatted: '$80 - $120/month'
-                              }
+                                provider: 'AWS',
+                                monthly_cost: 100,
+                                formatted_cost: '$100.00',
+                                service_count: 1,
+                                score: 50,
+                                cost_range: {
+                                    formatted: '$80 - $120/month'
+                                }
                             },
                             confidence: 0.5,
                             confidence_percentage: 50,
                             confidence_explanation: ['Fallback calculation due to processing error'],
                             ai_explanation: {
-                              confidence_score: 0.5,
-                              rationale: 'Fallback cost estimate provided due to processing error.'
+                                confidence_score: 0.5,
+                                rationale: 'Fallback cost estimate provided due to processing error.'
                             },
                             summary: {
-                              cheapest: 'AWS',
-                              most_performant: 'GCP',
-                              best_value: 'AWS',
-                              confidence: 0.5
+                                cheapest: 'AWS',
+                                most_performant: 'GCP',
+                                best_value: 'AWS',
+                                confidence: 0.5
                             },
                             assumption_source: 'fallback',
                             cost_sensitivity: {
-                              level: 'medium',
-                              label: 'Standard sensitivity',
-                              factor: 'overall usage'
+                                level: 'medium',
+                                label: 'Standard sensitivity',
+                                factor: 'overall usage'
                             },
                             selected_services: {},
                             missing_components: [],
                             future_cost_warning: null,
                             category_breakdown: [
-                              { category: 'Infrastructure', total: 100, service_count: 1 }
+                                { category: 'Infrastructure', total: 100, service_count: 1 }
                             ],
                             cost_profiles: {
-                              COST_EFFECTIVE: { total: 100, formatted: '$100.00' },
-                              HIGH_PERFORMANCE: { total: 150, formatted: '$150.00' }
+                                COST_EFFECTIVE: { total: 100, formatted: '$100.00' },
+                                HIGH_PERFORMANCE: { total: 150, formatted: '$150.00' }
                             },
                             recommended_cost_range: {
-                              formatted: '$80 - $120/month'
+                                formatted: '$80 - $120/month'
                             },
                             scenarios: {
-                              low: { aws: { monthly_cost: 80 }, gcp: { monthly_cost: 85 }, azure: { monthly_cost: 82 } },
-                              expected: { aws: { monthly_cost: 100 }, gcp: { monthly_cost: 110 }, azure: { monthly_cost: 105 } },
-                              high: { aws: { monthly_cost: 150 }, gcp: { monthly_cost: 160 }, azure: { monthly_cost: 155 } }
+                                low: { aws: { monthly_cost: 80 }, gcp: { monthly_cost: 85 }, azure: { monthly_cost: 82 } },
+                                expected: { aws: { monthly_cost: 100 }, gcp: { monthly_cost: 110 }, azure: { monthly_cost: 105 } },
+                                high: { aws: { monthly_cost: 150 }, gcp: { monthly_cost: 160 }, azure: { monthly_cost: 155 } }
                             },
                             cost_range: { formatted: '$80 - $160/month' },
                             services: [],
@@ -1723,113 +2009,113 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                         cost_mode: 'FALLBACK_MODE',
                         pricing_method_used: 'fallback_calculation',
                         rankings: [
-                          {
-                            provider: 'AWS',
-                            monthly_cost: 100,
-                            formatted_cost: '$100.00',
-                            rank: 1,
-                            recommended: true,
-                            confidence: 0.5,
-                            score: 50,
-                            cost_range: { formatted: '$80 - $120/month' }
-                          },
-                          {
-                            provider: 'GCP',
-                            monthly_cost: 110,
-                            formatted_cost: '$110.00',
-                            rank: 2,
-                            recommended: false,
-                            confidence: 0.5,
-                            score: 45,
-                            cost_range: { formatted: '$90 - $130/month' }
-                          },
-                          {
-                            provider: 'AZURE',
-                            monthly_cost: 105,
-                            formatted_cost: '$105.00',
-                            rank: 3,
-                            recommended: false,
-                            confidence: 0.5,
-                            score: 48,
-                            cost_range: { formatted: '$85 - $125/month' }
-                          }
+                            {
+                                provider: 'AWS',
+                                monthly_cost: 100,
+                                formatted_cost: '$100.00',
+                                rank: 1,
+                                recommended: true,
+                                confidence: 0.5,
+                                score: 50,
+                                cost_range: { formatted: '$80 - $120/month' }
+                            },
+                            {
+                                provider: 'GCP',
+                                monthly_cost: 110,
+                                formatted_cost: '$110.00',
+                                rank: 2,
+                                recommended: false,
+                                confidence: 0.5,
+                                score: 45,
+                                cost_range: { formatted: '$90 - $130/month' }
+                            },
+                            {
+                                provider: 'AZURE',
+                                monthly_cost: 105,
+                                formatted_cost: '$105.00',
+                                rank: 3,
+                                recommended: false,
+                                confidence: 0.5,
+                                score: 48,
+                                cost_range: { formatted: '$85 - $125/month' }
+                            }
                         ],
                         provider_details: {
-                          AWS: {
-                            provider: 'AWS',
-                            total_monthly_cost: 100,
-                            formatted_cost: '$100.00/month',
-                            service_count: 1,
-                            is_mock: true,
-                            confidence: 0.5,
-                            cost_range: { formatted: '$80 - $120/month' }
-                          },
-                          GCP: {
-                            provider: 'GCP',
-                            total_monthly_cost: 110,
-                            formatted_cost: '$110.00/month',
-                            service_count: 1,
-                            is_mock: true,
-                            confidence: 0.5,
-                            cost_range: { formatted: '$90 - $130/month' }
-                          },
-                          AZURE: {
-                            provider: 'AZURE',
-                            total_monthly_cost: 105,
-                            formatted_cost: '$105.00/month',
-                            service_count: 1,
-                            is_mock: true,
-                            confidence: 0.5,
-                            cost_range: { formatted: '$85 - $125/month' }
-                          }
+                            AWS: {
+                                provider: 'AWS',
+                                total_monthly_cost: 100,
+                                formatted_cost: '$100.00/month',
+                                service_count: 1,
+                                is_mock: true,
+                                confidence: 0.5,
+                                cost_range: { formatted: '$80 - $120/month' }
+                            },
+                            GCP: {
+                                provider: 'GCP',
+                                total_monthly_cost: 110,
+                                formatted_cost: '$110.00/month',
+                                service_count: 1,
+                                is_mock: true,
+                                confidence: 0.5,
+                                cost_range: { formatted: '$90 - $130/month' }
+                            },
+                            AZURE: {
+                                provider: 'AZURE',
+                                total_monthly_cost: 105,
+                                formatted_cost: '$105.00/month',
+                                service_count: 1,
+                                is_mock: true,
+                                confidence: 0.5,
+                                cost_range: { formatted: '$85 - $125/month' }
+                            }
                         },
                         recommended_provider: 'AWS',
                         recommended: {
-                          provider: 'AWS',
-                          monthly_cost: 100,
-                          formatted_cost: '$100.00',
-                          service_count: 1,
-                          score: 50,
-                          cost_range: {
-                            formatted: '$80 - $120/month'
-                          }
+                            provider: 'AWS',
+                            monthly_cost: 100,
+                            formatted_cost: '$100.00',
+                            service_count: 1,
+                            score: 50,
+                            cost_range: {
+                                formatted: '$80 - $120/month'
+                            }
                         },
                         confidence: 0.5,
                         confidence_percentage: 50,
                         confidence_explanation: ['Fallback calculation due to processing error'],
                         ai_explanation: {
-                          confidence_score: 0.5,
-                          rationale: 'Fallback cost estimate provided due to processing error.'
+                            confidence_score: 0.5,
+                            rationale: 'Fallback cost estimate provided due to processing error.'
                         },
                         summary: {
-                          cheapest: 'AWS',
-                          most_performant: 'GCP',
-                          best_value: 'AWS',
-                          confidence: 0.5
+                            cheapest: 'AWS',
+                            most_performant: 'GCP',
+                            best_value: 'AWS',
+                            confidence: 0.5
                         },
                         assumption_source: 'fallback',
                         cost_sensitivity: {
-                          level: 'medium',
-                          label: 'Standard sensitivity',
-                          factor: 'overall usage'
+                            level: 'medium',
+                            label: 'Standard sensitivity',
+                            factor: 'overall usage'
                         },
                         selected_services: {},
                         missing_components: [],
                         future_cost_warning: null,
                         category_breakdown: [
-                          { category: 'Infrastructure', total: 100, service_count: 1 }
+                            { category: 'Infrastructure', total: 100, service_count: 1 }
                         ],
                         cost_profiles: {
-                          COST_EFFECTIVE: { total: 100, formatted: '$100.00' },
-                          HIGH_PERFORMANCE: { total: 150, formatted: '$150.00' }
+                            COST_EFFECTIVE: { total: 100, formatted: '$100.00' },
+                            HIGH_PERFORMANCE: { total: 150, formatted: '$150.00' }
                         },
                         recommended_cost_range: {
-                          formatted: '$80 - $120/month'
+                            formatted: '$80 - $120/month'
                         },
                         scenarios: {
-                          low: { aws: { monthly_cost: 80 }, gcp: { monthly_cost: 85 }, azure: { monthly_cost: 82 } },
-                          expected: { aws: { monthly_cost: 100 }, gcp: { monthly_cost: 110 }, azure: { monthly_cost: 105 } },
-                          high: { aws: { monthly_cost: 150 }, gcp: { monthly_cost: 160 }, azure: { monthly_cost: 155 } }
+                            low: { aws: { monthly_cost: 80 }, gcp: { monthly_cost: 85 }, azure: { monthly_cost: 82 } },
+                            expected: { aws: { monthly_cost: 100 }, gcp: { monthly_cost: 110 }, azure: { monthly_cost: 105 } },
+                            high: { aws: { monthly_cost: 150 }, gcp: { monthly_cost: 160 }, azure: { monthly_cost: 155 } }
                         },
                         cost_range: { formatted: '$80 - $160/month' },
                         services: [],
@@ -1867,7 +2153,7 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                 let aiUsageConf = usage_profile?.confidence || 0.5;
                 const axisScore = 0.8; // improving hardcoded proxy
                 const patternCertainty = 1.0;
-                
+
                 if (!costAnalysis.confidence) {
                     // Bug #4: CONFIDENCE CALCULATION
                     // Formula: 0.5 * usage + 0.3 * axis + 0.2 * pattern
@@ -1916,12 +2202,12 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
         // ✅ FIX 2: Update region with provider-specific resolved region
         const regionResolver = require('../services/regionResolver');
         const selectedProvider = safeProvider.toLowerCase();
-        
+
         // Update region with provider-specific resolved region
         if (infraSpec.region) {
             const logicalRegion = infraSpec.region.logical_region || 'US_PRIMARY';
             const resolvedRegion = regionResolver.resolveRegion(logicalRegion, selectedProvider);
-            
+
             infraSpec.region = {
                 ...infraSpec.region,
                 logical_region: logicalRegion,
@@ -1929,10 +2215,10 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                 provider: selectedProvider,
                 intent: 'AUTO'
             };
-            
+
             console.log(`[STEP 3] Region updated: logical=${logicalRegion} → resolved=${resolvedRegion} for ${selectedProvider}`);
         }
-        
+
         // ✅ FIX 3: Save updated infraSpec back to workspace with step completion flag
         if (workspace_id) {
             const { pool } = require('../config/db');
@@ -1942,31 +2228,31 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                     'SELECT state_json FROM workspaces WHERE id = $1',
                     [workspace_id]
                 );
-                
+
                 if (wsResult.rows.length > 0) {
                     let stateJson = wsResult.rows[0].state_json || {};
-                    
+
                     // Update the infraSpec in the state
                     stateJson.infraSpec = infraSpec;
-                    
+
                     // Mark step 3 as completed
                     if (!stateJson.workflow_state) stateJson.workflow_state = {};
                     stateJson.workflow_state.step3_completed = true;
                     stateJson.workflow_state.last_step_completed = 'cost_estimation';
-                    
+
                     // Update workspace with new state
                     await pool.query(
                         'UPDATE workspaces SET state_json = $1, updated_at = NOW() WHERE id = $2',
                         [JSON.stringify(stateJson), workspace_id]
                     );
-                    
+
                     console.log(`[STEP 3] Updated workspace ${workspace_id} with completed region and sizing`);
                 }
             } catch (saveError) {
                 console.error('[STEP 3] Error saving updated infraSpec to workspace:', saveError);
             }
         }
-        
+
         // Ensure explicit undefined checks for critical fields
         const responseData = {
             step: 'cost_estimation',
@@ -1990,12 +2276,12 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                     service_count: safeDetails.service_count ?? 0,
                     cost_range: safeRange,
                     // 🔒 FIX: Ensure drivers are passed with proper fallbacks
-                    drivers: costAnalysis.recommended?.drivers || 
-                             costAnalysis.drivers || 
-                             (costAnalysis.scenarios ? 
-                                Object.values(costAnalysis.scenarios)
-                                    .find(profile => profile && profile[safeProvider])?.[safeProvider]?.drivers || []
-                             : []),
+                    drivers: costAnalysis.recommended?.drivers ||
+                        costAnalysis.drivers ||
+                        (costAnalysis.scenarios ?
+                            Object.values(costAnalysis.scenarios)
+                                .find(profile => profile && profile[safeProvider])?.[safeProvider]?.drivers || []
+                            : []),
                     score: costAnalysis.recommended?.score || Math.round((costAnalysis.confidence || 0.75) * 100)
                 },
 
@@ -2103,12 +2389,12 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                     critical_cost_drivers: [],
                     architectural_fit: "Standard pattern."
                 },
-                
+
                 // Structured recommendation facts (deterministic, auditable)
                 recommendation_facts: costResultModel.generateRecommendationFacts(
-                    costAnalysis.recommended, 
-                    costAnalysis.scenarios, 
-                    usage_profile, 
+                    costAnalysis.recommended,
+                    costAnalysis.scenarios,
+                    usage_profile,
                     infraSpec.architecture_pattern
                 ),
 
@@ -2133,113 +2419,113 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                 cost_mode: 'FALLBACK_MODE',
                 pricing_method_used: 'fallback_calculation',
                 rankings: [
-                  {
-                    provider: 'AWS',
-                    monthly_cost: 100,
-                    formatted_cost: '$100.00',
-                    rank: 1,
-                    recommended: true,
-                    confidence: 0.5,
-                    score: 50,
-                    cost_range: { formatted: '$80 - $120/month' }
-                  },
-                  {
-                    provider: 'GCP',
-                    monthly_cost: 110,
-                    formatted_cost: '$110.00',
-                    rank: 2,
-                    recommended: false,
-                    confidence: 0.5,
-                    score: 45,
-                    cost_range: { formatted: '$90 - $130/month' }
-                  },
-                  {
-                    provider: 'AZURE',
-                    monthly_cost: 105,
-                    formatted_cost: '$105.00',
-                    rank: 3,
-                    recommended: false,
-                    confidence: 0.5,
-                    score: 48,
-                    cost_range: { formatted: '$85 - $125/month' }
-                  }
+                    {
+                        provider: 'AWS',
+                        monthly_cost: 100,
+                        formatted_cost: '$100.00',
+                        rank: 1,
+                        recommended: true,
+                        confidence: 0.5,
+                        score: 50,
+                        cost_range: { formatted: '$80 - $120/month' }
+                    },
+                    {
+                        provider: 'GCP',
+                        monthly_cost: 110,
+                        formatted_cost: '$110.00',
+                        rank: 2,
+                        recommended: false,
+                        confidence: 0.5,
+                        score: 45,
+                        cost_range: { formatted: '$90 - $130/month' }
+                    },
+                    {
+                        provider: 'AZURE',
+                        monthly_cost: 105,
+                        formatted_cost: '$105.00',
+                        rank: 3,
+                        recommended: false,
+                        confidence: 0.5,
+                        score: 48,
+                        cost_range: { formatted: '$85 - $125/month' }
+                    }
                 ],
                 provider_details: {
-                  AWS: {
-                    provider: 'AWS',
-                    total_monthly_cost: 100,
-                    formatted_cost: '$100.00/month',
-                    service_count: 1,
-                    is_mock: true,
-                    confidence: 0.5,
-                    cost_range: { formatted: '$80 - $120/month' }
-                  },
-                  GCP: {
-                    provider: 'GCP',
-                    total_monthly_cost: 110,
-                    formatted_cost: '$110.00/month',
-                    service_count: 1,
-                    is_mock: true,
-                    confidence: 0.5,
-                    cost_range: { formatted: '$90 - $130/month' }
-                  },
-                  AZURE: {
-                    provider: 'AZURE',
-                    total_monthly_cost: 105,
-                    formatted_cost: '$105.00/month',
-                    service_count: 1,
-                    is_mock: true,
-                    confidence: 0.5,
-                    cost_range: { formatted: '$85 - $125/month' }
-                  }
+                    AWS: {
+                        provider: 'AWS',
+                        total_monthly_cost: 100,
+                        formatted_cost: '$100.00/month',
+                        service_count: 1,
+                        is_mock: true,
+                        confidence: 0.5,
+                        cost_range: { formatted: '$80 - $120/month' }
+                    },
+                    GCP: {
+                        provider: 'GCP',
+                        total_monthly_cost: 110,
+                        formatted_cost: '$110.00/month',
+                        service_count: 1,
+                        is_mock: true,
+                        confidence: 0.5,
+                        cost_range: { formatted: '$90 - $130/month' }
+                    },
+                    AZURE: {
+                        provider: 'AZURE',
+                        total_monthly_cost: 105,
+                        formatted_cost: '$105.00/month',
+                        service_count: 1,
+                        is_mock: true,
+                        confidence: 0.5,
+                        cost_range: { formatted: '$85 - $125/month' }
+                    }
                 },
                 recommended_provider: 'AWS',
                 recommended: {
-                  provider: 'AWS',
-                  monthly_cost: 100,
-                  formatted_cost: '$100.00',
-                  service_count: 1,
-                  score: 50,
-                  cost_range: {
-                    formatted: '$80 - $120/month'
-                  }
+                    provider: 'AWS',
+                    monthly_cost: 100,
+                    formatted_cost: '$100.00',
+                    service_count: 1,
+                    score: 50,
+                    cost_range: {
+                        formatted: '$80 - $120/month'
+                    }
                 },
                 confidence: 0.5,
                 confidence_percentage: 50,
                 confidence_explanation: ['Fallback calculation due to processing error'],
                 ai_explanation: {
-                  confidence_score: 0.5,
-                  rationale: 'Fallback cost estimate provided due to processing error.'
+                    confidence_score: 0.5,
+                    rationale: 'Fallback cost estimate provided due to processing error.'
                 },
                 summary: {
-                  cheapest: 'AWS',
-                  most_performant: 'GCP',
-                  best_value: 'AWS',
-                  confidence: 0.5
+                    cheapest: 'AWS',
+                    most_performant: 'GCP',
+                    best_value: 'AWS',
+                    confidence: 0.5
                 },
                 assumption_source: 'fallback',
                 cost_sensitivity: {
-                  level: 'medium',
-                  label: 'Standard sensitivity',
-                  factor: 'overall usage'
+                    level: 'medium',
+                    label: 'Standard sensitivity',
+                    factor: 'overall usage'
                 },
                 selected_services: {},
                 missing_components: [],
                 future_cost_warning: null,
                 category_breakdown: [
-                  { category: 'Infrastructure', total: 100, service_count: 1 }
+                    { category: 'Infrastructure', total: 100, service_count: 1 }
                 ],
                 cost_profiles: {
-                  COST_EFFECTIVE: { total: 100, formatted: '$100.00' },
-                  HIGH_PERFORMANCE: { total: 150, formatted: '$150.00' }
+                    COST_EFFECTIVE: { total: 100, formatted: '$100.00' },
+                    HIGH_PERFORMANCE: { total: 150, formatted: '$150.00' }
                 },
                 recommended_cost_range: {
-                  formatted: '$80 - $120/month'
+                    formatted: '$80 - $120/month'
                 },
                 scenarios: {
-                  low: { aws: { monthly_cost: 80 }, gcp: { monthly_cost: 85 }, azure: { monthly_cost: 82 } },
-                  expected: { aws: { monthly_cost: 100 }, gcp: { monthly_cost: 110 }, azure: { monthly_cost: 105 } },
-                  high: { aws: { monthly_cost: 150 }, gcp: { monthly_cost: 160 }, azure: { monthly_cost: 155 } }
+                    low: { aws: { monthly_cost: 80 }, gcp: { monthly_cost: 85 }, azure: { monthly_cost: 82 } },
+                    expected: { aws: { monthly_cost: 100 }, gcp: { monthly_cost: 110 }, azure: { monthly_cost: 105 } },
+                    high: { aws: { monthly_cost: 150 }, gcp: { monthly_cost: 160 }, azure: { monthly_cost: 155 } }
                 },
                 cost_range: { formatted: '$80 - $160/month' },
                 services: [],
@@ -2248,37 +2534,37 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                 // Full provider details
                 providers: {
                     AWS: {
-                      provider: 'AWS',
-                      total_monthly_cost: 100,
-                      formatted_cost: '$100.00/month',
-                      service_count: 1,
-                      is_mock: true,
-                      confidence: 0.5,
-                      cost_range: { formatted: '$80 - $120/month' }
+                        provider: 'AWS',
+                        total_monthly_cost: 100,
+                        formatted_cost: '$100.00/month',
+                        service_count: 1,
+                        is_mock: true,
+                        confidence: 0.5,
+                        cost_range: { formatted: '$80 - $120/month' }
                     },
                     GCP: {
-                      provider: 'GCP',
-                      total_monthly_cost: 110,
-                      formatted_cost: '$110.00/month',
-                      service_count: 1,
-                      is_mock: true,
-                      confidence: 0.5,
-                      cost_range: { formatted: '$90 - $130/month' }
+                        provider: 'GCP',
+                        total_monthly_cost: 110,
+                        formatted_cost: '$110.00/month',
+                        service_count: 1,
+                        is_mock: true,
+                        confidence: 0.5,
+                        cost_range: { formatted: '$90 - $130/month' }
                     },
                     AZURE: {
-                      provider: 'AZURE',
-                      total_monthly_cost: 105,
-                      formatted_cost: '$105.00/month',
-                      service_count: 1,
-                      is_mock: true,
-                      confidence: 0.5,
-                      cost_range: { formatted: '$85 - $125/month' }
+                        provider: 'AZURE',
+                        total_monthly_cost: 105,
+                        formatted_cost: '$105.00/month',
+                        service_count: 1,
+                        is_mock: true,
+                        confidence: 0.5,
+                        cost_range: { formatted: '$85 - $125/month' }
                     }
                 },
                 summary: { confidence: 0.5 },
                 cost_profiles: {
-                  COST_EFFECTIVE: { total: 100, formatted: '$100.00' },
-                  HIGH_PERFORMANCE: { total: 150, formatted: '$150.00' }
+                    COST_EFFECTIVE: { total: 100, formatted: '$100.00' },
+                    HIGH_PERFORMANCE: { total: 150, formatted: '$150.00' }
                 },
                 missing_components: [],
                 future_cost_warning: null,
@@ -2394,10 +2680,10 @@ router.post('/architecture', authMiddleware, async (req, res) => {
         }
 
         // Use the pattern resolver to generate architecture based on intent
-        
+
         // Extract requirements from intent
         let requirements = patternResolver.extractRequirements(intent?.intent_classification?.project_description || "");
-        
+
         // Merge with frontend requirements if provided
         if (req.body.requirements) {
             requirements = {
@@ -2425,11 +2711,11 @@ router.post('/architecture', authMiddleware, async (req, res) => {
                 }
             };
         }
-        
+
         // 🔒 FIX 1: USE CANONICAL ARCHITECTURE FROM STEP 2 (IMMUTABLE)
         // DO NOT regenerate - reuse the finalized services contract from infraSpec
         let canonicalArchitecture;
-        
+
         if (infraSpec.canonical_architecture) {
             // Use the stored canonical architecture from Step 2
             console.log('[FIX 1] Using stored canonical architecture from Step 2');
@@ -2449,7 +2735,7 @@ router.post('/architecture', authMiddleware, async (req, res) => {
                 total_services: infraSpec.service_classes?.required_services?.length || 0
             };
         }
-        
+
         console.log(`[FIX 1] Canonical Architecture: ${canonicalArchitecture.pattern}, Services: ${canonicalArchitecture.services?.length || 0}`);
 
         // Map to provider-specific services
@@ -2508,7 +2794,7 @@ router.post('/terraform', authMiddleware, async (req, res) => {
         const { workspace_id, infraSpec, provider, profile, project_name, requirements } = req.body;
 
         console.log(`[TERRAFORM] Generating modular code for ${provider} (${profile})`);
-        
+
         // 🔒 INVARIANT CHECK: Step 3 must complete before Step 5
         if (!infraSpec?.sizing) {
             return res.status(400).json({
@@ -2518,7 +2804,7 @@ router.post('/terraform', authMiddleware, async (req, res) => {
                 current_step: 'Step 5 (Terraform Generation)'
             });
         }
-        
+
         // 🔒 INVARIANT CHECK: Step 2 region resolution must complete
         if (!infraSpec?.region?.resolved_region && !requirements?.region?.primary_region) {
             return res.status(400).json({
@@ -2528,53 +2814,58 @@ router.post('/terraform', authMiddleware, async (req, res) => {
                 current_step: 'Step 5 (Terraform Generation)'
             });
         }
-        
+
         console.log(`[INVARIANT CHECK] ✓ Step 3 completed: sizing.tier=${infraSpec.sizing.tier}`);
         console.log(`[INVARIANT CHECK] ✓ Step 2 region resolved: ${infraSpec.region?.resolved_region || requirements.region?.primary_region}`);
-        
+
         console.log(`[TERRAFORM] InfraSpec:`, JSON.stringify(infraSpec, null, 2));
         console.log(`[TERRAFORM] InfraSpec pattern:`, infraSpec?.service_classes?.pattern);
         console.log(`[TERRAFORM] Services:`, infraSpec?.service_classes?.required_services?.map(s => s.service_class));
-        
+
         // 🔥 TERRAFORM-SAFE MODE: Validate that deployable services have modules available for the selected provider
         if (infraSpec.canonical_architecture?.deployable_services && Array.isArray(infraSpec.canonical_architecture.deployable_services)) {
             const terraformModules = require('../services/terraformModules');
             const terraformServiceLocal = require('../services/terraformService');
             const providerLower = provider.toLowerCase();
-            
+
             // Check if all deployable services have modules for the selected provider
             const missingModules = [];
             const availableServices = [];
-            
+
             infraSpec.canonical_architecture.deployable_services.forEach(service => {
+                // 🔥 CRITICAL FIX: Normalize service to string first (services can be objects or strings)
+                const serviceName = typeof service === 'string' ? service :
+                    (service?.service_class || service?.name || service?.canonical_type || 'unknown');
+
                 // Normalize service name for module lookup
-                const moduleFolderName = terraformServiceLocal.getModuleFolderName(service);
+                const moduleFolderName = terraformServiceLocal.getModuleFolderName(serviceName);
                 const lookupName = moduleFolderName === 'relational_db' ? 'relational_database' :
-                                  moduleFolderName === 'auth' ? 'identity_auth' :
-                                  moduleFolderName === 'ml_inference' ? 'ml_inference_service' :
-                                  moduleFolderName === 'websocket' ? 'websocket_gateway' :
-                                  moduleFolderName === 'serverless_compute' ? 'serverless_compute' :
-                                  moduleFolderName === 'analytical_db' ? 'analytical_database' :
-                                  moduleFolderName === 'push_notification' ? 'push_notification_service' :
-                                  moduleFolderName;
-                
+                    moduleFolderName === 'auth' ? 'identity_auth' :
+                        moduleFolderName === 'ml_inference' ? 'ml_inference_service' :
+                            moduleFolderName === 'websocket' ? 'websocket_gateway' :
+                                moduleFolderName === 'serverless_compute' ? 'serverless_compute' :
+                                    moduleFolderName === 'analytical_db' ? 'analytical_database' :
+                                        moduleFolderName === 'push_notification' ? 'push_notification_service' :
+                                            moduleFolderName;
+
                 const module = terraformModules.getModule(lookupName, providerLower);
                 if (module) {
-                    availableServices.push(service);
+                    // 🔥 FIX: Push the original service (string or objectified form)
+                    availableServices.push(serviceName);
                 } else {
                     missingModules.push({
-                        service,
+                        service: serviceName,
                         normalized: lookupName,
                         provider: providerLower,
                         reason: 'MODULE_NOT_IMPLEMENTED'
                     });
                 }
             });
-            
+
             if (missingModules.length > 0) {
                 console.warn(`[TERRAFORM-SAFE] Missing modules for services: ${missingModules.map(m => m.service).join(', ')}`);
                 console.warn(`[TERRAFORM-SAFE] Proceeding with available services only: ${availableServices.join(', ')}`);
-                
+
                 // Update the canonical architecture to only include services with modules
                 infraSpec.canonical_architecture.deployable_services = availableServices;
                 console.log(`[TERRAFORM-SAFE] Filtered deployable services from ${availableServices.length + missingModules.length} to ${availableServices.length}`);
@@ -2601,7 +2892,7 @@ router.post('/terraform', authMiddleware, async (req, res) => {
 
         // Generate modular Terraform project (V2)
         const terraformService = require('../services/terraformService');
-        
+
         let terraformResult, terraformProject, terraformHash, deploymentManifest, services;
         try {
             console.log('[TERRAFORM] Calling generateModularTerraform...');
@@ -2612,7 +2903,7 @@ router.post('/terraform', authMiddleware, async (req, res) => {
                 requirements || {}
             );
             console.log('[TERRAFORM] Project generated successfully');
-            
+
             // Extract components from result
             terraformProject = terraformResult.projectFolder;
             terraformHash = terraformResult.terraform_hash;
@@ -2625,7 +2916,7 @@ router.post('/terraform', authMiddleware, async (req, res) => {
             console.log(`[TERRAFORM] Hash: ${terraformHash.substring(0, 16)}...`);
         } catch (terraformError) {
             console.error('[TERRAFORM GENERATION ERROR]:', terraformError);
-            
+
             // Fallback: Return a minimal valid response to prevent frontend crashes
             return res.status(200).json({
                 success: true,
@@ -2652,7 +2943,7 @@ router.post('/terraform', authMiddleware, async (req, res) => {
         // ═══════════════════════════════════════════════════════════════════════════
         // TERRAFORM INTEGRITY GATE (CRITICAL - NO BYPASS)
         // ═══════════════════════════════════════════════════════════════════════════
-        
+
         // Validate Terraform project integrity
         if (!terraformProject.modules || Object.keys(terraformProject.modules).length === 0) {
             console.error('[TERRAFORM INTEGRITY] ✗ FAILED: No modules generated');
@@ -2663,7 +2954,7 @@ router.post('/terraform', authMiddleware, async (req, res) => {
                 terraform_valid: false
             });
         }
-        
+
         // Validate main.tf exists
         if (!terraformProject['main.tf']) {
             console.error('[TERRAFORM INTEGRITY] ✗ FAILED: No main.tf generated');
@@ -2673,7 +2964,7 @@ router.post('/terraform', authMiddleware, async (req, res) => {
                 terraform_valid: false
             });
         }
-        
+
         console.log('[TERRAFORM INTEGRITY] ✓ PASSED: Valid Terraform project');
         console.log(`[TERRAFORM INTEGRITY] ✓ ${Object.keys(terraformProject.modules).length} modules generated`);
         console.log(`[TERRAFORM INTEGRITY] ✓ main.tf exists with ${terraformProject['main.tf'].split('\n').length} lines`);
@@ -2687,7 +2978,7 @@ router.post('/terraform', authMiddleware, async (req, res) => {
                 terraform_valid: false
             });
         }
-        
+
         console.log('[TERRAFORM INTEGRITY] ✓ Hash and manifest validated');
 
         res.json({
@@ -2712,6 +3003,67 @@ router.post('/terraform', authMiddleware, async (req, res) => {
             message: error.message,
             details: error.stack
         });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// ARCHITECTURE DISPLAY ENDPOINT
+// Returns formatted service display for frontend visualization
+// ═══════════════════════════════════════════════════════════════════
+router.post('/architecture-display', async (req, res) => {
+    try {
+        const { infra_spec, pattern_resolution, canonical_architecture, sizing } = req.body;
+
+        console.log('[ARCHITECTURE DISPLAY] Generating display data...');
+
+        // Get services from canonical architecture or infra_spec
+        let canonicalServices = [];
+        if (canonical_architecture?.deployable_services) {
+            canonicalServices = canonical_architecture.deployable_services;
+        } else if (canonical_architecture?.services_contract?.services) {
+            canonicalServices = canonical_architecture.services_contract.services;
+        } else if (infra_spec?.services) {
+            canonicalServices = infra_spec.services;
+        }
+
+        // Generate display-ready services
+        const displayServices = generateServiceDisplay(canonicalServices);
+        const groupedServices = groupServicesByCategory(displayServices);
+
+        // Build response
+        const displayData = {
+            architecture_overview: infra_spec?.project_summary ||
+                `Production-ready ${pattern_resolution?.selected_pattern?.replace(/_/g, ' ') || 'cloud'} architecture`,
+
+            pattern: {
+                name: pattern_resolution?.selected_pattern || 'HYBRID_PLATFORM',
+                description: pattern_resolution?.description || 'Multi-capability cloud platform',
+                score: pattern_resolution?.score || 0,
+                alternatives: pattern_resolution?.alternatives || []
+            },
+
+            included_services: displayServices,
+            grouped_services: groupedServices,
+
+            service_counts: {
+                total: displayServices.length,
+                by_category: Object.fromEntries(
+                    Object.entries(groupedServices).map(([k, v]) => [k, v.length])
+                )
+            },
+
+            traffic_tier: sizing?.tier || 'Medium',
+
+            // Metadata for frontend
+            next_step: 'usage_estimation'
+        };
+
+        console.log(`[ARCHITECTURE DISPLAY] Generated: ${displayServices.length} services in ${Object.keys(groupedServices).length} categories`);
+
+        res.json(displayData);
+    } catch (error) {
+        console.error('[ARCHITECTURE DISPLAY] Error:', error);
+        res.status(500).json({ error: 'Failed to generate architecture display', message: error.message });
     }
 });
 

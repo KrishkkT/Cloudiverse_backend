@@ -79,8 +79,47 @@ const PATTERN_REQUIREMENTS = {
         required: ['load_balancer', 'app_compute', 'relational_database', 'logging', 'monitoring'],
         optional: ['cache', 'cdn', 'identity_auth', 'object_storage'],
         forbidden: ['serverless_compute']
+    },
+    // ═══════════════════════════════════════════════════════════════════
+    // NEW DOMAIN-SPECIFIC PATTERNS
+    // ═══════════════════════════════════════════════════════════════════
+    HIGH_AVAILABILITY_PLATFORM: {
+        required: ['global_load_balancer', 'cdn', 'api_gateway', 'relational_database', 'identity_auth', 'logging', 'monitoring'],
+        optional: ['cache', 'message_queue', 'app_compute', 'websocket_gateway'],
+        forbidden: []
+    },
+    IOT_PLATFORM: {
+        required: ['iot_core', 'time_series_db', 'api_gateway', 'logging', 'monitoring'],
+        optional: ['event_streaming', 'object_storage', 'sms_alerts'],
+        forbidden: ['cdn']
+    },
+    FINTECH_PAYMENT_PLATFORM: {
+        required: ['api_gateway', 'app_compute', 'relational_database', 'identity_auth', 'secrets_manager', 'audit_logging', 'logging', 'monitoring'],
+        optional: ['load_balancer', 'cache', 'payment_gateway'],
+        forbidden: []
+    },
+    HEALTHCARE_PLATFORM: {
+        required: ['api_gateway', 'app_compute', 'relational_database', 'identity_auth', 'secrets_manager', 'audit_logging', 'object_storage', 'logging', 'monitoring'],
+        optional: [],
+        forbidden: []
+    },
+    GAMING_BACKEND: {
+        required: ['api_gateway', 'app_compute', 'cache', 'relational_database', 'identity_auth', 'logging', 'monitoring'],
+        optional: ['websocket_gateway', 'message_queue', 'payment_gateway'],
+        forbidden: []
+    },
+    E_COMMERCE_BACKEND: {
+        required: ['cdn', 'api_gateway', 'app_compute', 'relational_database', 'identity_auth', 'object_storage', 'cache', 'logging', 'monitoring'],
+        optional: ['payment_gateway'],
+        forbidden: []
+    },
+    EVENT_DRIVEN_PLATFORM: {
+        required: ['message_queue', 'serverless_compute', 'logging', 'monitoring'],
+        optional: ['api_gateway', 'object_storage'],
+        forbidden: []
     }
 };
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // VALIDATION FUNCTIONS
@@ -98,15 +137,15 @@ function normalizeServiceNames(services) {
         'compute': 'app_compute',
         'compute_serverless': 'serverless_compute'
     };
-    
+
     return services.map(service => {
         const originalName = service.service_class || service.canonical_type || service.name;
         const normalizedName = nameMap[originalName] || originalName;
-        
+
         if (originalName !== normalizedName) {
             console.warn(`[VALIDATOR] Normalized service name: ${originalName} → ${normalizedName}`);
         }
-        
+
         return {
             ...service,
             service_class: normalizedName,
@@ -122,7 +161,7 @@ function normalizeServiceNames(services) {
 function deduplicateServices(services) {
     const seen = new Set();
     const deduplicated = [];
-    
+
     for (const service of services) {
         const key = service.service_class || service.canonical_type || service.name;
         if (!seen.has(key)) {
@@ -132,7 +171,7 @@ function deduplicateServices(services) {
             console.warn(`[VALIDATOR] Duplicate service removed: ${key}`);
         }
     }
-    
+
     return deduplicated;
 }
 
@@ -142,36 +181,36 @@ function deduplicateServices(services) {
 function validateCanonicalArchitecture(canonicalArchitecture, intent = {}) {
     const errors = [];
     const warnings = [];
-    
+
     const pattern = canonicalArchitecture.pattern;
     const services = canonicalArchitecture.services || [];
-    
+
     // Get pattern requirements
     const requirements = PATTERN_REQUIREMENTS[pattern];
     if (!requirements) {
         errors.push(`Unknown pattern: ${pattern}`);
         return { valid: false, errors, warnings };
     }
-    
+
     // Get service names
-    const serviceNames = services.map(s => 
+    const serviceNames = services.map(s =>
         s.service_class || s.canonical_type || s.name
     );
-    
+
     // 1. Check required services
     for (const required of requirements.required) {
         if (!serviceNames.includes(required)) {
             errors.push(`Missing required service for ${pattern}: ${required}`);
         }
     }
-    
+
     // 2. Check forbidden services
     for (const forbidden of requirements.forbidden) {
         if (serviceNames.includes(forbidden)) {
             errors.push(`Forbidden service for ${pattern}: ${forbidden}`);
         }
     }
-    
+
     // 3. Check conditional requirements
     if (requirements.conditional) {
         // Document storage requires object_storage
@@ -181,19 +220,19 @@ function validateCanonicalArchitecture(canonicalArchitecture, intent = {}) {
             }
         }
     }
-    
+
     // 4. Validate compute type matches pattern
     const hasServerlessCompute = serviceNames.includes('serverless_compute');
     const hasAppCompute = serviceNames.includes('app_compute');
-    
+
     if (pattern.includes('SERVERLESS') && hasAppCompute) {
         errors.push(`${pattern} should use serverless_compute, not app_compute`);
     }
-    
+
     if (pattern.includes('STATEFUL') && hasServerlessCompute) {
         errors.push(`${pattern} should use app_compute, not serverless_compute`);
     }
-    
+
     return {
         valid: errors.length === 0,
         errors,
@@ -209,10 +248,10 @@ function addConditionalServices(services, pattern, intent = {}) {
     if (!requirements || !requirements.conditional) {
         return services;
     }
-    
+
     const serviceNames = services.map(s => s.service_class || s.canonical_type || s.name);
     const added = [];
-    
+
     // Add object_storage if document_storage is true
     if (requirements.conditional.document_storage && intent.document_storage === true) {
         if (!serviceNames.includes('object_storage')) {
@@ -228,7 +267,7 @@ function addConditionalServices(services, pattern, intent = {}) {
             console.log('[VALIDATOR] Auto-added object_storage (document_storage=true)');
         }
     }
-    
+
     // Add payment_gateway if payments is true
     if (requirements.conditional.payments && (intent.payments === true || intent.payment_gateway === true)) {
         if (!serviceNames.includes('payment_gateway')) {
@@ -244,7 +283,7 @@ function addConditionalServices(services, pattern, intent = {}) {
             console.log('[VALIDATOR] Auto-added payment_gateway (payments=true)');
         }
     }
-    
+
     // Add message_queue if background_jobs is true
     if (requirements.conditional.background_jobs && intent.background_jobs === true) {
         if (!serviceNames.includes('message_queue')) {
@@ -260,7 +299,7 @@ function addConditionalServices(services, pattern, intent = {}) {
             console.log('[VALIDATOR] Auto-added message_queue (background_jobs=true)');
         }
     }
-    
+
     return services;
 }
 
@@ -270,16 +309,16 @@ function addConditionalServices(services, pattern, intent = {}) {
  */
 function filterTerraformSafeServices(services) {
     const { getServiceDefinition } = require('./canonicalServiceRegistry');
-    
+
     const terraformSupportedServices = [];
     const excludedServices = [];
-    
+
     services.forEach(service => {
         const serviceName = service.service_class || service.canonical_type || service.name;
         const serviceDef = getServiceDefinition(serviceName);
-        
+
         // Include service if it's terraform_supported and belongs to terraform_core or terraform_optional class
-        if (serviceDef && serviceDef.terraform_supported === true && 
+        if (serviceDef && serviceDef.terraform_supported === true &&
             (serviceDef.class === 'terraform_core' || serviceDef.class === 'terraform_optional')) {
             terraformSupportedServices.push(service);
         } else {
@@ -289,15 +328,15 @@ function filterTerraformSafeServices(services) {
             });
         }
     });
-    
+
     if (excludedServices.length > 0) {
-        console.warn('[TERRAFORM-SAFE] Excluded services that are not terraform-supported:', 
-                     excludedServices.map(e => e.service).join(', '));
+        console.warn('[TERRAFORM-SAFE] Excluded services that are not terraform-supported:',
+            excludedServices.map(e => e.service).join(', '));
         excludedServices.forEach(ex => {
             console.warn(`[TERRAFORM-SAFE] Service excluded: ${ex.service} - ${ex.reason}`);
         });
     }
-    
+
     return terraformSupportedServices;
 }
 
@@ -306,46 +345,46 @@ function filterTerraformSafeServices(services) {
  */
 function validateAndFixCanonicalArchitecture(canonicalArchitecture, intent = {}) {
     console.log('[VALIDATOR] Starting validation...');
-    
+
     // Step 0: Normalize service names (handles messaging_queue → message_queue, etc.)
     canonicalArchitecture.services = normalizeServiceNames(canonicalArchitecture.services);
     console.log('[VALIDATOR] Service names normalized');
-    
+
     // Step 1: Deduplicate services
     const originalCount = canonicalArchitecture.services.length;
     canonicalArchitecture.services = deduplicateServices(canonicalArchitecture.services);
     if (canonicalArchitecture.services.length < originalCount) {
         console.warn(`[VALIDATOR] Deduped ${originalCount - canonicalArchitecture.services.length} duplicate services`);
     }
-    
+
     // Step 2: Add conditional services
     canonicalArchitecture.services = addConditionalServices(
         canonicalArchitecture.services,
         canonicalArchitecture.pattern,
         intent
     );
-    
+
     // Step 3: Apply Terraform-Safe Mode - filter to only terraform-supported services
     const originalServiceCount = canonicalArchitecture.services.length;
     canonicalArchitecture.services = filterTerraformSafeServices(canonicalArchitecture.services);
     const filteredServiceCount = canonicalArchitecture.services.length;
-    
+
     if (filteredServiceCount < originalServiceCount) {
         console.warn(`[TERRAFORM-SAFE] Filtered services from ${originalServiceCount} to ${filteredServiceCount} (terraform-safe mode)`);
     }
-    
+
     // Step 4: Validate
     const validation = validateCanonicalArchitecture(canonicalArchitecture, intent);
-    
+
     if (!validation.valid) {
         console.error('[VALIDATOR] Validation failed:', validation.errors);
         throw new Error(`Canonical architecture validation failed:\n${validation.errors.join('\n')}`);
     }
-    
+
     if (validation.warnings.length > 0) {
         console.warn('[VALIDATOR] Warnings:', validation.warnings);
     }
-    
+
     console.log('[VALIDATOR] ✓ Validation passed');
     return {
         canonicalArchitecture,

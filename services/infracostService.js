@@ -32,7 +32,6 @@ const cloudMapping = require('./cloudMapping');
 const sizingModel = require('./sizingModel');
 const costResultModel = require('./costResultModel');
 const usageNormalizer = require('./usageNormalizer');
-const { CANONICAL_SERVICES } = require('./canonicalServiceRegistry');
 
 // Base temp directory for Terraform files
 const INFRACOST_BASE_DIR = path.join(os.tmpdir(), 'infracost');
@@ -58,36 +57,36 @@ const COST_MODES = {
 function classifyWorkload(intent, infraSpec) {
   const description = intent?.intent_classification?.project_description?.toLowerCase() || '';
   const services = infraSpec?.service_classes?.required_services || [];
-  
+
   // Check for AI/ML related keywords
-  if (description.includes('ai') || 
-      description.includes('ml') || 
-      description.includes('llm') || 
-      description.includes('token') || 
-      description.includes('openai') ||
-      description.includes('chatgpt') ||
-      description.includes('inference') ||
-      description.includes('generation')) {
+  if (description.includes('ai') ||
+    description.includes('ml') ||
+    description.includes('llm') ||
+    description.includes('token') ||
+    description.includes('openai') ||
+    description.includes('chatgpt') ||
+    description.includes('inference') ||
+    description.includes('generation')) {
     return COST_MODES.AI_CONSUMPTION_COST;
   }
-  
+
   // Check for storage policy related keywords
-  if (description.includes('backup') || 
-      description.includes('archive') || 
-      description.includes('cold') || 
-      description.includes('vault') || 
-      description.includes('dr') ||
-      description.includes('disaster') ||
-      description.includes('retention')) {
+  if (description.includes('backup') ||
+    description.includes('archive') ||
+    description.includes('cold') ||
+    description.includes('vault') ||
+    description.includes('dr') ||
+    description.includes('disaster') ||
+    description.includes('retention')) {
     return COST_MODES.STORAGE_POLICY_COST;
   }
-  
+
   // Check for infrastructure services
-  const hasInfraServices = services.some(svc => 
-    ['compute_container', 'compute_serverless', 'compute_vm', 'relational_database', 
-     'nosql_database', 'cache', 'object_storage', 'load_balancer', 'api_gateway'].includes(svc.service_class)
+  const hasInfraServices = services.some(svc =>
+    ['compute_container', 'compute_serverless', 'compute_vm', 'relational_database',
+      'nosql_database', 'cache', 'object_storage', 'load_balancer', 'api_gateway'].includes(svc.service_class)
   );
-  
+
   if (hasInfraServices) {
     // If both AI and infra services, it's hybrid
     if (description.includes('ai') || description.includes('ml')) {
@@ -95,18 +94,18 @@ function classifyWorkload(intent, infraSpec) {
     }
     return COST_MODES.INFRASTRUCTURE_COST;
   }
-  
+
   // Check for operational/failure analysis keywords
   if (description.includes('fail') ||
-      description.includes('outage') ||
-      description.includes('downtime') ||
-      description.includes('operational') ||
-      description.includes('impact') ||
-      description.includes('blast radius') ||
-      description.includes('mitigation')) {
+    description.includes('outage') ||
+    description.includes('downtime') ||
+    description.includes('operational') ||
+    description.includes('impact') ||
+    description.includes('blast radius') ||
+    description.includes('mitigation')) {
     return COST_MODES.HYBRID_COST; // Operational analysis often combines infrastructure and policy costs
   }
-  
+
   // Default to hybrid if uncertain
   return COST_MODES.HYBRID_COST;
 }
@@ -114,28 +113,28 @@ function classifyWorkload(intent, infraSpec) {
 /**
  * Calculate costs for different cost modes
  */
-function calculateCostForMode(costMode, infraSpec, intent, costProfile, usageProfile) {
+async function calculateCostForMode(costMode, infraSpec, intent, costProfile, usageProfile) {
   try {
     switch (costMode) {
       case COST_MODES.INFRASTRUCTURE_COST:
-        return calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile);
-      
+        return await calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile);
+
       case COST_MODES.STORAGE_POLICY_COST:
         return calculateStoragePolicyCost(infraSpec, intent, costProfile, usageProfile);
-      
+
       case COST_MODES.AI_CONSUMPTION_COST:
         return calculateAIConsumptionCost(infraSpec, intent, costProfile, usageProfile);
-      
+
       case COST_MODES.HYBRID_COST:
         return calculateHybridCost(infraSpec, intent, costProfile, usageProfile);
-      
+
       default:
         // Default to infrastructure cost if mode is unknown
-        return calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile);
+        return await calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile);
     }
   } catch (error) {
     console.error(`[COST MODE ERROR] Error in cost mode ${costMode}:`, error);
-    
+
     // Fallback: Return a safe response that guarantees all required fields
     return {
       cost_mode: costMode,
@@ -256,26 +255,26 @@ function calculateCostForMode(costMode, infraSpec, intent, costProfile, usagePro
 /**
  * Calculate infrastructure cost using existing logic
  */
-function calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile) {
+async function calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile) {
   const description = intent?.intent_classification?.project_description?.toLowerCase() || '';
-  
+
   // Check if this is operational failure analysis
   if (description.includes('fail') ||
-      description.includes('outage') ||
-      description.includes('downtime') ||
-      description.includes('operational') ||
-      description.includes('impact') ||
-      description.includes('blast radius') ||
-      description.includes('mitigation')) {
+    description.includes('outage') ||
+    description.includes('downtime') ||
+    description.includes('operational') ||
+    description.includes('impact') ||
+    description.includes('blast radius') ||
+    description.includes('mitigation')) {
     // This is operational analysis, not infrastructure cost
     // Return a minimal response that indicates this is operational analysis
     const results = {};
     const providers = ['AWS', 'GCP', 'AZURE'];
-    
+
     for (const provider of providers) {
       // For operational analysis, we return a minimal cost as it's not really about infrastructure costs
       const totalCost = 0; // Operational costs are not infrastructure costs
-      
+
       results[provider] = {
         provider: provider,
         total_monthly_cost: totalCost,
@@ -295,7 +294,7 @@ function calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfil
         confidence: 0.95
       };
     }
-    
+
     // Sort by provider name since costs are all 0
     const rankings = providers
       .map((p, idx) => ({
@@ -307,9 +306,9 @@ function calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfil
         formatted_cost: results[p].formatted_cost,
         cost_range: results[p].cost_range
       }));
-    
+
     const recommendedProvider = rankings[0].provider;
-    
+
     return {
       cost_mode: COST_MODES.INFRASTRUCTURE_COST,
       pricing_method_used: 'operational_analysis',
@@ -349,32 +348,100 @@ function calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfil
       assumptions: ['Operational failure analysis requested', 'Focus on impact assessment rather than direct costs', 'Business continuity considerations']
     };
   }
-  
+
   // This is the existing logic that was in performCostAnalysis
   const pattern = infraSpec.service_classes?.pattern;
-  
-  // Use the cost engines as before
-  const costEngines = require('./costEngines');
-  const engine = costEngines.getEngine(pattern);
-  
-  if (engine) {
+
+  // 🔥 CRITICAL FIX: Use generateCostEstimate which calls Infracost, not costEngines
+  try {
     // Build usage profile from intent + overrides
     const usage = buildUsageProfile(infraSpec, intent, usageProfile);
-    
-    // Use deployableServicesOverride if provided, otherwise extract from infraSpec
-    const services = (infraSpec.service_classes?.required_services?.map(s => s.service_class) || []);
-    
-    // Call engine with the usage profile
-    const engineResult = engine.calculate(usage, {
-      costProfile,
-      hasDatabase: services.some(s => ['relational_database', 'nosql_database'].includes(s))
-    });
-    
-    return engineResult;
+
+    // Get deployable services from infraSpec
+    const deployableServices = infraSpec.canonical_architecture?.deployable_services ||
+      infraSpec.service_classes?.required_services?.map(s => s.service_class) || [];
+
+    console.log(`[INFRA COST] Calling generateCostEstimate for ${deployableServices.length} services`);
+
+    // Call generateCostEstimate for each provider - THIS calls Infracost CLI!
+    const results = {};
+    const providers = ['AWS', 'GCP', 'AZURE'];
+
+    for (const provider of providers) {
+      try {
+        const providerResult = await generateCostEstimate(
+          provider,
+          infraSpec,
+          deployableServices,
+          usage,
+          costProfile
+        );
+        results[provider] = providerResult;
+        console.log(`[INFRA COST] ${provider}: $${providerResult?.total_monthly_cost?.toFixed(2) || 'N/A'}`);
+      } catch (providerError) {
+        console.error(`[INFRA COST] Error for ${provider}:`, providerError.message);
+        // Use fallback for this provider
+        results[provider] = {
+          provider: provider,
+          total_monthly_cost: 100,
+          formatted_cost: '$100.00/month',
+          is_mock: true,
+          estimate_type: 'heuristic',
+          estimate_source: 'fallback'
+        };
+      }
+    }
+
+    // Sort by cost and format response
+    const sortedProviders = providers
+      .sort((a, b) => (results[a]?.total_monthly_cost || 999) - (results[b]?.total_monthly_cost || 999));
+
+    const rankings = sortedProviders
+      .map((p, idx) => {
+        const cost = results[p]?.total_monthly_cost ?? 0;
+        // 🔥 FIX: Show EXACT Infracost price, not a calculated range
+        const dynamicCostRange = {
+          min: cost,
+          max: cost,
+          formatted: `$${cost.toFixed(2)}/month`  // Show exact price
+        };
+
+        return {
+          provider: p,
+          monthly_cost: cost,
+          formatted_cost: results[p]?.formatted_cost || `$${cost.toFixed(2)}/month`,
+          rank: idx + 1,
+          recommended: idx === 0,
+          score: Math.round(Math.max(50, 100 - cost / 10)),
+          cost_range: results[p]?.cost_range || dynamicCostRange
+        };
+      });
+
+    const recommendedProvider = rankings[0].provider;
+
+    return {
+      cost_mode: COST_MODES.INFRASTRUCTURE_COST,
+      pricing_method_used: results[recommendedProvider]?.estimate_source || 'infracost',
+      cost_profile: costProfile,
+      deployment_type: 'infrastructure',
+      scale_tier: infraSpec.sizing?.tier || 'MEDIUM',
+      rankings: rankings,
+      provider_details: results,
+      recommended_provider: recommendedProvider,
+      recommended: results[recommendedProvider],
+      confidence: results[recommendedProvider]?.confidence || 0.85,
+      confidence_percentage: Math.round((results[recommendedProvider]?.confidence || 0.85) * 100),
+      summary: {
+        cheapest: rankings[0].provider,
+        most_performant: 'GCP',
+        best_value: rankings[0].provider
+      }
+    };
+  } catch (error) {
+    console.error(`[INFRA COST] Error:`, error.message);
+    // Fallback to legacy path
+    return calculateLegacyCost(infraSpec, intent, costProfile, usageProfile);
   }
-  
-  // Fallback to legacy path
-  return calculateLegacyCost(infraSpec, intent, costProfile, usageProfile);
 }
 
 /**
@@ -382,24 +449,24 @@ function calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfil
  */
 function calculateStoragePolicyCost(infraSpec, intent, costProfile, usageProfile) {
   const description = intent?.intent_classification?.project_description?.toLowerCase() || '';
-  
+
   // Check if this is operational failure analysis
   if (description.includes('fail') ||
-      description.includes('outage') ||
-      description.includes('downtime') ||
-      description.includes('operational') ||
-      description.includes('impact') ||
-      description.includes('blast radius') ||
-      description.includes('mitigation')) {
+    description.includes('outage') ||
+    description.includes('downtime') ||
+    description.includes('operational') ||
+    description.includes('impact') ||
+    description.includes('blast radius') ||
+    description.includes('mitigation')) {
     // This is operational analysis, not storage policy
     // Return a minimal response that indicates this is operational analysis
     const results = {};
     const providers = ['AWS', 'GCP', 'AZURE'];
-    
+
     for (const provider of providers) {
       // For operational analysis, we return a minimal cost as it's not really about infrastructure costs
       const totalCost = 0; // Operational costs are not infrastructure costs
-      
+
       results[provider] = {
         provider: provider,
         total_monthly_cost: totalCost,
@@ -419,7 +486,7 @@ function calculateStoragePolicyCost(infraSpec, intent, costProfile, usageProfile
         confidence: 0.9
       };
     }
-    
+
     // Sort by provider name since costs are all 0
     const rankings = providers
       .map((p, idx) => ({
@@ -431,9 +498,9 @@ function calculateStoragePolicyCost(infraSpec, intent, costProfile, usageProfile
         formatted_cost: results[p].formatted_cost,
         cost_range: results[p].cost_range
       }));
-    
+
     const recommendedProvider = rankings[0].provider;
-    
+
     return {
       cost_mode: COST_MODES.STORAGE_POLICY_COST,
       pricing_method_used: 'operational_analysis',
@@ -473,9 +540,9 @@ function calculateStoragePolicyCost(infraSpec, intent, costProfile, usageProfile
       assumptions: ['Operational failure analysis requested', 'Focus on impact assessment rather than direct costs', 'Business continuity considerations']
     };
   }
-  
+
   const storageGb = usageProfile?.storage_gb?.expected || 1000; // Default to 1TB
-  
+
   // Pricing per provider for storage policy
   const pricing = {
     AWS: {
@@ -503,18 +570,18 @@ function calculateStoragePolicyCost(infraSpec, intent, costProfile, usageProfile
       retrieval_archive: 0.05
     }
   };
-  
+
   const results = {};
   const providers = ['AWS', 'GCP', 'AZURE'];
-  
+
   for (const provider of providers) {
     const p = pricing[provider];
-    
+
     // Calculate costs for different storage classes
     const standardCost = storageGb * p.standard;
     const coldCost = storageGb * p.coldline || p.glacier;
     const archiveCost = storageGb * p.archive || p.deep_archive;
-    
+
     results[provider] = {
       provider: provider,
       total_monthly_cost: standardCost, // Standard storage by default
@@ -527,9 +594,9 @@ function calculateStoragePolicyCost(infraSpec, intent, costProfile, usageProfile
       },
       service_count: 1,
       services: [
-        { 
-          service_class: 'object_storage', 
-          display_name: 'Storage Policy', 
+        {
+          service_class: 'object_storage',
+          display_name: 'Storage Policy',
           cost: { monthly: standardCost },
           sizing: 'Standard'
         }
@@ -541,7 +608,7 @@ function calculateStoragePolicyCost(infraSpec, intent, costProfile, usageProfile
       confidence: 0.85
     };
   }
-  
+
   // Sort by cost to find cheapest
   const rankings = providers
     .map(p => ({
@@ -559,9 +626,9 @@ function calculateStoragePolicyCost(infraSpec, intent, costProfile, usageProfile
       formatted_cost: results[r.provider].formatted_cost,
       cost_range: results[r.provider].cost_range
     }));
-  
+
   const recommendedProvider = rankings[0].provider;
-  
+
   return {
     cost_mode: COST_MODES.STORAGE_POLICY_COST,
     pricing_method_used: 'catalog_pricing',
@@ -607,24 +674,24 @@ function calculateStoragePolicyCost(infraSpec, intent, costProfile, usageProfile
  */
 function calculateAIConsumptionCost(infraSpec, intent, costProfile, usageProfile) {
   const description = intent?.intent_classification?.project_description?.toLowerCase() || '';
-  
+
   // Check if this is operational failure analysis
   if (description.includes('fail') ||
-      description.includes('outage') ||
-      description.includes('downtime') ||
-      description.includes('operational') ||
-      description.includes('impact') ||
-      description.includes('blast radius') ||
-      description.includes('mitigation')) {
+    description.includes('outage') ||
+    description.includes('downtime') ||
+    description.includes('operational') ||
+    description.includes('impact') ||
+    description.includes('blast radius') ||
+    description.includes('mitigation')) {
     // This is operational analysis, not AI consumption
     // Return a minimal response that indicates this is operational analysis
     const results = {};
     const providers = ['AWS', 'GCP', 'AZURE'];
-    
+
     for (const provider of providers) {
       // For operational analysis, we return a minimal cost as it's not really about infrastructure costs
       const totalCost = 0; // Operational costs are not infrastructure costs
-      
+
       results[provider] = {
         provider: provider,
         total_monthly_cost: totalCost,
@@ -644,7 +711,7 @@ function calculateAIConsumptionCost(infraSpec, intent, costProfile, usageProfile
         confidence: 0.9
       };
     }
-    
+
     // Sort by provider name since costs are all 0
     const rankings = providers
       .map((p, idx) => ({
@@ -656,9 +723,9 @@ function calculateAIConsumptionCost(infraSpec, intent, costProfile, usageProfile
         formatted_cost: results[p].formatted_cost,
         cost_range: results[p].cost_range
       }));
-    
+
     const recommendedProvider = rankings[0].provider;
-    
+
     return {
       cost_mode: COST_MODES.AI_CONSUMPTION_COST,
       pricing_method_used: 'operational_analysis',
@@ -698,11 +765,11 @@ function calculateAIConsumptionCost(infraSpec, intent, costProfile, usageProfile
       assumptions: ['Operational failure analysis requested', 'Focus on impact assessment rather than direct costs', 'Business continuity considerations']
     };
   }
-  
+
   // Regular AI consumption cost calculation
   const tokensPerMonth = usageProfile?.tokens_per_month?.expected || 1000000; // Default to 1M tokens
   const tokensPerRequest = usageProfile?.tokens_per_request?.expected || 1000;
-  
+
   // Pricing per provider for AI services
   const pricing = {
     AWS: {
@@ -715,26 +782,26 @@ function calculateAIConsumptionCost(infraSpec, intent, costProfile, usageProfile
     },
     AZURE: {
       openai_gpt4: { input: 0.03, output: 0.06 }, // per 1K tokens
-      openai_gpt35: { input: 0.0015, output: 0.002 } 
+      openai_gpt35: { input: 0.0015, output: 0.002 }
     }
   };
-  
+
   const results = {};
   const providers = ['AWS', 'GCP', 'AZURE'];
-  
+
   for (const provider of providers) {
     const p = pricing[provider];
-    
+
     // Calculate costs for different AI models
     // Assume 70% input tokens, 30% output tokens
     const inputTokens = tokensPerMonth * 0.7;
     const outputTokens = tokensPerMonth * 0.3;
-    
+
     const inputCost = (inputTokens / 1000) * p.bedrock_claude?.input || p.palm2?.input || p.openai_gpt35?.input || 0.001;
     const outputCost = (outputTokens / 1000) * p.bedrock_claude?.output || p.palm2?.output || p.openai_gpt35?.output || 0.002;
-    
+
     const totalCost = inputCost + outputCost;
-    
+
     results[provider] = {
       provider: provider,
       total_monthly_cost: totalCost,
@@ -747,9 +814,9 @@ function calculateAIConsumptionCost(infraSpec, intent, costProfile, usageProfile
       },
       service_count: 1,
       services: [
-        { 
-          service_class: 'ai_inference_service', 
-          display_name: 'AI Inference', 
+        {
+          service_class: 'ai_inference_service',
+          display_name: 'AI Inference',
           cost: { monthly: totalCost },
           sizing: 'Standard'
         }
@@ -761,7 +828,7 @@ function calculateAIConsumptionCost(infraSpec, intent, costProfile, usageProfile
       confidence: 0.75
     };
   }
-  
+
   // Sort by cost to find cheapest
   const rankings = providers
     .map(p => ({
@@ -779,9 +846,9 @@ function calculateAIConsumptionCost(infraSpec, intent, costProfile, usageProfile
       formatted_cost: results[r.provider].formatted_cost,
       cost_range: results[r.provider].cost_range
     }));
-  
+
   const recommendedProvider = rankings[0].provider;
-  
+
   return {
     cost_mode: COST_MODES.AI_CONSUMPTION_COST,
     pricing_method_used: 'token_based_pricing',
@@ -827,23 +894,23 @@ function calculateAIConsumptionCost(infraSpec, intent, costProfile, usageProfile
  */
 function calculateHybridCost(infraSpec, intent, costProfile, usageProfile) {
   const description = intent?.intent_classification?.project_description?.toLowerCase() || '';
-  
+
   // Check if this is operational failure analysis
   if (description.includes('fail') ||
-      description.includes('outage') ||
-      description.includes('downtime') ||
-      description.includes('operational') ||
-      description.includes('impact') ||
-      description.includes('blast radius') ||
-      description.includes('mitigation')) {
+    description.includes('outage') ||
+    description.includes('downtime') ||
+    description.includes('operational') ||
+    description.includes('impact') ||
+    description.includes('blast radius') ||
+    description.includes('mitigation')) {
     // This is operational analysis, return a specialized response
     const results = {};
     const providers = ['AWS', 'GCP', 'AZURE'];
-    
+
     for (const provider of providers) {
       // For operational analysis, we return a minimal cost as it's not really about infrastructure costs
       const totalCost = 0; // Operational costs are not infrastructure costs
-      
+
       results[provider] = {
         provider: provider,
         total_monthly_cost: totalCost,
@@ -859,7 +926,7 @@ function calculateHybridCost(infraSpec, intent, costProfile, usageProfile) {
         confidence: 0.95
       };
     }
-    
+
     // Sort by provider name since costs are all 0
     const rankings = providers
       .map((p, idx) => ({
@@ -871,9 +938,9 @@ function calculateHybridCost(infraSpec, intent, costProfile, usageProfile) {
         formatted_cost: results[p].formatted_cost,
         cost_range: results[p].cost_range
       }));
-    
+
     const recommendedProvider = rankings[0].provider;
-    
+
     return {
       cost_mode: COST_MODES.HYBRID_COST,
       pricing_method_used: 'operational_analysis',
@@ -912,34 +979,34 @@ function calculateHybridCost(infraSpec, intent, costProfile, usageProfile) {
       assumptions: ['Operational failure analysis requested', 'Focus on impact assessment rather than direct costs', 'Business continuity considerations']
     };
   }
-  
+
   // Calculate infrastructure cost
   const infraResult = calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile);
-  
+
   // Determine if we also need AI or storage costs
-  
+
   let aiResult = null;
   let storageResult = null;
-  
+
   if (description.includes('ai') || description.includes('ml')) {
     aiResult = calculateAIConsumptionCost(infraSpec, intent, costProfile, usageProfile);
   }
-  
+
   if (description.includes('backup') || description.includes('archive') || description.includes('vault')) {
     storageResult = calculateStoragePolicyCost(infraSpec, intent, costProfile, usageProfile);
   }
-  
+
   // Combine results
   const combinedResults = {};
   const providers = ['AWS', 'GCP', 'AZURE'];
-  
+
   for (const provider of providers) {
     let infraCost = infraResult.provider_details?.[provider]?.total_monthly_cost || 0;
     let aiCost = aiResult?.provider_details?.[provider]?.total_monthly_cost || 0;
     let storageCost = storageResult?.provider_details?.[provider]?.total_monthly_cost || 0;
-    
+
     const totalCost = infraCost + aiCost + storageCost;
-    
+
     combinedResults[provider] = {
       provider: provider,
       total_monthly_cost: totalCost,
@@ -950,14 +1017,14 @@ function calculateHybridCost(infraSpec, intent, costProfile, usageProfile) {
         high: totalCost * 1.8,
         formatted: `$${(totalCost * 0.7).toFixed(2)} - $${(totalCost * 1.8).toFixed(2)}/mo`
       },
-      service_count: (infraResult.provider_details?.[provider]?.service_count || 0) + 
-                    (aiResult?.provider_details?.[provider]?.service_count || 0) + 
-                    (storageResult?.provider_details?.[provider]?.service_count || 0),
+      service_count: (infraResult.provider_details?.[provider]?.service_count || 0) +
+        (aiResult?.provider_details?.[provider]?.service_count || 0) +
+        (storageResult?.provider_details?.[provider]?.service_count || 0),
       is_mock: true,
       confidence: Math.min(0.9, (infraResult.confidence || 0.8) * 0.8) // Lower confidence for hybrid
     };
   }
-  
+
   // Sort by cost to find cheapest
   const rankings = providers
     .map(p => ({
@@ -975,9 +1042,9 @@ function calculateHybridCost(infraSpec, intent, costProfile, usageProfile) {
       formatted_cost: combinedResults[r.provider].formatted_cost,
       cost_range: combinedResults[r.provider].cost_range
     }));
-  
+
   const recommendedProvider = rankings[0].provider;
-  
+
   return {
     cost_mode: COST_MODES.HYBRID_COST,
     pricing_method_used: 'combined_infra_and_consumption',
@@ -1022,20 +1089,20 @@ function calculateHybridCost(infraSpec, intent, costProfile, usageProfile) {
  */
 function calculateLegacyCost(infraSpec, intent, costProfile, usageProfile) {
   const description = intent?.intent_classification?.project_description?.toLowerCase() || '';
-  
+
   // Check if this is operational failure analysis
   if (description.includes('fail') ||
-      description.includes('outage') ||
-      description.includes('downtime') ||
-      description.includes('operational') ||
-      description.includes('impact') ||
-      description.includes('blast radius') ||
-      description.includes('mitigation')) {
+    description.includes('outage') ||
+    description.includes('downtime') ||
+    description.includes('operational') ||
+    description.includes('impact') ||
+    description.includes('blast radius') ||
+    description.includes('mitigation')) {
     // This is operational analysis, not infrastructure cost
     // Return a minimal response that indicates this is operational analysis
     const providers = ['AWS', 'GCP', 'AZURE'];
     const estimates = {};
-    
+
     for (const provider of providers) {
       estimates[provider] = {
         provider,
@@ -1046,7 +1113,7 @@ function calculateLegacyCost(infraSpec, intent, costProfile, usageProfile) {
         confidence: 0.95
       };
     }
-    
+
     return {
       cost_profile: costProfile,
       deployment_type: 'operational_analysis',
@@ -1076,11 +1143,11 @@ function calculateLegacyCost(infraSpec, intent, costProfile, usageProfile) {
       }
     };
   }
-  
+
   // This preserves the original logic from the performCostAnalysis function
   const providers = ['AWS', 'GCP', 'AZURE'];
   const estimates = {};
-  
+
   for (const provider of providers) {
     estimates[provider] = {
       provider,
@@ -1091,7 +1158,7 @@ function calculateLegacyCost(infraSpec, intent, costProfile, usageProfile) {
       confidence: 0.5
     };
   }
-  
+
   return {
     cost_profile: costProfile,
     deployment_type: 'legacy',
@@ -1225,7 +1292,7 @@ function extractDeployableServices(infraSpec) {
   if (infraSpec.canonical_architecture?.deployable_services) {
     const deployableServices = infraSpec.canonical_architecture.deployable_services;
     console.log(`[DEPLOYABLE FILTER] Using pre-computed deployable_services: ${deployableServices.length} services`);
-    
+
     // Handle the case where deployable_services might still be objects
     const normalizedServices = deployableServices.map(svc => {
       if (typeof svc === 'string') return svc;
@@ -1235,7 +1302,7 @@ function extractDeployableServices(infraSpec) {
       }
       return null;
     }).filter(Boolean);
-    
+
     console.log(`[DEPLOYABLE FILTER] Normalized to ${normalizedServices.length} string service names`);
     return normalizedServices;
   }
@@ -1246,16 +1313,18 @@ function extractDeployableServices(infraSpec) {
 
   const deployableServices = allServices
     .filter(svc => {
-      const serviceDef = CANONICAL_SERVICES[svc.name];
-      
-      if (!serviceDef) {
-        console.warn(`[DEPLOYABLE FILTER] Unknown service: ${svc.name}`);
-        return false;
-      }
+      // Define supported services directly to avoid initialization issues
+      const SUPPORTED_SERVICES = [
+        'global_load_balancer', 'cdn', 'api_gateway', 'relational_database', 'identity_auth',
+        'logging', 'monitoring', 'websocket_gateway', 'message_queue', 'app_compute',
+        'object_storage', 'secrets_manager', 'audit_logging', 'event_bus',
+        'compute_serverless', 'serverless_compute', 'cache', 'load_balancer', 'compute_container', 'compute_vm',
+        'nosql_database', 'block_storage', 'search_engine', 'networking', 'dns',
+        'secrets_management', 'messaging_queue'
+      ];
 
-      // Must be terraform-supported
-      if (serviceDef.terraform_supported !== true) {
-        console.log(`[DEPLOYABLE FILTER] ❌ EXCLUDED (logical): ${svc.name}`);
+      if (!SUPPORTED_SERVICES.includes(svc.name)) {
+        console.warn(`[DEPLOYABLE FILTER] Unknown or unsupported service: ${svc.name}`);
         return false;
       }
 
@@ -1271,7 +1340,7 @@ function extractDeployableServices(infraSpec) {
     .map(svc => svc.name);
 
   console.log(`[DEPLOYABLE FILTER] Result: ${deployableServices.length}/${allServices.length} services are deployable`);
-  
+
   return deployableServices;
 }
 
@@ -1284,21 +1353,33 @@ function extractDeployableServices(infraSpec) {
 function validatePricingIntegrity(pricedServices, deployableServices) {
   console.log('[PRICING FIREWALL] Validating cost integrity...');
 
+  // 🔥 SERVICE ALIAS MAPPING: Infracost returns different service class names
+  // than our canonical deployable services. Map them here.
+  const SERVICE_ALIASES = {
+    'load_balancer': 'global_load_balancer',  // aws_alb maps to load_balancer, but we use global_load_balancer
+    'compute_container': 'app_compute',       // aws_ecs_fargate maps to compute_container, but we use app_compute
+    'serverless_compute': 'compute_serverless', // alias
+    'compute_serverless': 'serverless_compute', // reverse alias
+  };
+
   // 🔥 FIX 2: DEFENSIVE COST ENGINE - Handle undefined values safely
   for (const svc of pricedServices) {
     if (!svc) {
       console.warn('[PRICING FIREWALL] Skipping undefined service in priced services');
       continue;
     }
-    
-    const serviceClass = svc.service_class || svc.name;
-    
-    if (!serviceClass) {
+
+    const rawServiceClass = svc.service_class || svc.name;
+
+    if (!rawServiceClass) {
       console.warn('[PRICING FIREWALL] Skipping service with no class/name in priced services');
       continue;
     }
-    
-    if (!deployableServices.includes(serviceClass)) {
+
+    // 🔥 APPLY ALIAS MAPPING: Check if this service class has an alias
+    const serviceClass = SERVICE_ALIASES[rawServiceClass] || rawServiceClass;
+
+    if (!deployableServices.includes(serviceClass) && !deployableServices.includes(rawServiceClass)) {
       throw new Error(
         `🚨 PRICING INTEGRITY VIOLATION: Service "${serviceClass}" was priced but is NOT in deployable_services. ` +
         `This service either: (1) has terraform_supported=false, (2) was excluded by user, or (3) leaked through a bug.`
@@ -1530,8 +1611,162 @@ resource "aws_secretsmanager_secret" "secret" {
 `;
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  // HIGH-AVAILABILITY / MULTI-REGION SERVICES
+  // ═══════════════════════════════════════════════════════════════════
+
+  // Global Load Balancer (reuse ALB)
+  if (services.find(s => s.service_class === 'global_load_balancer')) {
+    terraform += `
+resource "aws_lb" "global_alb" {
+  name               = "global-alb"
+  load_balancer_type = "application"
+}
+`;
+  }
+
+  // Multi-Region DB (RDS with read replicas)
+  if (services.find(s => s.service_class === 'multi_region_db')) {
+    terraform += `
+resource "aws_db_instance" "multi_region" {
+  engine               = "postgres"
+  instance_class       = "db.r6g.large"
+  allocated_storage    = 100
+  skip_final_snapshot  = true
+  multi_az             = true
+}
+`;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // GAMING / REALTIME SERVICES
+  // ═══════════════════════════════════════════════════════════════════
+
+  // WebSocket Gateway (API Gateway v2 WebSocket)
+  if (services.find(s => s.service_class === 'websocket_gateway')) {
+    terraform += `
+resource "aws_apigatewayv2_api" "websocket" {
+  name          = "websocket-api"
+  protocol_type = "WEBSOCKET"
+  route_selection_expression = "$request.body.action"
+}
+`;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // COMPLIANCE / FINTECH SERVICES
+  // ═══════════════════════════════════════════════════════════════════
+
+  // Secrets Manager (fintech/compliance)
+  if (services.find(s => s.service_class === 'secrets_manager')) {
+    terraform += `
+resource "aws_secretsmanager_secret" "vault" {
+  name = "app-vault"
+}
+`;
+  }
+
+  // Audit Logging (compliance)
+  if (services.find(s => s.service_class === 'audit_logging')) {
+    terraform += `
+resource "aws_cloudwatch_log_group" "audit" {
+  name              = "/audit/app"
+  retention_in_days = 365
+}
+`;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // IOT SERVICES
+  // ═══════════════════════════════════════════════════════════════════
+
+  // IoT Core
+  if (services.find(s => s.service_class === 'iot_core')) {
+    terraform += `
+resource "aws_iot_topic_rule" "telemetry" {
+  name        = "device_telemetry"
+  description = "IoT telemetry ingestion"
+  sql         = "SELECT * FROM 'devices/+/telemetry'"
+  sql_version = "2016-03-23"
+  enabled     = true
+}
+`;
+  }
+
+  // Time Series DB (Timestream)
+  if (services.find(s => s.service_class === 'time_series_db')) {
+    terraform += `
+resource "aws_timestreamwrite_database" "tsdb" {
+  database_name = "app-timeseries"
+}
+`;
+  }
+
+  // Event Streaming (Kinesis)
+  if (services.find(s => s.service_class === 'event_streaming')) {
+    terraform += `
+resource "aws_kinesis_stream" "events" {
+  name             = "app-events"
+  shard_count      = 2
+  retention_period = 168
+}
+`;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // ML / AI SERVICES
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ML Inference GPU (SageMaker)
+  if (services.find(s => s.service_class === 'ml_inference_gpu' || s.service_class === 'ml_inference_service')) {
+    terraform += `
+resource "aws_sagemaker_endpoint" "inference" {
+  name = "ml-inference-endpoint"
+}
+`;
+  }
+
+  // Vector Database (OpenSearch)
+  if (services.find(s => s.service_class === 'vector_database')) {
+    terraform += `
+resource "aws_opensearch_domain" "vectors" {
+  domain_name    = "app-vectors"
+  engine_version = "OpenSearch_2.5"
+  
+  cluster_config {
+    instance_type = "r6g.large.search"
+  }
+}
+`;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // DATA / STORAGE SERVICES
+  // ═══════════════════════════════════════════════════════════════════
+
+  // Data Lake (S3)
+  if (services.find(s => s.service_class === 'data_lake')) {
+    terraform += `
+resource "aws_s3_bucket" "data_lake" {
+  bucket = "app-data-lake"
+}
+`;
+  }
+
+  // App Compute (ECS Fargate)
+  if (services.find(s => s.service_class === 'app_compute')) {
+    terraform += `
+resource "aws_ecs_service" "app" {
+  name            = "app-service"
+  desired_count   = 2
+  launch_type     = "FARGATE"
+}
+`;
+  }
+
   return terraform;
 }
+
 
 /**
  * Generate GCP Terraform code from InfraSpec
@@ -1829,7 +2064,7 @@ resource "azurerm_application_gateway" "lb" {
  * Generate Infracost usage file (YAML) from profile
  * Maps abstract usage (users, storage) to concrete resource usage keys
  */
-function generateUsageFile(usageProfile) {
+function generateUsageFile(usageProfile, deployableServices) {
   if (!usageProfile) return null;
 
   // Calculate derived metrics
@@ -1839,49 +2074,205 @@ function generateUsageFile(usageProfile) {
 
   // Initial YAML structure
   let yaml = `version: 0.1
-usage:
+resource_type_default_usage:
 `;
 
-  // AWS Mappings
-  yaml += `  aws_lambda_function.app:
+  // Only include usage data for services that are actually in deployableServices
+  if (deployableServices && deployableServices.includes('compute_serverless')) {
+    yaml += `  aws_lambda_function:
     monthly_requests: ${monthlyRequests}
     request_duration_ms: 250
-  aws_apigatewayv2_api.api:
+`;
+  }
+
+  if (deployableServices && deployableServices.includes('api_gateway')) {
+    yaml += `  aws_apigatewayv2_api:
     monthly_requests: ${monthlyRequests}
-  aws_s3_bucket.storage:
+`;
+  }
+
+  if (deployableServices && deployableServices.includes('object_storage')) {
+    yaml += `  aws_s3_bucket:
     storage_gb: ${storageGB}
-    monthly_data_transfer_gb: {
-      "outbound_internet": ${dataTransferGB}
-    }
-  aws_db_instance.db:
+    monthly_data_transfer_gb: ${dataTransferGB}
+`;
+  }
+
+  if (deployableServices && deployableServices.includes('relational_database')) {
+    yaml += `  aws_db_instance:
     storage_gb: ${storageGB}
-  aws_lb.alb:
+    monthly_requests: ${monthlyRequests}
+`;
+  }
+
+  if (deployableServices && deployableServices.includes('load_balancer')) {
+    yaml += `  aws_lb:
     new_connections: ${monthlyRequests}
     active_connections: ${Math.round(monthlyRequests / 30 / 24 / 60)}
     processed_bytes: ${dataTransferGB * 1024 * 1024 * 1024}
 `;
+  }
 
-  // GCP Mappings
-  yaml += `  google_cloud_run_service.app:
+  if (deployableServices && deployableServices.includes('cache')) {
+    yaml += `  aws_elasticache_cluster:
+    node_hours: ${monthlyRequests / 1000}
+    storage_gb: ${storageGB * 0.1}
+`;
+  }
+
+  if (deployableServices && deployableServices.includes('messaging_queue')) {
+    yaml += `  aws_sqs_queue:
+    monthly_requests: ${monthlyRequests}
+    request_size_kb: 1
+`;
+  }
+
+  // GCP mappings
+  if (deployableServices && deployableServices.includes('compute_container')) {
+    yaml += `  google_cloud_run_service:
     request_count: ${monthlyRequests}
-  google_storage_bucket.storage:
+    monthly_vcpu_time: ${monthlyRequests * 0.1}
+`;
+  }
+
+  if (deployableServices && deployableServices.includes('object_storage')) {
+    yaml += `  google_storage_bucket:
     storage_gb: ${storageGB}
     monthly_outbound_data_transfer_gb: ${dataTransferGB}
-  google_sql_database_instance.db:
-    storage_gb: ${storageGB}
 `;
+  }
 
-  // Azure Mappings
-  yaml += `  azurerm_container_app.app:
-    v_cpu_duration: ${monthlyRequests * 0.5} # rough estimate
-  azurerm_storage_account.storage:
+  if (deployableServices && deployableServices.includes('relational_database')) {
+    yaml += `  google_sql_database_instance:
+    storage_gb: ${storageGB}
+    monthly_queries: ${monthlyRequests}
+`;
+  }
+
+  if (deployableServices && deployableServices.includes('cache')) {
+    yaml += `  google_redis_instance:
+    node_time_hours: ${monthlyRequests / 1000}
+`;
+  }
+
+  // Azure mappings
+  if (deployableServices && deployableServices.includes('compute_container')) {
+    yaml += `  azurerm_container_app:
+    vcpu_seconds: ${monthlyRequests * 0.5 * 3600}
+    memory_gb_seconds: ${monthlyRequests * 1 * 3600}
+`;
+  }
+
+  if (deployableServices && deployableServices.includes('object_storage')) {
+    yaml += `  azurerm_storage_account:
     storage_gb: ${storageGB}
     monthly_data_transfer_gb: ${dataTransferGB}
-  azurerm_postgresql_flexible_server.db:
-    storage_gb: ${storageGB}
 `;
+  }
+
+  if (deployableServices && deployableServices.includes('relational_database')) {
+    yaml += `  azurerm_postgresql_flexible_server:
+    storage_gb: ${storageGB}
+    vcore_hours: ${monthlyRequests / 1000}
+`;
+  }
+
+  if (deployableServices && deployableServices.includes('load_balancer')) {
+    yaml += `  azurerm_application_gateway:
+    monthly_data_processed_gb: ${dataTransferGB}
+`;
+  }
 
   return yaml;
+}
+
+/**
+ * Force generate usage file with fallback values if needed
+ * This ensures Infracost always has usage data to work with
+ */
+function forceGenerateUsageFile(provider, sizing, deployableServices) {
+  // Default fallback values if sizing is missing
+  const reqs = sizing?.api_gateway?.requests_per_month || 1000000;
+  const storage = sizing?.relational_database?.storage_gb || 100;
+  const computeRequests = sizing?.compute_serverless?.monthly_requests || 500000;
+  const dataTransfer = sizing?.object_storage?.monthly_data_transfer_gb || 50;
+
+  // YML Content
+  const ymlContent = `
+version: 0.1
+resource_type_default_usage:
+  aws_apigatewayv2_api:
+    monthly_requests: ${reqs}
+  aws_rds_instance:
+    storage_gb: ${storage}
+    monthly_requests: ${reqs}
+  aws_lambda_function:
+    monthly_requests: ${computeRequests}
+    request_duration_ms: 250
+  aws_s3_bucket:
+    storage_gb: ${sizing?.object_storage?.storage_gb || 50}
+    monthly_requests: ${reqs / 10}
+  aws_lb:
+    new_connections: ${reqs}
+    processed_bytes: ${(sizing?.object_storage?.monthly_data_transfer_gb || 50) * 1024 * 1024 * 1024}
+  aws_elasticache_cluster:
+    node_hours: ${reqs / 1000}
+  aws_sqs_queue:
+    monthly_requests: ${reqs / 5}
+    request_size_kb: 1
+  aws_cognito_user_pool:
+    monthly_sms_messages: 1000
+  aws_cloudwatch_log_group:
+    monthly_data_ingestion_gb: 10
+  aws_secretsmanager_secret:
+    monthly_api_calls: 10000
+  aws_eventbridge:
+    monthly_requests: ${reqs / 10}
+  
+  # GCP defaults
+  google_cloud_run_service:
+    request_count: ${reqs}
+    monthly_vcpu_time: ${reqs * 0.1}
+  google_storage_bucket:
+    storage_gb: ${storage}
+    monthly_outbound_data_transfer_gb: ${dataTransfer}
+  google_sql_database_instance:
+    storage_gb: ${storage}
+    monthly_queries: ${reqs}
+  google_redis_instance:
+    node_time_hours: ${reqs / 1000}
+  google_compute_url_map:
+    monthly_data_processed_gb: ${dataTransfer}
+  google_pubsub_topic:
+    monthly_requests: ${reqs / 5}
+  google_identity_platform_config:
+    monthly_verification_requests: 10000
+  
+  # Azure defaults
+  azurerm_container_app:
+    vcpu_seconds: ${reqs * 0.5 * 3600}
+    memory_gb_seconds: ${reqs * 1 * 3600}
+  azurerm_storage_account:
+    storage_gb: ${storage}
+    monthly_data_transfer_gb: ${dataTransfer}
+  azurerm_postgresql_flexible_server:
+    storage_gb: ${storage}
+    vcore_hours: ${reqs / 1000}
+  azurerm_lb:
+    monthly_data_processed_gb: ${dataTransfer}
+  azurerm_servicebus_queue:
+    monthly_operations: ${reqs / 5}
+  azurerm_api_management:
+    monthly_calls: ${reqs}
+  azurerm_active_directory_b2c:
+    monthly_authentications: 10000
+`;
+
+  const filePath = path.join(INFRACOST_BASE_DIR, provider.toLowerCase(), 'infracost-usage.yml');
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, ymlContent);
+  console.log(`[USAGE] Force generated usage file at: ${filePath}`);
+  return filePath;
 }
 
 /**
@@ -1892,14 +2283,37 @@ async function runInfracost(terraformDir, usageFilePath = null) {
   try {
     // Check if Infracost API key is set
     if (!process.env.INFRACOST_API_KEY) {
-      console.warn("INFRACOST_API_KEY not set, using mock data");
+      console.warn("INFRACOST_API_KEY not set, attempting to run Infracost CLI locally");
+      // Don't return null immediately - try to run Infracost anyway (it may be configured locally)
+    }
+
+    // Verify that terraformDir exists and contains Terraform files
+    if (!fs.existsSync(terraformDir)) {
+      console.error(`[INFRACOST] Terraform directory does not exist: ${terraformDir}`);
       return null;
+    }
+
+    const files = fs.readdirSync(terraformDir);
+    const terraformFiles = files.filter(f => f.endsWith('.tf'));
+
+    if (terraformFiles.length === 0) {
+      console.error(`[INFRACOST] No Terraform files found in directory: ${terraformDir}`);
+      console.error(`[INFRACOST] Files found: ${files.join(', ')}`);
+      return null;
+    }
+
+    console.log(`[INFRACOST] Found ${terraformFiles.length} Terraform files: ${terraformFiles.join(', ')}`);
+
+    // Verify usage file exists if provided
+    if (usageFilePath && !fs.existsSync(usageFilePath)) {
+      console.warn(`[INFRACOST] Usage file does not exist: ${usageFilePath}`);
+      usageFilePath = null; // Reset to null to avoid passing non-existent file
     }
 
     const util = require('util');
     const exec = util.promisify(require('child_process').exec);
 
-    let command = `infracost breakdown --path "${terraformDir}" --format json`;
+    let command = `infracost breakdown --path "${terraformDir}" --format json --log-level info`;
     if (usageFilePath && fs.existsSync(usageFilePath)) {
       command += ` --usage-file "${usageFilePath}"`;
     }
@@ -1911,22 +2325,25 @@ async function runInfracost(terraformDir, usageFilePath = null) {
         ...process.env,
         INFRACOST_API_KEY: process.env.INFRACOST_API_KEY
       },
-      timeout: 30000, // 30 second timeout
-      maxBuffer: 1024 * 1024 * 10 // 10MB
+      timeout: 60000, // Increase timeout to 60 seconds
+      maxBuffer: 1024 * 1024 * 20 // 20MB
     });
 
-    if (stderr && stderr.includes('Error:')) {
-      console.warn(`Infracost CLI error output: ${stderr}`);
+    if (stderr && stderr.trim()) {
+      console.log(`[INFRACOST] CLI output: ${stderr}`);
+    }
+
+    if (!stdout || stdout.trim() === '') {
+      console.error(`[INFRACOST] No output received from CLI command`);
+      return null;
     }
 
     return JSON.parse(stdout);
 
   } catch (error) {
-    if (error.killed) {
-      console.error(`Infracost CLI timed out for ${terraformDir}`);
-    } else {
-      console.error(`Infracost CLI error for ${terraformDir}:`, error.message);
-    }
+    console.error(`[INFRACOST] CLI execution error for ${terraformDir}:`, error.message);
+    if (error.stdout) console.error(`[INFRACOST] STDOUT: ${error.stdout}`);
+    if (error.stderr) console.error(`[INFRACOST] STDERR: ${error.stderr}`);
     return null;
   }
 }
@@ -2183,18 +2600,22 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
   let usageFilePath = null;
   if (usageOverrides) {
     try {
-      const normalizedUsage = usageNormalizer.normalizeUsageForInfracost(
-        usageOverrides,
-        deployableServices,
-        provider
-      );
-      const usageYaml = usageNormalizer.toInfracostYAML(normalizedUsage);
-      usageFilePath = path.join(providerDir, 'infracost-usage.yml');
-      fs.writeFileSync(usageFilePath, usageYaml);
+      const usageYaml = generateUsageFile(usageOverrides, deployableServices);
+      if (usageYaml) {
+        usageFilePath = path.join(providerDir, 'infracost-usage.yml');
+        fs.writeFileSync(usageFilePath, usageYaml);
+        console.log(`[USAGE FILE] Generated usage file for ${provider} at ${usageFilePath}`);
+      }
       console.log(`[USAGE NORMALIZER] Generated usage file for ${provider} at ${usageFilePath}`);
     } catch (usageError) {
       console.error(`[USAGE NORMALIZER] Failed to normalize usage: ${usageError.message}`);
     }
+  }
+
+  // 🔥 FORCE USAGE FILE: Always ensure usage file exists to prevent Infracost from failing
+  if (!usageFilePath || !fs.existsSync(usageFilePath)) {
+    console.log(`[USAGE] No usage file found, forcing generation for ${provider} with ${deployableServices.length} services`);
+    usageFilePath = forceGenerateUsageFile(provider, sizing, deployableServices);
   }
 
   // 🔵 PHASE 3.3: Generate minimal pricing Terraform
@@ -2239,7 +2660,7 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
       const normalized = normalizeInfracostOutput(infracostResult, provider, infraSpec, costProfile);
       if (normalized && normalized.service_count > 0) {
         console.log(`[INFRACOST] ✅ SUCCESS: ${provider} with ${normalized.service_count} services`);
-        
+
         // 🔒 PHASE 3.6: PRICING INTEGRITY FIREWALL
         try {
           // 🔥 FIX: Normalize deployableServices before integrity check to handle undefined values
@@ -2254,7 +2675,7 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
               return null;
             })
             .filter(Boolean);
-          
+
           validatePricingIntegrity(normalized.services || [], normalizedDeployableServices);
         } catch (integrityError) {
           console.error(`[PRICING FIREWALL] ${integrityError.message}`);
@@ -2299,10 +2720,10 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
   // ═══════════════════════════════════════════════════════════════════
   const costMode = classifyWorkload(intent, infraSpec);
   console.log(`[SCENARIOS] Cost Mode: ${costMode}`);
-  
+
   // 🔵 PHASE 3.1: Extract deployable services ONLY
   const deployableServices = extractDeployableServices(infraSpec);
-  
+
   if (deployableServices.length === 0) {
     throw new Error('[SCENARIOS] No deployable services found - cannot calculate costs');
   }
@@ -2324,8 +2745,16 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
       console.warn('[SCENARIOS] Skipping service with no name in deployable list');
       return;
     }
-    const serviceDef = CANONICAL_SERVICES[serviceName];
-    if (!serviceDef || serviceDef.terraform_supported !== true) {
+    // Define supported services directly to avoid initialization issues
+    const SUPPORTED_SERVICES = [
+      'global_load_balancer', 'cdn', 'api_gateway', 'relational_database', 'identity_auth',
+      'logging', 'monitoring', 'websocket_gateway', 'message_queue', 'app_compute',
+      'object_storage', 'secrets_manager', 'audit_logging', 'event_bus',
+      'compute_serverless', 'serverless_compute', 'cache', 'load_balancer', 'compute_container', 'compute_vm',
+      'nosql_database', 'block_storage', 'search_engine', 'networking', 'dns',
+      'secrets_management', 'messaging_queue'
+    ];
+    if (!SUPPORTED_SERVICES.includes(serviceName)) {
       throw new Error(`[SCENARIOS] INTEGRITY ERROR: ${serviceName} is not terraform-deployable but is in deployable list`);
     }
   });
@@ -2372,10 +2801,10 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
 
         if (cost > 0 && !results[pLower]) {
           // 🔥 FIX: Normalize deployableServices to service names
-          const serviceNames = deployableServices.map(svc => 
+          const serviceNames = deployableServices.map(svc =>
             typeof svc === 'string' ? svc : (svc.name || svc.service_class || 'unknown')
           );
-          
+
           results[pLower] = costResultModel.buildCostResult(
             pLower,
             pattern,
@@ -2436,7 +2865,7 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
     };
   } catch (error) {
     console.error('[SCENARIOS] Error calculating scenarios:', error);
-    
+
     // Return fallback scenario data to prevent frontend errors
     return {
       scenarios: {
@@ -2961,18 +3390,18 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
     // ═══════════════════════════════════════════════════════════════════
     // STEP 2: ROUTE TO APPROPRIATE COST CALCULATION METHOD
     // ═══════════════════════════════════════════════════════════════════
-    const result = calculateCostForMode(costMode, infraSpec, intent, costProfile, usageOverrides);
-    
+    const result = await calculateCostForMode(costMode, infraSpec, intent, costProfile, usageOverrides);
+
     // Add cost mode information to result
     result.cost_mode = costMode;
     result.pricing_method_used = result.pricing_method_used || 'unknown';
-    
+
     console.log(`[COST ANALYSIS] Mode: ${costMode}, Method: ${result.pricing_method_used}, Cost: $${result.recommended?.monthly_cost?.toFixed(2) || 'N/A'}`);
-    
+
     return result;
   } catch (error) {
     console.error(`[COST ANALYSIS] Unexpected error in performCostAnalysis:`, error);
-    
+
     // Ultimate fallback: Return a guaranteed valid response
     return {
       cost_profile: costProfile,

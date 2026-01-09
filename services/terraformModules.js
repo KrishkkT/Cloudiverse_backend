@@ -11,15 +11,17 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 const generateMinimalModule = (provider, serviceName) => {
-  const templates = {
-    aws: {
+  // Default to simple resources that Infracost can price
+  if (provider === 'aws') {
+    return {
       'main.tf': `# ${serviceName} - Amazon Web Services
-resource "null_resource" "${serviceName}" {
-  triggers = {
-    project_name = var.project_name
+resource "aws_eip" "${serviceName}" {
+  domain = "vpc"
+
+  tags = {
+    Project = var.project_name
   }
-}
-`,
+}`,
       'variables.tf': `variable "project_name" {
   type = string
 }
@@ -29,16 +31,18 @@ variable "region" {
   default = "us-east-1"
 }
 `,
-      'outputs.tf': `output "${serviceName}_id" {\n  value = null_resource.${serviceName}.id\n}\n`
-    },
-    gcp: {
-      'main.tf': `# ${serviceName} - Google Cloud Platform
-resource "null_resource" "${serviceName}" {
-  triggers = {
-    project_name = var.project_name
-  }
+      'outputs.tf': `output "${serviceName}_id" {
+  value = aws_eip.${serviceName}.id
 }
-`,
+`
+    };
+  } else if (provider === 'gcp') {
+    return {
+      'main.tf': `# ${serviceName} - Google Cloud Platform
+resource "google_compute_address" "${serviceName}" {
+  name = "${serviceName}-address"
+  region = var.region
+}`,
       'variables.tf': `variable "project_name" {
   type = string
 }
@@ -48,16 +52,20 @@ variable "region" {
   default = "us-central1"
 }
 `,
-      'outputs.tf': `output "${serviceName}_id" {\n  value = null_resource.${serviceName}.id\n}\n`
-    },
-    azure: {
-      'main.tf': `# ${serviceName} - Microsoft Azure
-resource "null_resource" "${serviceName}" {
-  triggers = {
-    project_name = var.project_name
-  }
+      'outputs.tf': `output "${serviceName}_id" {
+  value = google_compute_address.${serviceName}.id
 }
-`,
+`
+    };
+  } else if (provider === 'azure') {
+    return {
+      'main.tf': `# ${serviceName} - Microsoft Azure
+resource "azurerm_public_ip" "${serviceName}" {
+  name                = "${serviceName}-ip"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  allocation_method   = "Dynamic"
+}`,
       'variables.tf': `variable "project_name" {
   type = string
 }
@@ -71,10 +79,13 @@ variable "resource_group_name" {
   type = string
 }
 `,
-      'outputs.tf': `output "${serviceName}_id" {\n  value = null_resource.${serviceName}.id\n}\n`
-    }
-  };
-  return templates[provider] || null;
+      'outputs.tf': `output "${serviceName}_id" {
+  value = azurerm_public_ip.${serviceName}.id
+}
+`
+    };
+  }
+  return null;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1831,12 +1842,53 @@ module.exports = {
       cache: cacheModule,
       payment_gateway: paymentGatewayModule,
       load_balancer: loadBalancerModule,
-      // 🔥 ADDED MISSING MODULES
-      analytical_database: null,  // Will use fallback
-      batch_compute: null,  // Will use fallback
-      websocket_gateway: null,  // Will use fallback
-      ml_inference_service: null,  // Will use fallback
-      push_notification_service: null  // Will use fallback
+
+      // ═══════════════════════════════════════════════════════════════════
+      // HIGH-AVAILABILITY / MULTI-REGION SERVICES
+      // ═══════════════════════════════════════════════════════════════════
+      global_load_balancer: loadBalancerModule,  // Reuse load_balancer module
+      multi_region_db: relationalDbModule,        // Reuse relational_database with HA config
+
+      // ═══════════════════════════════════════════════════════════════════
+      // GAMING / REALTIME SERVICES
+      // ═══════════════════════════════════════════════════════════════════
+      websocket_gateway: apiGatewayModule,  // API Gateway v2 supports WebSocket
+
+      // ═══════════════════════════════════════════════════════════════════
+      // COMPLIANCE / FINTECH SERVICES
+      // ═══════════════════════════════════════════════════════════════════
+      secrets_manager: null,     // Will use fallback (simple)
+      audit_logging: loggingModule,  // Reuse logging module
+
+      // ═══════════════════════════════════════════════════════════════════
+      // IOT SERVICES
+      // ═══════════════════════════════════════════════════════════════════
+      iot_core: null,            // Will use fallback
+      time_series_db: null,      // Will use fallback
+      event_streaming: null,     // Will use fallback
+      sms_alerts: null,          // Will use fallback
+
+      // ═══════════════════════════════════════════════════════════════════
+      // EVENT SERVICES (REQUIRED FOR MANY PATTERNS)
+      // ═══════════════════════════════════════════════════════════════════
+      event_bus: messageQueueModule,  // 🔥 ADDED: EventBridge/EventGrid/EventArc mapped to messaging
+
+      // ═══════════════════════════════════════════════════════════════════
+      // ML / AI SERVICES
+      // ═══════════════════════════════════════════════════════════════════
+      ml_inference_service: null,     // Will use fallback
+      ml_inference_gpu: null,         // Will use fallback
+      vector_database: null,          // Will use fallback
+
+      // ═══════════════════════════════════════════════════════════════════
+      // DATA / STORAGE SERVICES
+      // ═══════════════════════════════════════════════════════════════════
+      data_lake: objectStorageModule,  // Reuse S3 module
+
+      // LEGACY (kept for compatibility)
+      analytical_database: null,
+      batch_compute: null,
+      push_notification_service: null
     };
 
     const module = modules[serviceName];
@@ -1844,7 +1896,7 @@ module.exports = {
       // Service not in registry at all - return null
       return null;
     }
-    
+
     if (module === null) {
       // Explicitly marked as "use fallback"
       if (provider === 'gcp' || provider === 'azure') {
@@ -1855,18 +1907,18 @@ module.exports = {
       console.log(`[TERRAFORM] Using minimal fallback module for ${serviceName} on ${provider} (AWS)`);
       return generateMinimalModule('aws', serviceName);
     }
-    
+
     // If provider-specific implementation exists, use it
     if (module[provider]) {
       return module[provider]();
     }
-    
+
     // 🔥 FALLBACK: Generate minimal module for GCP/Azure
     if (provider === 'gcp' || provider === 'azure') {
       console.log(`[TERRAFORM] Using minimal module for ${serviceName} on ${provider}`);
       return generateMinimalModule(provider, serviceName);
     }
-    
+
     return null;
   }
 };

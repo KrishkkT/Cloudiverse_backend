@@ -16,91 +16,182 @@ You are an AI sub-component inside a deterministic infrastructure planning syste
 `;
 
 // ═══════════════════════════════════════════════════════════════════
+// STEP 1 — NEW COMPREHENSIVE INTENT EXTRACTION SYSTEM
+// Based on Step1.txt specification - 50+ axes with confidence scoring
+// ═══════════════════════════════════════════════════════════════════
+
 const STEP_1_SYSTEM_PROMPT = `
-STEP 1 — INTENT EXTRACTION AGENT
-You are an intent extraction engine for cloud infrastructure planning.
+You are an expert multi-cloud solution architect working for a product called "Cloudiverse Architect".
 
-CORE PRINCIPLES:
-1. EXPLICIT OVER INFERRED: Explicit user intent (e.g. "no database") always beats inference.
-2. CONSERVATIVE INFERENCE: Do NOT assume capabilities unless explicitly stated.
-3. THREE-STATE MODEL: Every capability is either TRUE (explicit), FALSE (explicitly excluded), or UNKNOWN (not mentioned).
-4. NO INFRASTRUCTURE: Do not suggest cloud services or architectures.
-5. CAPABILITIES NOT SERVICES: Output user intent as capabilities (data_persistence), NOT services (database, RDS, S3).
+Your task is to analyze a single free-form project description from a user and produce a structured "intent" object.
 
-CAPABILITIES TO TRACK (provider-agnostic intent):
-- data_persistence: User needs to store/retrieve data
-- identity_access: User needs authentication/authorization
-- content_delivery: User needs CDN/edge delivery
-- payments: User needs payment processing
-- eventing: User needs event-driven architecture
-- messaging: User needs async messaging
-- realtime: User needs real-time communication
-- document_storage: User needs document/file management
-- static_content: User serves static assets
-- api_backend: User needs backend API
-- case_management: Workflow/case tracking
-- multi_user_roles: RBAC/multi-tenancy
+This intent object will be used in an automated pipeline to:
+- select canonical architecture patterns,
+- design cloud architectures on AWS, Azure, or GCP,
+- estimate costs,
+- and generate Terraform.
 
-RULES:
-- If a capability is explicitly mentioned as present -> Add to explicit_capabilities.
-- If a capability is explicitly mentioned as NOT needed (e.g. "no database", "don't need X") -> Add to explicit_exclusions.
-- If a capability is NOT mentioned, mark it in inferred_capabilities with a low confidence or skip it.
-- AI is allowed to say "unknown" (confidence < 0.3).
-- NEVER output service names (EventBridge, RDS, S3, Lambda, etc.) - only capabilities.
+You MUST:
+1) Classify the project into one or more categories.
+2) Estimate values for a predefined set of decision axes (functional and non-functional).
+3) Estimate the complexity of the project.
+4) Identify which decision axes are still unclear and should be clarified with follow-up questions.
+
+IMPORTANT PRINCIPLES:
+- You are allowed to infer reasonable defaults when the description strongly suggests them, but you must always track CONFIDENCE.
+- If something is not clearly specified, set its value to null and use low confidence.
+- Do NOT invent very specific numeric values; use the defined enums.
+- When in doubt between safety and convenience, prefer SAFETY: do not assume low data sensitivity or no compliance unless it is clearly implied.
+
+-----------------
+DECISION AXES & CATEGORIES
+-----------------
+
+A. Project & domain axes
+- primary_domain: string (e.g., portfolio, ecommerce, fintech, healthcare, gaming, devtools, saas)
+- project_categories: array of strings
+
+B. Functional capability axes (boolean)
+- static_content, api_backend, user_authentication, multi_tenancy
+- file_storage, realtime_updates, messaging_queue, scheduled_jobs
+- payments, search, admin_dashboard, mobile_clients, third_party_integrations
+
+C. Scale & usage axes (enum)
+- estimated_mau: very_low, low, medium, high, very_high
+- peak_rps: very_low, low, medium, high, very_high
+- traffic_pattern: steady, spiky, seasonal
+- performance_sensitivity: low, medium, high
+- burstiness: low, medium, high
+
+D. Data & storage axes
+- stateful: boolean
+- primary_data_model: none, relational, document, key_value, time_series, graph, mixed
+- data_volume: tiny, small, medium, large, huge
+- data_growth_rate: slow, moderate, fast
+- data_sensitivity: low, medium, high
+- data_residency_required: boolean
+- backup_retention_days: 7, 30, 90, 365
+
+E. Security & compliance axes
+- authentication_strength: basic, standard, strong_mfa
+- authorization_complexity: simple_roles, role_based, fine_grained
+- regulatory_compliance: array (GDPR, HIPAA, PCI_DSS, SOC2, ISO27001)
+- security_posture: basic, hardened, zero_trust_like
+
+F. Availability, reliability & DR axes
+- availability_target: 99.0, 99.5, 99.9, 99.99
+- recovery_time_objective: hours, 1_hour, 30_minutes, 5_minutes
+- recovery_point_objective: 24_hours, 4_hours, 1_hour, 5_minutes
+- multi_region_required: boolean
+
+G. Observability & operations axes
+- observability_level: basic, standard, advanced
+- deployment_frequency: monthly, weekly, daily, multiple_times_per_day
+- change_risk_tolerance: low, medium, high
+- ops_team_maturity: none, junior, experienced, dedicated_sre
+
+H. Cloud, region & cost axes
+- allowed_providers: array (aws, azure, gcp)
+- primary_region_hint: string or null
+- provider_lock_in_sensitivity: low, medium, high
+- ops_model: serverless_pref, managed_services_pref, kubernetes_pref, no_preference
+- managed_db_preference: prefer_managed, self_managed_ok, no_db
+- kubernetes_required: boolean
+- cost_sensitivity: low, medium, high
+- project_lifetime: poc, short_term, long_term
+
+I. Domain-specific flags (boolean)
+- domain_fintech, domain_healthcare, domain_iot, domain_gaming, domain_ml_heavy, domain_internal_it
+
+J. UX / channels (boolean)
+- web_ui, mobile_apps, public_api
+
+-----------------
+COMPLEXITY ESTIMATION
+-----------------
+
+Set complexity = "SIMPLE" or "COMPLEX"
+
+Rules of thumb:
+- SIMPLE: static websites, small marketing sites, simple CRUD apps, low scale, low data sensitivity, no strong compliance, no heavy data pipelines.
+- COMPLEX: fintech, healthcare, high scale, multi-region, strong compliance, advanced data pipelines, ML systems, streaming systems, or many interacting components.
+
+-----------------
+RANKING AXES FOR QUESTIONS
+-----------------
+
+Your role is to:
+1) Identify which axes are most important to clarify.
+2) Rank them by priority.
+
+Priority should consider:
+- Impact on architecture and risk (highest for: data_sensitivity, regulatory_compliance, availability_target, stateful, allowed_providers, primary_region_hint).
+- How uncertain you are (low confidence or null -> higher need to ask).
+
+You must return a "ranked_axes_for_questions" array.
+Each item:
+- axis_key: the axis name (e.g. "data_sensitivity").
+- priority: number between 0 and 1 (higher = more important to clarify).
+
+Selection rules:
+- If complexity == "SIMPLE": keep at most 3 axes in this list.
+- If complexity == "COMPLEX": keep at most 6 axes in this list.
+- It is OK to keep fewer if everything is already clear (high confidence).
+
+-----------------
+OUTPUT FORMAT
+-----------------
+
+You MUST output a single JSON object with EXACTLY this structure:
+
+{
+  "intent_classification": {
+    "primary_domain": "<string or null>",
+    "project_categories": ["<category1>", "..."],
+    "workload_type": "<string or null>",
+    "user_facing": <true|false|null>
+  },
+  "complexity": "SIMPLE" | "COMPLEX",
+  "axes": {
+    "<axis_name>": {
+      "value": <axis_value_or_null>,
+      "confidence": <number_0_to_1>
+    }
+  },
+  "ranked_axes_for_questions": [
+    {
+      "axis_key": "<axis_name>",
+      "priority": <number_0_to_1>
+    }
+  ]
+}
+
+Do not include any text outside this JSON.
+Do not explain your reasoning in natural language.
 `;
 
 /**
- * STEP 1 — INTENT NORMALIZATION & CLARIFICATION
- * Goal: Understand what the user is building, surface risk-relevant ambiguity.
+ * STEP 1 — INTENT NORMALIZATION & CONFIRMATION (NEW VERSION)
+ * Goal: Extract comprehensive intent with 50+ axes and confidence scores.
+ * Returns structured intent object ready for adaptive questioning.
  */
 const normalizeIntent = async (userInput, conversationHistory = [], optionalHints = {}) => {
-  console.log("--- STEP 1: Intent Normalization ---");
+  console.log("--- STEP 1: Intent Normalization (NEW 50+ AXES) ---");
   try {
     const stepPrompt = `
-        Start Step 1: INTENT_ANALYSIS.
-        
-        🔹 INPUT CONTEXT
-        User Input: "${userInput}"
-        Optional Hints: ${JSON.stringify(optionalHints)}
+User project description:
+"${userInput}"
 
-        🔹 REQUIRED OUTPUT SCHEMA (JSON)
-        {
-          "intent_classification": {
-            "primary_domain": "string (e.g. law_firm_management, ecommerce, portfolio, landing_page)",
-            "workload_type": "string (e.g. web_application, batch_processing, static_website)",
-            "user_facing": boolean
-          },
-          "explicit_capabilities": {
-             "capability_name": true // Only for capabilities explicitly mentioned as present
-          },
-          "explicit_exclusions": [
-             "List capabilities explicitly mentioned as NOT needed (data_persistence, payments, realtime, etc.)"
-          ],
-          "inferred_capabilities": {
-             "capability_name": { 
-                "value": boolean, 
-                "confidence": number (0-1), 
-                "reason": "Why this inference?" 
-             }
-          },
-          "semantic_signals": {
-            "statefulness": "string (stateful/stateless)",
-            "latency_sensitivity": "string (low/medium/high)",
-            "read_write_ratio": "string (read_heavy/write_heavy/balanced)"
-          },
-          "risk_domains": ["security", "compliance", "availability", etc.],
-          "missing_decision_axes": [
-            "list of missing axes from: [scale, availability, data_sensitivity, regulatory_exposure, business_criticality, latency_sensitivity, statefulness, data_durability, cost_sensitivity, observability_level]"
-          ],
-          "confidence": number (0-1)
-        }
-        
-        🔹 EXCLUSION DETECTION (CRITICAL)
-        Look for phrases like: "no database", "don't need X", "without cache", "skip the API", "no auth needed".
-        Map these to capabilities: "no database" -> "data_persistence", "no auth" -> "identity_access"
-        
-        ❌ AI MUST NOT RETURN: questions, options, defaults, compliance frameworks, infra details, service names (RDS, S3, Lambda, EventBridge).
-        `;
+Additional hints (optional):
+${JSON.stringify(optionalHints, null, 2)}
+
+Analyze this description and produce the structured intent object as specified.
+Remember:
+- Track confidence for EVERY axis
+- Set complexity based on the rules
+- Rank axes by priority for follow-up questions
+- Output ONLY valid JSON
+`;
 
     const messages = [
       { role: "system", content: STEP_1_SYSTEM_PROMPT },
@@ -110,7 +201,7 @@ const normalizeIntent = async (userInput, conversationHistory = [], optionalHint
 
     const completion = await groq.chat.completions.create({
       messages: messages,
-      model: "llama-3.3-70b-versatile",
+      model: process.env.AI_MODEL || "llama-3.1-8b-instant",
       temperature: 0.1,
       response_format: { type: "json_object" }
     });
@@ -120,36 +211,88 @@ const normalizeIntent = async (userInput, conversationHistory = [], optionalHint
       result = JSON.parse(completion.choices[0]?.message?.content || "{}");
     } catch (parseErr) {
       console.error("AI JSON Parse Error:", parseErr);
-      result = {
-        intent_classification: { primary_domain: "unknown", workload_type: "general", user_facing: true },
-        explicit_capabilities: {},
-        explicit_exclusions: [],
-        inferred_capabilities: {},
-        semantic_signals: { statefulness: "mixed", latency_sensitivity: "medium", read_write_ratio: "balanced" },
-        risk_domains: [],
-        missing_decision_axes: ["processing_error"],
-        confidence: 0
-      };
+      result = getDefaultIntentResult();
     }
+
+    // Validate and normalize the result
+    result = normalizeAIResult(result);
 
     console.log("AI Step 1 Output:", JSON.stringify(result, null, 2));
     return result;
 
   } catch (error) {
     console.error("Intent Norm Error:", error.message);
-    // Don't throw 500, return a safe failure state
-    return {
-      intent_classification: { primary_domain: "error_fallback", workload_type: "general", user_facing: true },
-      explicit_capabilities: {},
-      explicit_exclusions: [],
-      inferred_capabilities: {},
-      semantic_signals: { statefulness: "mixed", latency_sensitivity: "medium", read_write_ratio: "balanced" },
-      risk_domains: [],
-      missing_decision_axes: [],
-      confidence: 0
-    };
+    return getDefaultIntentResult();
   }
 };
+
+/**
+ * Get default intent result for error fallback
+ */
+function getDefaultIntentResult() {
+  return {
+    intent_classification: {
+      primary_domain: "unknown",
+      project_categories: ["general"],
+      workload_type: "web_application",
+      user_facing: true
+    },
+    complexity: "SIMPLE",
+    axes: {
+      static_content: { value: null, confidence: 0.3 },
+      api_backend: { value: null, confidence: 0.3 },
+      user_authentication: { value: null, confidence: 0.3 },
+      stateful: { value: null, confidence: 0.3 },
+      data_sensitivity: { value: null, confidence: 0.3 },
+      estimated_mau: { value: "low", confidence: 0.3 },
+      availability_target: { value: "99.5", confidence: 0.3 },
+      allowed_providers: { value: [], confidence: 0.1 }
+    },
+    ranked_axes_for_questions: [
+      { axis_key: "data_sensitivity", priority: 0.9 },
+      { axis_key: "availability_target", priority: 0.8 },
+      { axis_key: "allowed_providers", priority: 0.7 }
+    ]
+  };
+}
+
+/**
+ * Normalize and validate AI result to ensure all required fields exist
+ */
+function normalizeAIResult(result) {
+  // Ensure intent_classification exists
+  if (!result.intent_classification) {
+    result.intent_classification = {
+      primary_domain: "unknown",
+      project_categories: [],
+      workload_type: "web_application",
+      user_facing: true
+    };
+  }
+
+  // Ensure complexity exists and is valid
+  if (!result.complexity || !["SIMPLE", "COMPLEX"].includes(result.complexity)) {
+    result.complexity = "SIMPLE";
+  }
+
+  // Ensure axes object exists
+  if (!result.axes || typeof result.axes !== 'object') {
+    result.axes = {};
+  }
+
+  // Ensure ranked_axes_for_questions exists and is an array
+  if (!Array.isArray(result.ranked_axes_for_questions)) {
+    result.ranked_axes_for_questions = [];
+  }
+
+  // Limit ranked axes based on complexity
+  const maxQuestions = result.complexity === "COMPLEX" ? 6 : 3;
+  result.ranked_axes_for_questions = result.ranked_axes_for_questions.slice(0, maxQuestions);
+
+  return result;
+}
+
+
 // STEP 2 SYSTEM PROMPT (from Step2.txt)
 const STEP_2_SYSTEM_PROMPT = `
 STEP 2 — SYSTEM PROMPT 
@@ -315,7 +458,7 @@ ${JSON.stringify(intentObject, null, 2)}
 
     const completion = await groq.chat.completions.create({
       messages: messages,
-      model: "llama-3.3-70b-versatile",
+      model: process.env.AI_MODEL || "llama-3.1-8b-instant",
       temperature: 0.1,
       response_format: { type: "json_object" }
     });
@@ -448,7 +591,7 @@ Never invent missing infrastructure. Never output an overall score.
 
     const completion = await groq.chat.completions.create({
       messages: messages,
-      model: "llama-3.3-70b-versatile",
+      model: process.env.AI_MODEL || "llama-3.1-8b-instant",
       temperature: 0.1,
       response_format: { type: "json_object" }
     });

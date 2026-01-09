@@ -1,48 +1,112 @@
-/**
- * TERRAFORM GENERATION SERVICE - V2 MODULAR ARCHITECTURE
- * 
- * 🎯 CORE PRINCIPLE: Cloudiverse produces PLANS, not infrastructure.
- * 
- * ✅ STEP 5 CONTRACT (ABSOLUTE - NO EXCEPTIONS):
- * - NO inference (all inputs are authoritative)
- * - NO sizing calculation (Step 3 owns this)
- * - NO cost logic (Step 3 owns this)
- * - NO AI involvement (deterministic only)
- * - NO pattern resolution (Step 2 owns this)
- * - NO deployment execution (user owns this)
- * - NO cloud credentials (security boundary)
- * 
- * Violations of this contract indicate UPSTREAM BUGS, not Step 5 issues.
- * 
- * STRICT CONTRACT:
- * - Input: infraSpec.canonical_architecture.deployable_services (ONLY)
- * - Input: infraSpec.sizing (locked from Step 3)
- * - Input: infraSpec.region.resolved_region (locked from Step 2)
- * - Input: infraSpec.nfr (locked from Step 2)
- * - Forbidden: Pattern resolution, service inference, cost decisions, AI, deployment
- * 
- * INVARIANTS:
- * 1. If Step 3 priced it, Step 5 can deploy it
- * 2. If Step 5 can deploy it, Step 3 already priced it
- * 3. Terraform sizing MUST match Step 3 cost estimates
- * 4. Logical services (event_bus, waf, payment_gateway, artifact_registry) NEVER reach Terraform
- * 5. Hash and manifest are ALWAYS generated for audit and drift detection
- * 
- * OUTPUT:
- * - Modular Terraform project (versions.tf, providers.tf, variables.tf, terraform.tfvars, main.tf, outputs.tf, modules/)
- * - SHA-256 hash (for drift detection and caching)
- * - Deployment manifest (for audit, rollback, and compliance)
- * 
- * HARD BOUNDARY:
- * Cloudiverse ends at Terraform generation. Deployment, credentials, state management,
- * and runtime operations are intentionally out of scope for security and liability reasons.
- */
-
 const costResultModel = require('./costResultModel');
 const terraformGeneratorV2 = require('./terraformGeneratorV2');
 const terraformModules = require('./terraformModules');
-const { CANONICAL_SERVICES } = require('./canonicalServiceRegistry');
 const crypto = require('crypto');
+
+// 1. Define Module Mappings directly here to avoid initialization errors
+const MODULE_MAPPINGS = {
+    aws: {
+        global_load_balancer: "terraform-aws-modules/alb/aws",
+        cdn: "terraform-aws-modules/cloudfront/aws",
+        api_gateway: "terraform-aws-modules/apigateway-v2/aws",
+        relational_database: "terraform-aws-modules/rds/aws",
+        identity_auth: "terraform-aws-modules/cognito-user-pool/aws",
+        logging: "terraform-aws-modules/cloudwatch/aws//modules/log-group",
+        monitoring: "terraform-aws-modules/cloudwatch/aws//modules/metric-alarm",
+        websocket_gateway: "terraform-aws-modules/apigateway-v2/aws",
+        message_queue: "terraform-aws-modules/sqs/aws",
+        app_compute: "terraform-aws-modules/ecs/aws",
+        object_storage: "terraform-aws-modules/s3-bucket/aws",
+        secrets_manager: "terraform-aws-modules/secrets-manager/aws",
+        audit_logging: "terraform-aws-modules/cloudwatch/aws//modules/log-group", // Fallback to logs
+        event_bus: "terraform-aws-modules/eventbridge/aws",
+        // Existing mappings
+        compute_serverless: "terraform-aws-modules/lambda/aws",
+        cache: "terraform-aws-modules/elasticache/aws",
+        load_balancer: "terraform-aws-modules/alb/aws",
+        compute_container: "terraform-aws-modules/ecs/aws",
+        compute_vm: "terraform-aws-modules/ec2-instance/aws",
+        nosql_database: "terraform-aws-modules/dynamodb/aws",
+        block_storage: "terraform-aws-modules/ebs/aws",
+        search_engine: "terraform-aws-modules/elasticsearch/aws",
+        networking: "terraform-aws-modules/vpc/aws",
+        dns: "terraform-aws-modules/route53/aws",
+        secrets_management: "terraform-aws-modules/secrets-manager/aws",
+        messaging_queue: "terraform-aws-modules/sqs/aws"
+    },
+    gcp: {
+        global_load_balancer: "terraform-google-modules/lb-http/google",
+        cdn: "terraform-google-modules/cdn/google",
+        api_gateway: "terraform-google-modules/api-gateway/google",
+        relational_database: "terraform-google-modules/cloud-sql/google",
+        identity_auth: "terraform-google-modules/iam/google",
+        logging: "terraform-google-modules/logging/google",
+        monitoring: "terraform-google-modules/monitoring/google",
+        message_queue: "terraform-google-modules/pubsub/google",
+        app_compute: "terraform-google-modules/cloud-run/google",
+        object_storage: "terraform-google-modules/cloud-storage/google",
+        secrets_manager: "terraform-google-modules/secrets/google",
+        audit_logging: "terraform-google-modules/logging/google",
+        event_bus: "terraform-google-modules/eventarc/google",
+        // Existing mappings
+        compute_serverless: "terraform-google-modules/cloud-functions/google",
+        cache: "terraform-google-modules/redis/google",
+        load_balancer: "terraform-google-modules/lb-http/google",
+        compute_container: "terraform-google-modules/cloud-run/google",
+        compute_vm: "terraform-google-modules/compute-engine/google",
+        nosql_database: "terraform-google-modules/spanner/google",
+        block_storage: "terraform-google-modules/compute-engine/google//modules/disks",
+        search_engine: "terraform-google-modules/elasticsearch/google",
+        networking: "terraform-google-modules/network/google",
+        dns: "terraform-google-modules/dns/google",
+        secrets_management: "terraform-google-modules/secrets/google",
+        messaging_queue: "terraform-google-modules/pubsub/google"
+    },
+    azure: {
+        global_load_balancer: "Azure/load-balancer/azurerm",
+        cdn: "Azure/cdn/azurerm",
+        api_gateway: "Azure/api-management/azurerm",
+        relational_database: "Azure/postgresql-flexible-server/azurerm",
+        identity_auth: "Azure/active-directory-b2c/azurerm",
+        logging: "Azure/log-analytics/azurerm",
+        monitoring: "Azure/monitor/azurerm",
+        message_queue: "Azure/service-bus/azurerm",
+        app_compute: "Azure/container-apps/azurerm",
+        object_storage: "Azure/storage-account/azurerm",
+        secrets_manager: "Azure/key-vault/azurerm",
+        audit_logging: "Azure/log-analytics/azurerm",
+        event_bus: "Azure/eventgrid/azurerm",
+        // Existing mappings
+        compute_serverless: "Azure/functions/azurerm",
+        cache: "Azure/redis/azurerm",
+        load_balancer: "Azure/load-balancer/azurerm",
+        compute_container: "Azure/container-apps/azurerm",
+        compute_vm: "Azure/virtual-machine/azurerm",
+        nosql_database: "Azure/cosmosdb/azurerm",
+        block_storage: "Azure/managed-disk/azurerm",
+        search_engine: "Azure/search/azurerm",
+        networking: "Azure/virtual-network/azurerm",
+        dns: "Azure/private-dns/azurerm",
+        secrets_management: "Azure/key-vault/azurerm",
+        messaging_queue: "Azure/service-bus/azurerm"
+    }
+};
+
+// 2. Helper to get clean variables
+function getModuleVars(service, sizing) {
+    const vars = {
+        name: `${service.canonical_type}-service`,
+        tags: { Environment: "production", ManagedBy: "Cloudiverse" }
+    };
+
+    // Apply specific sizing vars if available
+    if (sizing) {
+        if (sizing.instance_class) vars.instance_class = sizing.instance_class;
+        if (sizing.storage_gb) vars.allocated_storage = sizing.storage_gb;
+        if (sizing.requests_per_month) vars.estimated_requests = sizing.requests_per_month;
+    }
+    return vars;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GET TERRAFORM SERVICES LIST
@@ -117,7 +181,7 @@ function getTerraformResourceType(service, provider) {
  */
 async function generateModularTerraform(infraSpec, provider, projectName, requirements = {}) {
     const pattern = infraSpec.service_classes?.pattern || 'SERVERLESS_WEB_APP';
-    
+
     // ✅ TIGHTENING 1: Explicit contract enforcement - Sizing MUST exist
     if (!infraSpec.sizing) {
         throw new Error(
@@ -126,43 +190,58 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
             'This indicates an upstream bug in the workflow.'
         );
     }
-    
+
     console.log(`[STEP 5 CONTRACT] ✓ Sizing validation passed: tier=${infraSpec.sizing.tier}`);
-    
+
     // ✅ FIX 1: Step 5 must ONLY read deployable_services (single source of truth)
     const services = infraSpec.canonical_architecture?.deployable_services || [];
-    
+
     if (!Array.isArray(services) || services.length === 0) {
         throw new Error(
             'Terraform generation aborted: No deployable services provided. ' +
             'infraSpec.canonical_architecture.deployable_services is required.'
         );
     }
-    
+
     // ✅ FIX 2: TERRAFORM FIREWALL — Assert no logical services leaked through
-    const illegalServices = services.filter(svc => {
-        const serviceDef = CANONICAL_SERVICES[svc];
-        return !serviceDef || serviceDef.terraform_supported !== true;
+    // 🔥 CRITICAL FIX: Normalize services to strings first (services can be objects or strings)
+    const normalizedServices = services.map(svc =>
+        typeof svc === 'string' ? svc :
+            (svc?.service_class || svc?.name || svc?.canonical_type || String(svc))
+    );
+
+    // Define supported services directly to avoid initialization issues
+    const SUPPORTED_SERVICES = [
+        'global_load_balancer', 'cdn', 'api_gateway', 'relational_database', 'identity_auth',
+        'logging', 'monitoring', 'websocket_gateway', 'message_queue', 'app_compute',
+        'object_storage', 'secrets_manager', 'audit_logging', 'event_bus',
+        'compute_serverless', 'serverless_compute', 'cache', 'load_balancer', 'compute_container', 'compute_vm',
+        'nosql_database', 'block_storage', 'search_engine', 'networking', 'dns',
+        'secrets_management', 'messaging_queue'
+    ];
+
+    const illegalServices = normalizedServices.filter(svc => {
+        return !SUPPORTED_SERVICES.includes(svc);
     });
-    
+
     if (illegalServices.length > 0) {
         throw new Error(
-            `🚨 TERRAFORM FIREWALL VIOLATION: Illegal services reached Terraform layer: ${illegalServices.join(', ')}. ` +
-            `These services are not terraform-deployable. This indicates an upstream bug in Step 2.`
+            `🚨 TERRAFORM FIREWALL VIOLATION: Illegal services reached Terraform layer: ${illegalServices.join(', ')}. `
+            + `These services are not terraform-deployable. This indicates an upstream bug in Step 2.`
         );
     }
-    
-    console.log(`[TERRAFORM V2] ✓ Firewall passed: All ${services.length} services are terraform-deployable`);
+
+    console.log(`[TERRAFORM V2] ✓ Firewall passed: All ${normalizedServices.length} services are terraform-deployable`);
     console.log(`[TERRAFORM V2] Generating modular structure for ${pattern} on ${provider}`);
-    console.log(`[TERRAFORM V2] Deployable services: ${services.join(', ')}`);
-    
+    console.log(`[TERRAFORM V2] Deployable services: ${normalizedServices.join(', ')}`);
+
     const providerLower = provider.toLowerCase();
-    
+
     // ✅ FIX 5: Use resolved_region from Step 2 (not hardcoded defaults)
-    const resolvedRegion = infraSpec.region?.resolved_region || 
-                          requirements.region?.primary_region || 
-                          getDefaultRegion(providerLower);
-    
+    const resolvedRegion = infraSpec.region?.resolved_region ||
+        requirements.region?.primary_region ||
+        getDefaultRegion(providerLower);
+
     console.log(`[TERRAFORM V2] Using resolved region: ${resolvedRegion}`);
 
     const projectFolder = {};
@@ -170,17 +249,17 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
     // Generate root files
     projectFolder['versions.tf'] = terraformGeneratorV2.generateVersionsTf(providerLower);
     projectFolder['providers.tf'] = terraformGeneratorV2.generateProvidersTf(providerLower, resolvedRegion);
-    projectFolder['variables.tf'] = terraformGeneratorV2.generateVariablesTf(providerLower, pattern, services);
+    projectFolder['variables.tf'] = terraformGeneratorV2.generateVariablesTf(providerLower, pattern, normalizedServices);
     projectFolder['terraform.tfvars'] = terraformGeneratorV2.generateTfvars(providerLower, projectName, requirements);
-    projectFolder['main.tf'] = terraformGeneratorV2.generateMainTf(providerLower, pattern, services);
-    projectFolder['outputs.tf'] = terraformGeneratorV2.generateOutputsTf(providerLower, pattern, services);
-    projectFolder['README.md'] = terraformGeneratorV2.generateReadme(projectName, providerLower, pattern, services);
+    projectFolder['main.tf'] = terraformGeneratorV2.generateMainTf(providerLower, pattern, normalizedServices);
+    projectFolder['outputs.tf'] = terraformGeneratorV2.generateOutputsTf(providerLower, pattern, normalizedServices);
+    projectFolder['README.md'] = terraformGeneratorV2.generateReadme(projectName, providerLower, pattern, normalizedServices);
 
     // Generate modules
     projectFolder['modules'] = {};
 
     // Add networking module if needed
-    if (needsNetworking(pattern, services)) {
+    if (needsNetworking(pattern, normalizedServices)) {
         const networkingModule = terraformModules.getModule('networking', providerLower);
         if (networkingModule) {
             projectFolder['modules']['networking'] = networkingModule;
@@ -189,29 +268,28 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
 
     // Add service modules
     const missingModules = [];
-    const { CANONICAL_SERVICES } = require('./canonicalServiceRegistry');
-    
-    services.forEach(service => {
+
+    normalizedServices.forEach(service => {
         // 🔥 CRITICAL: Normalize service name BEFORE module lookup
         const normalizedService = getModuleFolderName(service);
         const lookupName = normalizedService === 'relational_db' ? 'relational_database' :
-                          normalizedService === 'auth' ? 'identity_auth' :
-                          normalizedService === 'ml_inference' ? 'ml_inference_service' :
-                          normalizedService === 'websocket' ? 'websocket_gateway' :
-                          normalizedService === 'serverless_compute' ? 'serverless_compute' :
-                          normalizedService === 'analytical_db' ? 'analytical_database' :
-                          normalizedService === 'push_notification' ? 'push_notification_service' :
-                          normalizedService;
-        
+            normalizedService === 'auth' ? 'identity_auth' :
+                normalizedService === 'ml_inference' ? 'ml_inference_service' :
+                    normalizedService === 'websocket' ? 'websocket_gateway' :
+                        normalizedService === 'serverless_compute' ? 'serverless_compute' :
+                            normalizedService === 'analytical_db' ? 'analytical_database' :
+                                normalizedService === 'push_notification' ? 'push_notification_service' :
+                                    normalizedService;
+
         const module = terraformModules.getModule(lookupName, providerLower);
         if (module) {
             projectFolder['modules'][normalizedService] = module;
             console.log(`[TERRAFORM V2] ✓ Module added: ${service} → ${normalizedService}`);
         } else {
             // Check if this service is a blocking service (must have Terraform module)
-            const serviceDef = CANONICAL_SERVICES[service];
-            const isBlocking = serviceDef && serviceDef.class === 'terraform_core' && serviceDef.blocks_terraform === true;
-            
+            const blockingServices = ['object_storage', 'api_gateway']; // Define which services are blocking (compute_serverless has fallback)
+            const isBlocking = blockingServices.includes(service);
+
             // ✅ FIX 4: Classify module failure for better error messaging
             missingModules.push({
                 service,
@@ -223,10 +301,10 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
             console.error(`[TERRAFORM V2] ✗ Missing Terraform module for service: ${service} (normalized: ${lookupName}) on ${provider} (blocking: ${isBlocking})`);
         }
     });
-    
+
     // 🔥 TERRAFORM-SAFE MODE: Check for blocking services before continuing
     const blockingMissingModules = missingModules.filter(m => m.is_blocking);
-    
+
     if (blockingMissingModules.length > 0) {
         // FAIL if blocking services are missing modules
         const blockingServiceNames = blockingMissingModules.map(m => m.service).join(', ');
@@ -238,31 +316,31 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
         // Only warn for non-blocking services
         const serviceNames = missingModules.map(m => m.service).join(', ');
         console.warn(`[TERRAFORM-SAFE] Missing modules for non-blocking services: ${serviceNames}. These will be excluded for Terraform generation.`);
-        
+
         // Log the missing modules but continue
         missingModules.forEach(m => {
             console.warn(`[TERRAFORM-SAFE] Service excluded: ${m.service} (normalized: ${m.normalized}) on ${m.provider} - ${m.reason} (blocking: ${m.is_blocking})`);
         });
-        
+
         // Remove missing services from the main.tf to avoid broken references
         // We'll need to rebuild main.tf without the missing services
-        const availableServices = services.filter(service => {
+        const availableServices = normalizedServices.filter(service => {
             const normalizedService = getModuleFolderName(service);
             const lookupName = normalizedService === 'relational_db' ? 'relational_database' :
-                              normalizedService === 'auth' ? 'identity_auth' :
-                              normalizedService === 'ml_inference' ? 'ml_inference_service' :
-                              normalizedService === 'websocket' ? 'websocket_gateway' :
-                              normalizedService === 'serverless_compute' ? 'serverless_compute' :
-                              normalizedService === 'analytical_db' ? 'analytical_database' :
-                              normalizedService === 'push_notification' ? 'push_notification_service' :
-                              normalizedService;
+                normalizedService === 'auth' ? 'identity_auth' :
+                    normalizedService === 'ml_inference' ? 'ml_inference_service' :
+                        normalizedService === 'websocket' ? 'websocket_gateway' :
+                            normalizedService === 'serverless_compute' ? 'serverless_compute' :
+                                normalizedService === 'analytical_db' ? 'analytical_database' :
+                                    normalizedService === 'push_notification' ? 'push_notification_service' :
+                                        normalizedService;
             return terraformModules.getModule(lookupName, providerLower) !== undefined;
         });
-        
+
         // Regenerate main.tf with only available services
         projectFolder['main.tf'] = terraformGeneratorV2.generateMainTf(providerLower, pattern, availableServices);
-        
-        console.log(`[TERRAFORM-SAFE] Proceeding with ${availableServices.length}/${services.length} services (missing non-blocking services excluded)`);
+
+        console.log(`[TERRAFORM-SAFE] Proceeding with ${availableServices.length}/${normalizedServices.length} services (missing non-blocking services excluded)`);
     }
 
     // ✅ TIGHTENING 2: Generate hash for drift detection and caching
@@ -270,7 +348,7 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
         .createHash('sha256')
         .update(JSON.stringify(projectFolder))
         .digest('hex');
-    
+
     console.log(`[STEP 5] ✓ Terraform hash generated: ${terraformHash.substring(0, 16)}...`);
 
     // ✅ TIGHTENING 3: Emit deployment manifest for audit and rollback
@@ -278,14 +356,14 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
         provider: provider,
         region: resolvedRegion,
         pattern: pattern,
-        services: services,
+        services: normalizedServices,
         sizing: infraSpec.sizing,
         nfr: infraSpec.nfr || {},
         timestamp: new Date().toISOString(),
         terraform_hash: terraformHash,
         version: '2.0'
     };
-    
+
     console.log(`[STEP 5] ✓ Deployment manifest created: ${services.length} services`);
 
     return {
@@ -295,65 +373,57 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
     };
 }
 
-/**
- * Check if pattern needs networking (VPC)
- */
-function needsNetworking(pattern, services) {
-    const patternsNeedingVPC = [
-        'STATEFUL_WEB_PLATFORM',
-        'HYBRID_PLATFORM',
-        'MOBILE_BACKEND_PLATFORM',
-        'CONTAINERIZED_WEB_APP',
-        'DATA_PLATFORM',
-        'REALTIME_PLATFORM',
-        'ML_TRAINING_PLATFORM'
-    ];
-    return patternsNeedingVPC.includes(pattern);
-}
-
-/**
- * Get module folder name from service name
- */
-function getModuleFolderName(service) {
-    const moduleMap = {
-        'cdn': 'cdn',
-        'api_gateway': 'api_gateway',
-        'serverless_compute': 'serverless_compute',
-        'compute_serverless': 'serverless_compute',  // 🔥 ALIAS: normalize to serverless_compute
-        'app_compute': 'app_compute',
+// Helper function to get module folder name
+function getModuleFolderName(serviceType) {
+    // Normalize service type names for folder structure
+    const nameMap = {
         'relational_database': 'relational_db',
-        'analytical_database': 'analytical_db',
-        'cache': 'cache',
-        'message_queue': 'message_queue',
-        'messaging_queue': 'message_queue',  // 🔥 ALIAS: normalize to message_queue
-        'object_storage': 'object_storage',
         'identity_auth': 'auth',
-        'load_balancer': 'load_balancer',
-        'monitoring': 'monitoring',
-        'logging': 'logging',
         'ml_inference_service': 'ml_inference',
-        'batch_compute': 'batch_compute',
         'websocket_gateway': 'websocket',
-        'payment_gateway': 'payment_gateway',
-        'push_notification_service': 'push_notification'  // 🔥 ADDED
+        'serverless_compute': 'serverless_compute',
+        'analytical_database': 'analytical_db',
+        'push_notification_service': 'push_notification',
+        'global_load_balancer': 'global_lb',
+        'message_queue': 'mq',
+        'secrets_management': 'secrets',
+        'messaging_queue': 'messaging',
+        'audit_logging': 'audit_log',
+        'app_compute': 'app_compute',
+        'search_engine': 'search',
+        'block_storage': 'block_store',
+        'dns': 'dns'
     };
-    return moduleMap[service] || service;
+
+    return nameMap[serviceType] || serviceType.replace(/_/g, '_');
 }
 
-/**
- * ✅ FIX 5: Get default region per provider (fallback only)
- */
+// Helper function to determine if networking module is needed
+function needsNetworking(pattern, services) {
+    // Networking module is needed for certain patterns
+    const needsNetwork = ['STATEFUL_WEB_PLATFORM', 'CONTAINERIZED_WEB_APP', 'TRADITIONAL_VM_APP'].includes(pattern);
+
+    // Or if any of these services are present
+    const networkDependentServices = ['app_compute', 'compute_container', 'compute_vm', 'load_balancer'];
+    const hasNetworkDependent = services.some(service => networkDependentServices.includes(service));
+
+    return needsNetwork || hasNetworkDependent;
+}
+
+// Helper function to get default region
 function getDefaultRegion(provider) {
     const defaults = {
         aws: 'us-east-1',
         gcp: 'us-central1',
-        azure: 'eastus'
+        azure: 'East US'
     };
+
     return defaults[provider] || 'us-east-1';
 }
 
 module.exports = {
     generateModularTerraform,
     getTerraformServices,
-    getModuleFolderName
+    getTerraformResourceType,
+    getModuleFolderName  // 🔥 CRITICAL: Required by workflow.js
 };

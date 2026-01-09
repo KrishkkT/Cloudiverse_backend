@@ -33,8 +33,8 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     const usage = {};
 
     // Calculate derived metrics
-    const monthlyRequests = (usage_profile.monthly_users || 5000) * 
-                           (usage_profile.requests_per_user || 30);
+    const monthlyRequests = (usage_profile.monthly_users || 5000) *
+        (usage_profile.requests_per_user || 30);
     const storageGB = usage_profile.data_storage_gb || 20;
     const transferGB = usage_profile.data_transfer_gb || 50;
 
@@ -45,9 +45,9 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // COMPUTE SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (deployableServices.includes('compute_serverless') || 
+    if (deployableServices.includes('compute_serverless') ||
         deployableServices.includes('app_compute')) {
-        
+
         switch (provider) {
             case 'AWS':
                 usage['aws_lambda_function.app'] = {
@@ -80,7 +80,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
 
     if (deployableServices.includes('compute_container')) {
         const instances = Math.max(2, Math.ceil((usage_profile.peak_concurrency || 100) / 50));
-        
+
         switch (provider) {
             case 'AWS':
                 usage['aws_ecs_service.app'] = {
@@ -285,7 +285,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
 
     if (deployableServices.includes('message_queue')) {
         const queueMessages = monthlyRequests * 0.2; // 20% async messages
-        
+
         switch (provider) {
             case 'AWS':
                 usage['aws_sqs_queue.queue'] = {
@@ -313,7 +313,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
 
     if (deployableServices.includes('identity_auth')) {
         const authRequests = monthlyRequests * 0.5; // 50% require auth
-        
+
         switch (provider) {
             case 'AWS':
                 usage['aws_cognito_user_pool.auth'] = {
@@ -336,8 +336,200 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // HIGH-AVAILABILITY / MULTI-REGION SERVICES
+    // ═══════════════════════════════════════════════════════════════════
+
+    if (deployableServices.includes('global_load_balancer')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_lb.global_alb'] = {
+                    new_connections: monthlyRequests,
+                    active_connections: Math.round(monthlyRequests / 30 / 24 / 60),
+                    processed_bytes: transferGB * 1024 * 1024 * 1024
+                };
+                break;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // API GATEWAY SERVICES
+    // ═══════════════════════════════════════════════════════════════════
+
+    if (deployableServices.includes('api_gateway')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_apigatewayv2_api.api'] = {
+                    monthly_requests: monthlyRequests
+                };
+                break;
+
+            case 'GCP':
+                usage['google_api_gateway_api.api'] = {
+                    monthly_requests: monthlyRequests
+                };
+                break;
+
+            case 'AZURE':
+                usage['azurerm_api_management.api'] = {
+                    monthly_calls: monthlyRequests
+                };
+                break;
+        }
+    }
+
+    if (deployableServices.includes('websocket_gateway')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_apigatewayv2_api.websocket'] = {
+                    monthly_connection_minutes: monthlyRequests * 5, // 5 mins avg per connection
+                    monthly_messages: monthlyRequests * 10 // 10 messages per connection
+                };
+                break;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // MONITORING & LOGGING SERVICES
+    // ═══════════════════════════════════════════════════════════════════
+
+    if (deployableServices.includes('monitoring')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_cloudwatch_metric_alarm.monitoring'] = {
+                    metrics: 50 // number of custom metrics
+                };
+                break;
+        }
+    }
+
+    if (deployableServices.includes('logging')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_cloudwatch_log_group.logs'] = {
+                    monthly_data_ingested_gb: Math.max(10, storageGB * 0.5),
+                    monthly_data_archived_gb: storageGB * 0.3
+                };
+                break;
+        }
+    }
+
+    if (deployableServices.includes('audit_logging')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_cloudwatch_log_group.audit'] = {
+                    monthly_data_ingested_gb: Math.max(5, storageGB * 0.2),
+                    monthly_data_archived_gb: storageGB * 0.5
+                };
+                break;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // SECRETS & SECURITY SERVICES
+    // ═══════════════════════════════════════════════════════════════════
+
+    if (deployableServices.includes('secrets_management') ||
+        deployableServices.includes('secrets_manager')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_secretsmanager_secret.vault'] = {
+                    monthly_api_calls: 10000 // typical secret retrieval
+                };
+                break;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // IOT SERVICES
+    // ═══════════════════════════════════════════════════════════════════
+
+    if (deployableServices.includes('iot_core')) {
+        const deviceMessages = (usage_profile.device_count || 1000) * 30 * 24 * 60; // 1 msg/min
+        switch (provider) {
+            case 'AWS':
+                usage['aws_iot_topic_rule.telemetry'] = {
+                    monthly_messages: deviceMessages
+                };
+                break;
+        }
+    }
+
+    if (deployableServices.includes('time_series_db')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_timestreamwrite_database.tsdb'] = {
+                    monthly_writes_gb: storageGB * 0.1
+                };
+                break;
+        }
+    }
+
+    if (deployableServices.includes('event_streaming')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_kinesis_stream.events'] = {
+                    monthly_shard_hours: 2 * 730 // 2 shards 24/7
+                };
+                break;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // ML / AI SERVICES
+    // ═══════════════════════════════════════════════════════════════════
+
+    if (deployableServices.includes('ml_inference_gpu') ||
+        deployableServices.includes('ml_inference_service')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_sagemaker_endpoint.inference'] = {
+                    monthly_inference_instances: 1,
+                    monthly_inference_hours: 730 // 24/7
+                };
+                break;
+        }
+    }
+
+    if (deployableServices.includes('vector_database')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_opensearch_domain.vectors'] = {
+                    storage_gb: storageGB,
+                    monthly_index_requests: monthlyRequests * 0.1
+                };
+                break;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // DATA / STORAGE SERVICES
+    // ═══════════════════════════════════════════════════════════════════
+
+    if (deployableServices.includes('data_lake')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_s3_bucket.data_lake'] = {
+                    storage_gb: storageGB * 10, // data lakes are large
+                    monthly_tier_1_requests: monthlyRequests * 0.05
+                };
+                break;
+        }
+    }
+
+    if (deployableServices.includes('app_compute')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_ecs_service.app'] = {
+                    monthly_cpu_hours: 2 * 730, // 2 instances 24/7
+                    monthly_memory_gb_hours: 4 * 730 // 2GB each
+                };
+                break;
+        }
+    }
+
     console.log(`[USAGE NORMALIZER] Generated ${Object.keys(usage).length} resource usage entries`);
-    
+
     return usage;
 }
 
@@ -349,7 +541,7 @@ function toInfracostYAML(normalizedUsage) {
 
     for (const [resourceName, usageData] of Object.entries(normalizedUsage)) {
         yaml += `  ${resourceName}:\n`;
-        
+
         for (const [key, value] of Object.entries(usageData)) {
             if (typeof value === 'object' && value !== null) {
                 // Nested object (e.g., monthly_data_transfer_gb)
