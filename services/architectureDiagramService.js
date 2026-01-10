@@ -128,11 +128,11 @@ function generateCanonicalArchitecture(infraSpec, usageProfile = {}) {
     console.warn('[DEPRECATED] Use patternResolver.generateCanonicalArchitecture instead');
     const pattern = infraSpec.architecture_pattern || 'SERVERLESS_WEB_APP';
     const intent = infraSpec.locked_intent?.intent_classification?.project_description || '';
-    
+
     // Use the pattern resolver to extract requirements and generate architecture
     const requirements = patternResolver.extractRequirements(intent);
     const canonicalArchitecture = patternResolver.generateCanonicalArchitecture(requirements, pattern);
-    
+
     return canonicalArchitecture;
 }
 
@@ -142,7 +142,7 @@ function generateCanonicalArchitecture(infraSpec, usageProfile = {}) {
 function extractProjectSignals(infraSpec, usageProfile = {}) {
     const features = infraSpec.features || {};
     const exclude = infraSpec.exclude || [];
-    
+
     return {
         user_facing: !exclude.includes('frontend'),
         static_content: !exclude.includes('static_files'),
@@ -169,26 +169,26 @@ function extractProjectSignals(infraSpec, usageProfile = {}) {
  */
 function selectServicesFromSignals(signals) {
     let selectedServices = [];
-    
+
     for (const [serviceType, meta] of Object.entries(SERVICE_REGISTRY)) {
         // Check if service is required for any of the signals
         if (meta.required_for?.some(f => signals[f])) {
             selectedServices.push(serviceType);
         }
     }
-    
+
     // Handle exclusions
     if (signals.no_database) {
         selectedServices = selectedServices.filter(
             s => !s.includes("database")
         );
     }
-    
+
     // Add default services if not excluded
     if (signals.user_facing && !selectedServices.includes('client')) {
         selectedServices.unshift('client');
     }
-    
+
     return selectedServices;
 }
 
@@ -218,7 +218,7 @@ function generateConnectionLabel(from, to) {
         'load_balancer-compute': 'distributes',
         'compute-load_balancer': 'registers',
     };
-    
+
     const key = `${from}-${to}`;
     return connectionLabels[key] || 'connects';
 }
@@ -231,14 +231,14 @@ function generateConnectionLabel(from, to) {
  */
 function mapToProvider(canonicalArchitecture, provider) {
     console.log(`[MAP TO PROVIDER] Mapping ${canonicalArchitecture.pattern} to ${provider}`);
-    
+
     // Validate that we have canonical services
     const services = canonicalArchitecture.services || [];
     if (services.length === 0) {
         console.error('[MAP TO PROVIDER] No services in canonical architecture');
         throw new Error('Canonical architecture must include services');
     }
-    
+
     // CRITICAL VALIDATION: Minimum service count check per V1 Pattern Catalog
     const minServicesByPattern = {
         'STATIC_SITE': 2, // object_storage, cdn
@@ -253,24 +253,24 @@ function mapToProvider(canonicalArchitecture, provider) {
         'ML_INFERENCE_PLATFORM': 3, // ml_inference_service, object_storage, logging
         'ML_TRAINING_PLATFORM': 3 // batch_compute, object_storage, logging
     };
-    
+
     const pattern = canonicalArchitecture.pattern;
     const minRequired = minServicesByPattern[pattern] || 1;
     const actualCount = services.length;
-    
+
     if (actualCount < minRequired) {
         const error = `[DIAGRAM GENERATION FAILED] Pattern ${pattern} requires minimum ${minRequired} services, but only ${actualCount} provided. Cannot generate meaningful diagram.`;
         console.error(error);
         console.error('[DIAGRAM GENERATION FAILED] Services:', services.map(s => s.canonical_type || s.name).join(', '));
         throw new Error(error);
     }
-    
+
     console.log(`[DIAGRAM VALIDATION] Pattern ${pattern} has ${actualCount} services (minimum: ${minRequired}) ✓`);
-    
+
     // Build nodes for diagram from canonical services
     const nodes = [];
     const existingNodes = [];
-    
+
     // Add client node for user-facing patterns
     const userFacingPatterns = ['SERVERLESS_WEB_APP', 'STATEFUL_WEB_PLATFORM', 'HYBRID_PLATFORM', 'CONTAINERIZED_WEB_APP'];
     if (userFacingPatterns.includes(pattern)) {
@@ -286,22 +286,22 @@ function mapToProvider(canonicalArchitecture, provider) {
         nodes.push(clientNode);
         existingNodes.push(clientNode);
     }
-    
+
     // Map each canonical service to provider-specific node
     services.forEach((service, idx) => {
         const serviceType = service.canonical_type || service.service_class || service.name;
         const category = service.category || getCategoryForService(serviceType);
-        
+
         // 🔥 CRITICAL: Mark serverless_compute role in HYBRID pattern
         let nodeLabel = getGenericServiceName(serviceType, provider.toUpperCase());
         let nodeRole = null;
-        
+
         if (pattern === 'HYBRID_PLATFORM' && serviceType === 'serverless_compute') {
             nodeRole = 'background_worker';
             nodeLabel += ' (Background Jobs)';  // Visual distinction
             console.log('[DIAGRAM] serverless_compute marked as background_worker in HYBRID_PLATFORM');
         }
-        
+
         const node = {
             id: serviceType,
             label: nodeLabel,
@@ -315,13 +315,13 @@ function mapToProvider(canonicalArchitecture, provider) {
         nodes.push(node);
         existingNodes.push(node);
     });
-    
+
     console.log(`[MAP TO PROVIDER] Generated ${nodes.length} nodes for ${provider}`);
-    
+
     // Generate edges based on pattern and services
     const edges = generateEdgesForPattern(pattern, nodes);
     console.log(`[MAP TO PROVIDER] Generated ${edges.length} edges`);
-    
+
     return {
         ...canonicalArchitecture,
         provider: provider.toUpperCase(),
@@ -376,13 +376,15 @@ function getCategoryForService(serviceType) {
 
 /**
  * Generate edges (connections) based on pattern and available nodes
+ * 🔥 ENHANCED: Added more patterns and fallback for orphan nodes
  */
 function generateEdgesForPattern(pattern, nodes) {
     const edges = [];
     const nodeIds = nodes.map(n => n.id);
     const hasNode = (id) => nodeIds.includes(id);
-    
-    // Helper to add edge
+    const connectedNodes = new Set();
+
+    // Helper to add edge and track connected nodes
     const addEdge = (from, to, label = 'connects') => {
         if (hasNode(from) && hasNode(to)) {
             edges.push({
@@ -391,9 +393,11 @@ function generateEdgesForPattern(pattern, nodes) {
                 label,
                 type: 'directional'
             });
+            connectedNodes.add(from);
+            connectedNodes.add(to);
         }
     };
-    
+
     // Pattern-specific edge generation
     switch (pattern) {
         case 'STATEFUL_WEB_PLATFORM':
@@ -404,14 +408,17 @@ function generateEdgesForPattern(pattern, nodes) {
                 if (hasNode('cdn')) {
                     addEdge('client', 'cdn', 'requests');
                     addEdge('cdn', 'load_balancer', 'routes');
-                } else {
+                } else if (hasNode('load_balancer')) {
                     addEdge('client', 'load_balancer', 'requests');
+                } else if (hasNode('app_compute')) {
+                    addEdge('client', 'app_compute', 'requests');
                 }
             }
             addEdge('load_balancer', 'app_compute', 'distributes');
-            
+
             // App Compute connections
             addEdge('app_compute', 'relational_database', 'reads/writes');
+            addEdge('app_compute', 'nosql_database', 'reads/writes');
             addEdge('app_compute', 'cache', 'caches');
             addEdge('app_compute', 'object_storage', 'stores');
             addEdge('app_compute', 'identity_auth', 'authenticates');
@@ -420,16 +427,19 @@ function generateEdgesForPattern(pattern, nodes) {
             addEdge('app_compute', 'payment_gateway', 'processes');
             addEdge('app_compute', 'logging', 'logs');
             addEdge('app_compute', 'monitoring', 'metrics');
-            
+            addEdge('app_compute', 'push_notification_service', 'notifies');
+            addEdge('app_compute', 'secrets_management', 'fetches');
+
             // Background workers (if hybrid)
             if (pattern === 'HYBRID_PLATFORM' && hasNode('serverless_compute')) {
                 addEdge('message_queue', 'serverless_compute', 'triggers');
                 addEdge('messaging_queue', 'serverless_compute', 'triggers');
                 addEdge('serverless_compute', 'relational_database', 'reads/writes');
                 addEdge('serverless_compute', 'object_storage', 'processes');
+                addEdge('serverless_compute', 'logging', 'logs');
             }
             break;
-            
+
         case 'SERVERLESS_WEB_APP':
         case 'SERVERLESS_API':
             // User → CDN (for web) or API Gateway (for API)
@@ -437,12 +447,12 @@ function generateEdgesForPattern(pattern, nodes) {
                 if (hasNode('cdn')) {
                     addEdge('client', 'cdn', 'requests');
                     addEdge('cdn', 'api_gateway', 'routes');
-                } else {
+                } else if (hasNode('api_gateway')) {
                     addEdge('client', 'api_gateway', 'requests');
                 }
             }
             addEdge('api_gateway', 'serverless_compute', 'invokes');
-            
+
             // Serverless connections
             addEdge('serverless_compute', 'relational_database', 'reads/writes');
             addEdge('serverless_compute', 'nosql_database', 'reads/writes');
@@ -451,8 +461,12 @@ function generateEdgesForPattern(pattern, nodes) {
             addEdge('serverless_compute', 'identity_auth', 'authenticates');
             addEdge('serverless_compute', 'logging', 'logs');
             addEdge('serverless_compute', 'monitoring', 'metrics');
+            addEdge('serverless_compute', 'message_queue', 'queues');
+            addEdge('serverless_compute', 'payment_gateway', 'processes');
+            addEdge('serverless_compute', 'push_notification_service', 'notifies');
+            addEdge('serverless_compute', 'secrets_management', 'fetches');
             break;
-            
+
         case 'MOBILE_BACKEND_PLATFORM':
             // Mobile App → API Gateway → Serverless
             if (hasNode('client')) {
@@ -460,13 +474,17 @@ function generateEdgesForPattern(pattern, nodes) {
             }
             addEdge('api_gateway', 'serverless_compute', 'invokes');
             addEdge('serverless_compute', 'relational_database', 'reads/writes');
+            addEdge('serverless_compute', 'nosql_database', 'reads/writes');
             addEdge('serverless_compute', 'identity_auth', 'authenticates');
             addEdge('serverless_compute', 'cache', 'caches');
+            addEdge('serverless_compute', 'object_storage', 'stores');
             addEdge('serverless_compute', 'push_notification_service', 'sends');
             addEdge('serverless_compute', 'logging', 'logs');
+            addEdge('serverless_compute', 'monitoring', 'metrics');
             break;
-            
+
         case 'DATA_PLATFORM':
+        case 'ML_TRAINING_PLATFORM':
             // Batch Compute → Data Storage/Database
             addEdge('batch_compute', 'object_storage', 'reads/writes');
             addEdge('batch_compute', 'analytical_database', 'loads');
@@ -476,25 +494,67 @@ function generateEdgesForPattern(pattern, nodes) {
             if (hasNode('message_queue')) {
                 addEdge('message_queue', 'batch_compute', 'triggers');
             }
+            if (hasNode('event_bus')) {
+                addEdge('event_bus', 'batch_compute', 'triggers');
+            }
             break;
-            
+
+        case 'ML_INFERENCE_PLATFORM':
+            // ML Inference
+            if (hasNode('client')) {
+                addEdge('client', 'api_gateway', 'requests');
+            }
+            addEdge('api_gateway', 'ml_inference_service', 'invokes');
+            addEdge('ml_inference_service', 'object_storage', 'loads models');
+            addEdge('ml_inference_service', 'logging', 'logs');
+            addEdge('ml_inference_service', 'monitoring', 'metrics');
+            break;
+
+        case 'REALTIME_PLATFORM':
+            // Real-time with WebSocket
+            if (hasNode('client')) {
+                addEdge('client', 'websocket_gateway', 'connects');
+            }
+            addEdge('websocket_gateway', 'app_compute', 'routes');
+            addEdge('app_compute', 'cache', 'syncs');
+            addEdge('app_compute', 'message_queue', 'publishes');
+            addEdge('message_queue', 'app_compute', 'subscribes');
+            addEdge('app_compute', 'relational_database', 'persists');
+            addEdge('app_compute', 'logging', 'logs');
+            addEdge('app_compute', 'monitoring', 'metrics');
+            break;
+
         case 'STATIC_SITE':
+        case 'STATIC_SITE_WITH_AUTH':
             // User → CDN → Object Storage
             if (hasNode('client')) {
                 addEdge('client', 'cdn', 'requests');
             }
             addEdge('cdn', 'object_storage', 'serves');
             if (hasNode('identity_auth')) {
-                addEdge('object_storage', 'identity_auth', 'authenticates');
+                addEdge('cdn', 'identity_auth', 'authenticates');
             }
             break;
-            
+
         default:
             // Generic fallback edges
             console.warn(`[EDGES] No specific edge pattern for ${pattern}, generating generic edges`);
             break;
     }
-    
+
+    // 🔥 FALLBACK: Connect any orphan nodes to the nearest compute node
+    const computeNodes = ['app_compute', 'serverless_compute', 'batch_compute', 'ml_inference_service', 'compute_container', 'compute_vm'];
+    const primaryCompute = computeNodes.find(c => hasNode(c)) || null;
+
+    if (primaryCompute) {
+        nodeIds.forEach(nodeId => {
+            if (!connectedNodes.has(nodeId) && nodeId !== 'client' && nodeId !== primaryCompute) {
+                console.log(`[EDGES] Connecting orphan node: ${nodeId} → ${primaryCompute}`);
+                addEdge(primaryCompute, nodeId, 'uses');
+            }
+        });
+    }
+
     return edges;
 }
 
@@ -609,11 +669,11 @@ function getGenericServiceName(serviceType, provider) {
             'AZURE': 'Synapse Analytics'
         }
     };
-    
+
     if (serviceMap[serviceType] && serviceMap[serviceType][provider]) {
         return serviceMap[serviceType][provider];
     }
-    
+
     // Default fallback
     return `${provider} ${serviceType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}`;
 }
@@ -625,7 +685,7 @@ function generateArchitectureNotes(infraSpec, usageProfile = {}, requirements = 
     const notes = [];
     const features = infraSpec.features || {};
     const pattern = infraSpec.architecture_pattern || 'SERVERLESS_WEB_APP';
-    
+
     // Add pattern-specific notes
     switch (pattern) {
         case 'SERVERLESS_WEB_APP':
@@ -649,24 +709,24 @@ function generateArchitectureNotes(infraSpec, usageProfile = {}, requirements = 
             notes.push("Persistent storage for data that survives reboots");
             break;
     }
-    
+
     // Add requirement-specific notes
     if (requirements.stateful) {
         notes.push("Stateful design with persistent data storage");
     }
-    
+
     if (requirements.payments) {
         notes.push("Payment processing integrated with security compliance");
     }
-    
+
     if (requirements.realtime) {
         notes.push("Real-time capabilities for live updates and notifications");
     }
-    
+
     if (requirements.authentication) {
         notes.push("Authentication system for user access control");
     }
-    
+
     // Add NFR-specific notes
     if (requirements.nfr) {
         if (requirements.nfr.availability === "99.99") {
@@ -674,20 +734,20 @@ function generateArchitectureNotes(infraSpec, usageProfile = {}, requirements = 
         } else if (requirements.nfr.availability === "99.9") {
             notes.push("Standard availability configuration with redundancy");
         }
-        
+
         if (requirements.nfr.compliance && requirements.nfr.compliance.length > 0) {
             notes.push(`Compliance requirements: ${requirements.nfr.compliance.join(', ')} implemented`);
         }
-        
+
         if (requirements.nfr.security_level === "high") {
             notes.push("Enhanced security posture with additional security services");
         }
-        
+
         if (requirements.nfr.data_residency) {
             notes.push(`Data residency requirements: ${requirements.nfr.data_residency}`);
         }
     }
-    
+
     // Add region-specific notes
     if (requirements.region) {
         notes.push(`Primary region: ${requirements.region.primary_region}`);
@@ -695,7 +755,7 @@ function generateArchitectureNotes(infraSpec, usageProfile = {}, requirements = 
             notes.push(`Multi-region deployment enabled for availability`);
         }
     }
-    
+
     // Add data classification notes
     if (requirements.data_classes && Object.keys(requirements.data_classes).length > 0) {
         const sensitiveDataTypes = Object.entries(requirements.data_classes)
@@ -705,17 +765,17 @@ function generateArchitectureNotes(infraSpec, usageProfile = {}, requirements = 
             notes.push(`Sensitive data handling for: ${sensitiveDataTypes.join(', ')}`);
         }
     }
-    
+
     // Add data retention notes
     if (requirements.data_retention && Object.keys(requirements.data_retention).length > 0) {
         notes.push(`Data retention policies applied`);
     }
-    
+
     // Add deployment strategy notes
     if (requirements.deployment_strategy) {
         notes.push(`Deployment strategy: ${requirements.deployment_strategy.charAt(0).toUpperCase() + requirements.deployment_strategy.slice(1)} update`);
     }
-    
+
     // Add observability notes
     if (requirements.observability) {
         const obsServices = [];
@@ -726,16 +786,16 @@ function generateArchitectureNotes(infraSpec, usageProfile = {}, requirements = 
             notes.push(`Observability services included: ${obsServices.join(', ')}`);
         }
     }
-    
+
     // Add usage-based notes
     if (usageProfile?.data_transfer_gb && usageProfile.data_transfer_gb.max > 1000) {
         notes.push("High data transfer optimized with CDN and caching");
     }
-    
+
     if (usageProfile?.monthly_users && usageProfile.monthly_users.max > 10000) {
         notes.push("Designed for high user concurrency with auto-scaling");
     }
-    
+
     return notes;
 }
 
@@ -745,12 +805,12 @@ function generateArchitectureNotes(infraSpec, usageProfile = {}, requirements = 
  */
 function generateServicesList(providerArchitecture, provider) {
     console.log(`[GENERATE SERVICES LIST] Creating list for ${provider}`);
-    
+
     // If we have provider_architecture from the mapping, use it
     if (providerArchitecture.provider_architecture) {
         return providerMappingService.generateServicesList(providerArchitecture.provider_architecture);
     }
-    
+
     // Fallback to nodes if provider_architecture not available
     if (providerArchitecture.nodes) {
         return providerArchitecture.nodes
@@ -763,7 +823,7 @@ function generateServicesList(providerArchitecture, provider) {
                 category: node.category
             }));
     }
-    
+
     console.warn('[GENERATE SERVICES LIST] No services found in architecture');
     return [];
 }
@@ -791,7 +851,7 @@ function getServiceDescription(serviceType) {
         'logging': 'Centralized log aggregation and analysis',
         'secrets_management': 'Secure storage and management of sensitive credentials'
     };
-    
+
     return descriptions[serviceType] || 'Cloud infrastructure component';
 }
 
@@ -810,10 +870,10 @@ function calculateNodePosition(index, category, existingNodes = []) {
         'messaging': { x: 500, y: 400 },
         'observability': { x: 700, y: 400 }
     };
-    
+
     const sameCategoryCount = existingNodes.filter(n => n.category === category).length;
     const baseOffset = categoryOffsets[category] || { x: 100 * index, y: 100 };
-    
+
     return {
         x: baseOffset.x,
         y: baseOffset.y + (sameCategoryCount * 80)

@@ -182,11 +182,64 @@ const sendWorkspaceDeletionEmail = async (user, workspaceName) => {
   await sendEmail(user.email, subject, getHtmlTemplate('Workspace Deleted', body));
 };
 
+const sendDeploymentReadyEmail = async (user, deploymentDetails) => {
+  console.log(`[EMAIL SERVICE] Sending Deployment Ready Email to ${user.email}`);
+  const { workspaceName, provider, estimatedCost, pattern, services, region } = deploymentDetails;
+
+  const subject = `🚀 Your Infrastructure is Ready: ${workspaceName}`;
+  const body = `
+    <p>Great news! Your cloud infrastructure for <strong>${workspaceName}</strong> is ready for deployment.</p>
+    
+    <div style="background-color: #f8fafc; border-radius: 12px; padding: 20px; margin: 20px 0;">
+      <h3 style="margin-top: 0; color: #1e293b;">Deployment Summary</h3>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 8px 0; color: #64748b;">Cloud Provider</td>
+          <td style="padding: 8px 0; color: #1e293b; font-weight: 600; text-align: right;">${(provider || 'Not Selected').toUpperCase()}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; color: #64748b;">Architecture Pattern</td>
+          <td style="padding: 8px 0; color: #1e293b; font-weight: 600; text-align: right;">${pattern || 'Custom'}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; color: #64748b;">Region</td>
+          <td style="padding: 8px 0; color: #1e293b; font-weight: 600; text-align: right;">${region || 'Default'}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; color: #64748b;">Estimated Monthly Cost</td>
+          <td style="padding: 8px 0; color: #22c55e; font-weight: 700; text-align: right;">${estimatedCost || 'N/A'}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; color: #64748b;">Services</td>
+          <td style="padding: 8px 0; color: #1e293b; text-align: right;">${services?.length || 0} services</td>
+        </tr>
+      </table>
+    </div>
+
+    <p style="color: #475569;">Your Terraform code has been generated and is ready for deployment. You can:</p>
+    <ul style="color: #475569;">
+      <li>Download the Terraform files from your workspace</li>
+      <li>Review the generated infrastructure code</li>
+      <li>Deploy to your cloud account using <code>terraform apply</code></li>
+    </ul>
+
+    <div style="text-align: center; margin-top: 30px;">
+      <a href="${process.env.VITE_FRONTEND_URL || 'https://cloudiverse.vercel.app'}/workspaces" class="btn" style="color: #ffffff; text-decoration: none;">View Your Workspace</a>
+    </div>
+
+    <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin-top: 30px; color: #92400e;">
+      <strong>Next Steps:</strong> Make sure to configure your cloud provider credentials before running <code>terraform init</code> and <code>terraform apply</code>.
+    </div>
+  `;
+  await sendEmail(user.email, subject, getHtmlTemplate('Infrastructure Ready', body));
+};
+
 module.exports = {
   sendEmail,
   sendWelcomeEmail,
   sendLoginNotification,
   sendPasswordResetEmail,
   sendAccountDeletionEmail,
-  sendWorkspaceDeletionEmail
+  sendWorkspaceDeletionEmail,
+  sendDeploymentReadyEmail
 };

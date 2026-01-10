@@ -960,11 +960,18 @@ router.post('/analyze', authMiddleware, async (req, res) => {
 
                 console.log(`[NEW SYSTEM] Asking: ${nextQuestion.axis_key} - "${nextQuestion.question}"`);
 
-                // Format options for frontend (maintain backward compatibility)
-                const formattedOptions = nextQuestion.suggested_answers.map(answer => ({
-                    label: answer,
-                    value: answer // Frontend will send this back
-                }));
+                // Format options for frontend (support both string and object answers)
+                const formattedOptions = nextQuestion.suggested_answers.map(answer => {
+                    if (typeof answer === 'object') {
+                        return {
+                            label: answer.label,
+                            value: answer.value || answer.label,
+                            description: answer.description || null
+                        };
+                    }
+                    // Legacy fallback for string answers
+                    return { label: answer, value: answer, description: null };
+                });
 
                 return res.json({
                     step: 'refine_requirements',
@@ -2413,7 +2420,7 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
             data: {
                 status: 'PARTIAL_SUCCESS',
                 analysis_status: 'PARTIAL_SUCCESS',
-                cost_profile: costProfile,
+                cost_profile: 'cost_effective',  // Fallback value
                 deployment_type: 'fallback',
                 scale_tier: 'MEDIUM',
                 cost_mode: 'FALLBACK_MODE',

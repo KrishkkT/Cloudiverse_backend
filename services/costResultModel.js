@@ -224,12 +224,12 @@ function buildCostResult(provider, pattern, totalCost, genericServices, usage = 
     // 🔥 CRITICAL: Engine has ALREADY applied cost profile multiplier
     // DO NOT apply cost intent here - that would double-apply it
     // The totalCost passed in is the final, adjusted cost from the engine
-    
+
     if (totalCost <= 0) {
         console.error(`[COST RESULT] Invalid cost: $${totalCost} for ${providerLower}`);
         throw new Error(`Invalid base cost $${totalCost} - cost engine must return positive value`);
     }
-    
+
     console.log(`[COST RESULT] Building result for ${providerLower}: $${totalCost.toFixed(2)}`);
 
     // Get dynamic weights based on usage
@@ -238,7 +238,7 @@ function buildCostResult(provider, pattern, totalCost, genericServices, usage = 
     // Calculate allocated weight total for normalization
     // 🔥 FIX: Filter out undefined/null services to prevent crashes
     const validServices = genericServices.filter(svc => svc != null);
-    
+
     let allocatedWeight = 0;
     validServices.forEach(svc => {
         if (weights[svc]) allocatedWeight += weights[svc];
@@ -297,7 +297,7 @@ function buildQuantifiedDrivers(pattern, usage, services = []) {
                 cost_contribution = relatedService.cost || 0;
             }
         }
-        
+
         return {
             name: def.name,
             value: getDriverValue(def.name, usage),
@@ -425,7 +425,7 @@ function aggregateScenarios(scenarios) {
 
     const min = Math.min(...allCosts);
     const max = Math.max(...allCosts);
-    
+
     // Calculate recommended based on the lowest cost across all profiles
     let recommended = null;
     for (const profileName of Object.keys(scenarios)) {
@@ -435,20 +435,20 @@ function aggregateScenarios(scenarios) {
             if (result && typeof result.monthly_cost === "number") {
                 // Create a copy to avoid mutating original object
                 const resultCopy = { ...result };
-                
+
                 // Attach competitiveness score to every result
                 resultCopy.score = computeScore(resultCopy.monthly_cost, min, max);
-                
+
                 if (!recommended || resultCopy.monthly_cost < recommended.monthly_cost) {
                     recommended = resultCopy;
                 }
-                
+
                 // Update the profile with the copy that has the score
                 profile[provider] = resultCopy;
             }
         }
     }
-    
+
     return {
         cost_range: {
             min: min,
@@ -550,7 +550,7 @@ function computeConfidence(infraSpec, scenarios, usage = {}, estimate_type = 'he
     // ═══════════════════════════════════════════════════════════════════════
     const usageFields = ['monthly_users', 'requests_per_user', 'data_transfer_gb', 'data_storage_gb'];
     const filledFields = usageFields.filter(f => usage[f] !== undefined).length;
-    
+
     let usageConfidence = 0;
     if (usage.confidence && typeof usage.confidence === 'number') {
         // Explicit confidence provided from AI or user
@@ -629,7 +629,13 @@ function validateInfraSpec(infraSpec) {
 
 function generateRecommendationFacts(recommendedResult, allScenarios, usage, pattern) {
     if (!recommendedResult) return null;
-    
+
+    // 🔥 FIX: Handle undefined or null allScenarios gracefully
+    if (!allScenarios || typeof allScenarios !== 'object') {
+        console.warn('[generateRecommendationFacts] allScenarios is undefined or invalid');
+        return null;
+    }
+
     // Get all costs to calculate differences
     const allCosts = [];
     for (const profileName of Object.keys(allScenarios)) {
@@ -645,16 +651,16 @@ function generateRecommendationFacts(recommendedResult, allScenarios, usage, pat
             }
         }
     }
-    
+
     // Sort by cost to identify next best alternative
     allCosts.sort((a, b) => a.cost - b.cost);
-    
+
     // Find the next best option (not the same as recommended)
-    const nextBest = allCosts.find(item => 
-        item.provider !== recommendedResult.provider || 
+    const nextBest = allCosts.find(item =>
+        item.provider !== recommendedResult.provider ||
         JSON.stringify(item.result) !== JSON.stringify(recommendedResult)
     );
-    
+
     // Calculate cost difference
     let costDifference = null;
     if (nextBest) {
@@ -666,7 +672,7 @@ function generateRecommendationFacts(recommendedResult, allScenarios, usage, pat
             percentage: Math.round(diffPercent)
         };
     }
-    
+
     // Identify dominant cost drivers from the recommended result
     const dominantDrivers = recommendedResult.drivers
         .sort((a, b) => b.cost_contribution - a.cost_contribution)
@@ -676,19 +682,19 @@ function generateRecommendationFacts(recommendedResult, allScenarios, usage, pat
             value: driver.value,
             cost_contribution: driver.cost_contribution
         }));
-    
+
     // Generate pros/cons based on provider and usage pattern
     const pros = [];
     const cons = [];
     const bestFor = [];
     const notIdealFor = [];
-    
+
     const provider = recommendedResult.provider.toUpperCase();
     const monthlyCost = recommendedResult.monthly_cost;
-    
+
     // Always add the primary cost-based reason
     pros.push(`Lowest estimated monthly cost at your current usage of $${monthlyCost.toFixed(2)}`);
-    
+
     // Additional pros based on provider strengths
     if (provider === 'AZURE') {
         if (monthlyCost < 50) {
@@ -709,7 +715,7 @@ function generateRecommendationFacts(recommendedResult, allScenarios, usage, pat
         }
         pros.push("Superior machine learning and data analytics services");
     }
-    
+
     // Cons based on provider trade-offs
     if (provider === 'AZURE') {
         cons.push("Smaller ecosystem than AWS");
@@ -721,35 +727,35 @@ function generateRecommendationFacts(recommendedResult, allScenarios, usage, pat
         cons.push("Smaller partner ecosystem");
         cons.push("Less mature enterprise support compared to AWS/Azure");
     }
-    
+
     // Best for based on usage pattern
     const maxUsers = getNumeric(usage?.monthly_users, 5000);
     const maxTransfer = getNumeric(usage?.data_transfer_gb, 50);
-    
+
     if (maxUsers <= 5000) {
         bestFor.push("Early-stage projects");
         bestFor.push("Portfolio websites");
     } else {
         bestFor.push("Growth-stage applications");
     }
-    
+
     if (monthlyCost < 50) {
         bestFor.push("Cost-sensitive workloads");
     }
-    
+
     if (pattern.includes('SERVERLESS')) {
         bestFor.push("Serverless-first architectures");
     }
-    
+
     // Not ideal for based on usage
     if (maxUsers > 100000) {
         notIdealFor.push("Very large user bases (consider enterprise support)");
     }
-    
+
     if (maxTransfer > 1000) {
         notIdealFor.push("Very high data transfer (negotiated rates may be better)");
     }
-    
+
     return {
         provider: recommendedResult.provider,
         verdict: "recommended",

@@ -1893,19 +1893,16 @@ module.exports = {
 
     const module = modules[serviceName];
     if (module === undefined) {
-      // Service not in registry at all - return null
-      return null;
+      // 🔥 FIX: Service not in registry - generate minimal fallback module
+      // This ensures ALL services get terraform generated
+      console.log(`[TERRAFORM] Service ${serviceName} not in registry, using fallback module for ${provider}`);
+      return generateMinimalModule(provider, serviceName);
     }
 
     if (module === null) {
       // Explicitly marked as "use fallback"
-      if (provider === 'gcp' || provider === 'azure') {
-        console.log(`[TERRAFORM] Using minimal fallback module for ${serviceName} on ${provider}`);
-        return generateMinimalModule(provider, serviceName);
-      }
-      // For AWS, still need full implementation
-      console.log(`[TERRAFORM] Using minimal fallback module for ${serviceName} on ${provider} (AWS)`);
-      return generateMinimalModule('aws', serviceName);
+      console.log(`[TERRAFORM] Using minimal fallback module for ${serviceName} on ${provider}`);
+      return generateMinimalModule(provider, serviceName);
     }
 
     // If provider-specific implementation exists, use it
@@ -1913,12 +1910,8 @@ module.exports = {
       return module[provider]();
     }
 
-    // 🔥 FALLBACK: Generate minimal module for GCP/Azure
-    if (provider === 'gcp' || provider === 'azure') {
-      console.log(`[TERRAFORM] Using minimal module for ${serviceName} on ${provider}`);
-      return generateMinimalModule(provider, serviceName);
-    }
-
-    return null;
+    // 🔥 FALLBACK: Generate minimal module for GCP/Azure (or AWS if module has no provider impl)
+    console.log(`[TERRAFORM] Using minimal module for ${serviceName} on ${provider} (no provider-specific implementation)`);
+    return generateMinimalModule(provider, serviceName);
   }
 };

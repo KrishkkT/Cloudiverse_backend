@@ -259,9 +259,9 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
     const { id } = req.params;
     const { deployment_method, provider } = req.body;
 
-    // Get project_id first
+    // Get workspace data including state for email
     const wsRes = await pool.query(
-      "SELECT project_id FROM workspaces WHERE id = $1",
+      "SELECT project_id, name, state_json FROM workspaces WHERE id = $1",
       [id]
     );
 
@@ -269,7 +269,7 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
       return res.status(404).json({ msg: "Workspace not found" });
     }
 
-    const projectId = wsRes.rows[0].project_id;
+    const { project_id: projectId, name: workspaceName, state_json: stateJson } = wsRes.rows[0];
 
     // Update workspace to active deployment status
     await pool.query(
@@ -302,7 +302,7 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
        RETURNING active_deployments`,
       [projectId]
     );
-    
+
     if (updateResult.rows.length === 0) {
       console.error(`[DEPLOYMENT] Project ${projectId} not found`);
       return res.status(404).json({ msg: "Project not found" });
@@ -312,7 +312,33 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
     console.log(`[DEPLOYMENT] Workspace ${id} marked as ACTIVE DEPLOYMENT - ${deployment_method} to ${provider}`);
     console.log(`[DEPLOYMENT] Project ${projectId} active_deployments incremented to ${newCount}`);
 
-    res.json({ 
+    // Send Deployment Ready Email
+    try {
+      const userRes = await pool.query("SELECT email, name FROM users WHERE id = $1", [req.user.id]);
+      if (userRes.rows.length > 0) {
+        // Extract deployment details from state
+        const infraSpec = stateJson?.infraSpec || {};
+        const costEstimation = stateJson?.costEstimation || {};
+        const selectedProvider = provider || infraSpec?.resolved_region?.provider || 'unknown';
+
+        await emailService.sendDeploymentReadyEmail(userRes.rows[0], {
+          workspaceName: workspaceName || 'Untitled Project',
+          provider: selectedProvider,
+          estimatedCost: costEstimation?.rankings?.find(r => r.provider?.toLowerCase() === selectedProvider?.toLowerCase())?.formatted_cost
+            || costEstimation?.recommended?.formatted_cost
+            || 'N/A',
+          pattern: infraSpec?.canonical_architecture?.pattern_name || infraSpec?.pattern_key || 'Custom',
+          services: infraSpec?.canonical_architecture?.deployable_services || [],
+          region: infraSpec?.resolved_region?.resolved || infraSpec?.resolved_region?.logical || 'Default'
+        });
+        console.log(`[DEPLOYMENT] Sent deployment ready email to ${userRes.rows[0].email}`);
+      }
+    } catch (emailErr) {
+      console.error("Failed to send deployment email:", emailErr);
+      // Don't block the response
+    }
+
+    res.json({
       msg: "Workspace deployed - active_deployments incremented",
       id,
       deployment_method,
@@ -324,15 +350,15 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
     console.error("Deploy Workspace Error:", err);
     console.error("Error details:", err.message);
     console.error("Error stack:", err.stack);
-    
+
     // Check if it's a column missing error
     if (err.message && err.message.includes('active_deployments')) {
-      return res.status(500).json({ 
+      return res.status(500).json({
         msg: "Database schema missing active_deployments column. Please run migrations.",
-        error: err.message 
+        error: err.message
       });
     }
-    
+
     res.status(500).json({ msg: "Server Error", error: err.message });
   }
 });
@@ -390,7 +416,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
       );
     }
 
-    res.json({ 
+    res.json({
       msg: "Workspace updated successfully",
       id,
       name,

@@ -2,449 +2,1181 @@
     "static_content": {
         "question": "Will you serve mostly static content (e.g., HTML, images, assets)?",
         "suggested_answers": [
-            "Yes, mostly static content",
-            "No, mostly dynamic content",
-            "A mix of both"
+            {
+                "label": "Yes, mostly static content",
+                "value": "yes",
+                "description": "HTML, CSS, JS, and images served directly without server processing"
+            },
+            {
+                "label": "No, mostly dynamic content",
+                "value": "no",
+                "description": "Content generated on each request from databases or APIs"
+            },
+            {
+                "label": "A mix of both",
+                "value": "mixed",
+                "description": "Static assets combined with dynamic API-driven pages"
+            }
         ]
     },
     "api_backend": {
         "question": "Do you need a backend API that clients or other services will call?",
         "suggested_answers": [
-            "No API",
-            "Simple API",
-            "Core of the product is an API"
+            {
+                "label": "No API",
+                "value": "none",
+                "description": "Frontend-only application with no server-side logic"
+            },
+            {
+                "label": "Simple API",
+                "value": "simple",
+                "description": "Basic CRUD operations with a few endpoints"
+            },
+            {
+                "label": "Core of the product is an API",
+                "value": "core",
+                "description": "API-first design with complex business logic and integrations"
+            }
         ]
     },
     "user_authentication": {
         "question": "Will users need to sign up and log in?",
         "suggested_answers": [
-            "No login",
-            "Simple login",
-            "Advanced authentication and roles"
+            {
+                "label": "No login",
+                "value": "none",
+                "description": "Public access only, no user accounts required"
+            },
+            {
+                "label": "Simple login",
+                "value": "simple",
+                "description": "Email/password authentication with basic sessions"
+            },
+            {
+                "label": "Advanced authentication and roles",
+                "value": "advanced",
+                "description": "OAuth, SSO, MFA, and role-based access control"
+            }
         ]
     },
     "multi_tenancy": {
         "question": "Is this system for a single customer or many customers (multi-tenant SaaS)?",
         "suggested_answers": [
-            "Single customer or internal only",
-            "A few customers",
-            "Multi-tenant SaaS for many customers"
+            {
+                "label": "Single customer or internal only",
+                "value": "single",
+                "description": "One organization uses the system exclusively"
+            },
+            {
+                "label": "A few customers",
+                "value": "few",
+                "description": "Small number of customers with separate data"
+            },
+            {
+                "label": "Multi-tenant SaaS for many customers",
+                "value": "multi",
+                "description": "Shared infrastructure serving hundreds of customers"
+            }
         ]
     },
     "file_storage": {
         "question": "Do users upload or store files (images, videos, docs)?",
         "suggested_answers": [
-            "No file uploads",
-            "Small/occasional files",
-            "Heavy file usage (lots of storage)"
+            {
+                "label": "No file uploads",
+                "value": "none",
+                "description": "No user-generated files or media storage"
+            },
+            {
+                "label": "Small/occasional files",
+                "value": "small",
+                "description": "Profile pictures, documents under 10MB each"
+            },
+            {
+                "label": "Heavy file usage (lots of storage)",
+                "value": "heavy",
+                "description": "Large media files, video streaming, or bulk uploads"
+            }
         ]
     },
     "realtime_updates": {
         "question": "Do you need realtime updates (e.g., live dashboards, notifications, WebSockets)?",
         "suggested_answers": [
-            "No realtime",
-            "Some realtime features",
-            "Realtime is critical"
+            {
+                "label": "No realtime",
+                "value": "none",
+                "description": "Standard request-response only, page refresh for updates"
+            },
+            {
+                "label": "Some realtime features",
+                "value": "some",
+                "description": "Live notifications, basic chat, or activity feeds"
+            },
+            {
+                "label": "Realtime is critical",
+                "value": "critical",
+                "description": "Gaming, trading, collaboration tools requiring sub-second updates"
+            }
         ]
     },
     "messaging_queue": {
         "question": "Do you expect background processing or asynchronous workflows that need queues?",
         "suggested_answers": [
-            "No background processing",
-            "Some async processing",
-            "Heavy use of queues and async processing"
+            {
+                "label": "No background processing",
+                "value": "none",
+                "description": "All operations complete synchronously in the request"
+            },
+            {
+                "label": "Some async processing",
+                "value": "some",
+                "description": "Email sending, report generation, or simple jobs"
+            },
+            {
+                "label": "Heavy use of queues and async processing",
+                "value": "heavy",
+                "description": "Complex workflows, event-driven architecture, or batch processing"
+            }
         ]
     },
     "scheduled_jobs": {
         "question": "Do you need scheduled or cron-like jobs?",
         "suggested_answers": [
-            "No scheduled jobs",
-            "A few scheduled tasks",
-            "Many scheduled tasks / batch jobs"
+            {
+                "label": "No scheduled jobs",
+                "value": "none",
+                "description": "No recurring automated tasks needed"
+            },
+            {
+                "label": "A few scheduled tasks",
+                "value": "few",
+                "description": "Daily reports, weekly cleanups, or periodic syncs"
+            },
+            {
+                "label": "Many scheduled tasks / batch jobs",
+                "value": "many",
+                "description": "Complex scheduling with dependencies and monitoring"
+            }
         ]
     },
     "payments": {
         "question": "Does the system handle payments, subscriptions, or financial transactions?",
         "suggested_answers": [
-            "No payments",
-            "Simple payments (e.g., Stripe)",
-            "Payments are core and complex (fintech-like)"
+            {
+                "label": "No payments",
+                "value": "none",
+                "description": "Free product or external payment handling"
+            },
+            {
+                "label": "Simple payments (e.g., Stripe)",
+                "value": "simple",
+                "description": "One-time payments or basic subscriptions via payment gateway"
+            },
+            {
+                "label": "Payments are core and complex (fintech-like)",
+                "value": "complex",
+                "description": "Multi-currency, ledgers, escrow, or regulatory requirements"
+            }
         ]
     },
     "search": {
         "question": "Do you need full-text search or complex search/filtering?",
         "suggested_answers": [
-            "Basic filtering only",
-            "Simple search",
-            "Advanced search with relevance and filters"
+            {
+                "label": "Basic filtering only",
+                "value": "basic",
+                "description": "Simple database queries with exact matches"
+            },
+            {
+                "label": "Simple search",
+                "value": "simple",
+                "description": "Text search across a few fields with basic relevance"
+            },
+            {
+                "label": "Advanced search with relevance and filters",
+                "value": "advanced",
+                "description": "Elasticsearch-style with facets, fuzzy matching, and ranking"
+            }
         ]
     },
     "admin_dashboard": {
         "question": "Will you need an internal admin panel or back-office dashboard?",
         "suggested_answers": [
-            "No admin dashboard",
-            "Simple admin panel",
-            "Complex admin/operations console"
+            {
+                "label": "No admin dashboard",
+                "value": "none",
+                "description": "Direct database access or no admin needs"
+            },
+            {
+                "label": "Simple admin panel",
+                "value": "simple",
+                "description": "User management and basic content moderation"
+            },
+            {
+                "label": "Complex admin/operations console",
+                "value": "complex",
+                "description": "Full operational dashboard with analytics and workflows"
+            }
         ]
     },
     "mobile_clients": {
         "question": "Will native mobile apps (iOS/Android) be first-class clients?",
         "suggested_answers": [
-            "No, mainly web",
-            "Some mobile apps",
-            "Mobile-first experience"
+            {
+                "label": "No, mainly web",
+                "value": "web",
+                "description": "Browser-only access, responsive design for mobile"
+            },
+            {
+                "label": "Some mobile apps",
+                "value": "some",
+                "description": "Native apps as secondary clients to web"
+            },
+            {
+                "label": "Mobile-first experience",
+                "value": "mobile_first",
+                "description": "Native apps are the primary user interface"
+            }
         ]
     },
     "third_party_integrations": {
         "question": "Do you require integrations with third-party systems (CRM, billing, identity, etc.)?",
         "suggested_answers": [
-            "No integrations",
-            "A few standard integrations",
-            "Many or complex integrations"
+            {
+                "label": "No integrations",
+                "value": "none",
+                "description": "Standalone system with no external dependencies"
+            },
+            {
+                "label": "A few standard integrations",
+                "value": "few",
+                "description": "Common services like Stripe, SendGrid, or Google OAuth"
+            },
+            {
+                "label": "Many or complex integrations",
+                "value": "many",
+                "description": "Enterprise systems, custom APIs, or bi-directional sync"
+            }
         ]
     },
     "stateful": {
         "question": "Does your system need to store user or business data over time?",
         "suggested_answers": [
-            "No, it is stateless",
-            "Yes, simple data",
-            "Yes, important or business-critical data"
+            {
+                "label": "No, it is stateless",
+                "value": "stateless",
+                "description": "Processing only, no data persistence needed"
+            },
+            {
+                "label": "Yes, simple data",
+                "value": "simple",
+                "description": "User profiles, preferences, and basic records"
+            },
+            {
+                "label": "Yes, important or business-critical data",
+                "value": "critical",
+                "description": "Financial records, transactions, or regulated data"
+            }
         ]
     },
     "primary_data_model": {
         "question": "What best describes your main data model?",
         "suggested_answers": [
-            "No persistent data",
-            "Relational data (tables, SQL)",
-            "Document/JSON data",
-            "Key-value or cache-like",
-            "Time-series data",
-            "Graph or highly connected data",
-            "Mixed / not sure"
+            {
+                "label": "No persistent data",
+                "value": "none",
+                "description": "Stateless processing without storage"
+            },
+            {
+                "label": "Relational data (tables, SQL)",
+                "value": "relational",
+                "description": "Structured data with relationships and transactions"
+            },
+            {
+                "label": "Document/JSON data",
+                "value": "document",
+                "description": "Flexible schema with nested objects"
+            },
+            {
+                "label": "Key-value or cache-like",
+                "value": "keyvalue",
+                "description": "Fast lookups by key, session storage"
+            },
+            {
+                "label": "Time-series data",
+                "value": "timeseries",
+                "description": "Metrics, logs, IoT sensor data"
+            },
+            {
+                "label": "Graph or highly connected data",
+                "value": "graph",
+                "description": "Social networks, recommendations, knowledge graphs"
+            },
+            {
+                "label": "Mixed / not sure",
+                "value": "mixed",
+                "description": "Multiple data types or evolving requirements"
+            }
         ]
     },
     "data_volume": {
         "question": "How much data do you expect to store in the next 12 months?",
         "suggested_answers": [
-            "Tiny (< 1 GB)",
-            "Small (1–100 GB)",
-            "Medium (100 GB – 1 TB)",
-            "Large (1–10 TB)",
-            "Huge (> 10 TB)"
+            {
+                "label": "Tiny (< 1 GB)",
+                "value": "tiny",
+                "description": "Small app or prototype with minimal data"
+            },
+            {
+                "label": "Small (1–100 GB)",
+                "value": "small",
+                "description": "Standard web app with moderate user base"
+            },
+            {
+                "label": "Medium (100 GB – 1 TB)",
+                "value": "medium",
+                "description": "Growing business with significant data"
+            },
+            {
+                "label": "Large (1–10 TB)",
+                "value": "large",
+                "description": "Enterprise scale with heavy data usage"
+            },
+            {
+                "label": "Huge (> 10 TB)",
+                "value": "huge",
+                "description": "Big data, analytics, or media-heavy platforms"
+            }
         ]
     },
     "data_growth_rate": {
         "question": "How fast do you expect your stored data to grow?",
         "suggested_answers": [
-            "Slow",
-            "Moderate",
-            "Fast"
+            {
+                "label": "Slow",
+                "value": "slow",
+                "description": "Stable user base, minimal new data over time"
+            },
+            {
+                "label": "Moderate",
+                "value": "moderate",
+                "description": "Steady growth with predictable patterns"
+            },
+            {
+                "label": "Fast",
+                "value": "fast",
+                "description": "Rapid user acquisition or high-volume data ingestion"
+            }
         ]
     },
     "data_sensitivity": {
         "question": "How sensitive is the data you handle?",
         "suggested_answers": [
-            "Low (public or non-sensitive data)",
-            "Medium (basic personal data like names and emails)",
-            "High (financial, health, or other regulated data)"
+            {
+                "label": "Low (public or non-sensitive data)",
+                "value": "low",
+                "description": "Public content, no personal information"
+            },
+            {
+                "label": "Medium (basic personal data like names and emails)",
+                "value": "medium",
+                "description": "User profiles, contact info, preferences"
+            },
+            {
+                "label": "High (financial, health, or other regulated data)",
+                "value": "high",
+                "description": "PCI, HIPAA, or GDPR-regulated information"
+            }
         ]
     },
     "data_residency_required": {
         "question": "Do you have strict data residency requirements (must stay in a certain country/region)?",
         "suggested_answers": [
-            "No strict residency",
-            "Prefer certain region",
-            "Legally required to stay in specific region"
+            {
+                "label": "No strict residency",
+                "value": "none",
+                "description": "Data can be stored globally"
+            },
+            {
+                "label": "Prefer certain region",
+                "value": "prefer",
+                "description": "Preference but not legally required"
+            },
+            {
+                "label": "Legally required to stay in specific region",
+                "value": "required",
+                "description": "GDPR, data sovereignty, or government mandates"
+            }
         ]
     },
     "backup_retention_days": {
         "question": "How long do you need to keep backups?",
         "suggested_answers": [
-            "Short (<= 7 days)",
-            "Standard (30 days)",
-            "Extended (90 days+)",
-            "Long-term archival (1 year+)"
+            {
+                "label": "Short (<= 7 days)",
+                "value": "7",
+                "description": "Quick recovery for recent issues only"
+            },
+            {
+                "label": "Standard (30 days)",
+                "value": "30",
+                "description": "Monthly backup cycle for most applications"
+            },
+            {
+                "label": "Extended (90 days+)",
+                "value": "90",
+                "description": "Quarterly retention for compliance or audits"
+            },
+            {
+                "label": "Long-term archival (1 year+)",
+                "value": "365",
+                "description": "Legal, regulatory, or historical preservation"
+            }
         ]
     },
     "estimated_mau": {
         "question": "Approximately how many monthly active users do you expect?",
         "suggested_answers": [
-            "Very low (< 1,000)",
-            "Low (1,000 – 10,000)",
-            "Medium (10,000 – 100,000)",
-            "High (100,000 – 1,000,000)",
-            "Very high (> 1,000,000)"
+            {
+                "label": "Very low (< 1,000)",
+                "value": "very_low",
+                "description": "Internal tool or early-stage product"
+            },
+            {
+                "label": "Low (1,000 – 10,000)",
+                "value": "low",
+                "description": "Small business or niche application"
+            },
+            {
+                "label": "Medium (10,000 – 100,000)",
+                "value": "medium",
+                "description": "Growing startup or regional service"
+            },
+            {
+                "label": "High (100,000 – 1,000,000)",
+                "value": "high",
+                "description": "Popular app with significant user base"
+            },
+            {
+                "label": "Very high (> 1,000,000)",
+                "value": "very_high",
+                "description": "Large-scale consumer or enterprise platform"
+            }
         ]
     },
     "peak_rps": {
         "question": "What is your expected peak request rate (across all users)?",
         "suggested_answers": [
-            "Very low (< 10 rps)",
-            "Low (10 – 100 rps)",
-            "Medium (100 – 1,000 rps)",
-            "High (1,000 – 10,000 rps)",
-            "Very high (> 10,000 rps)"
+            {
+                "label": "Very low (< 10 rps)",
+                "value": "very_low",
+                "description": "Internal tools with minimal concurrent usage"
+            },
+            {
+                "label": "Low (10 – 100 rps)",
+                "value": "low",
+                "description": "Standard web application traffic"
+            },
+            {
+                "label": "Medium (100 – 1,000 rps)",
+                "value": "medium",
+                "description": "Active user base with moderate concurrency"
+            },
+            {
+                "label": "High (1,000 – 10,000 rps)",
+                "value": "high",
+                "description": "High-traffic consumer applications"
+            },
+            {
+                "label": "Very high (> 10,000 rps)",
+                "value": "very_high",
+                "description": "Large-scale platforms or viral events"
+            }
         ]
     },
     "traffic_pattern": {
         "question": "How does your traffic typically behave?",
         "suggested_answers": [
-            "Steady",
-            "Spiky (sudden bursts)",
-            "Seasonal (events/launches)"
+            {
+                "label": "Steady",
+                "value": "steady",
+                "description": "Consistent load throughout the day"
+            },
+            {
+                "label": "Spiky (sudden bursts)",
+                "value": "spiky",
+                "description": "Unpredictable peaks from viral content or alerts"
+            },
+            {
+                "label": "Seasonal (events/launches)",
+                "value": "seasonal",
+                "description": "Predictable high periods like holidays or releases"
+            }
         ]
     },
     "performance_sensitivity": {
         "question": "How sensitive is your application to response times?",
         "suggested_answers": [
-            "Low (seconds are OK)",
-            "Medium (~500ms typical)",
-            "High (needs very low latency)"
+            {
+                "label": "Low (seconds are OK)",
+                "value": "low",
+                "description": "Background processing or admin tools"
+            },
+            {
+                "label": "Medium (~500ms typical)",
+                "value": "medium",
+                "description": "Standard web applications"
+            },
+            {
+                "label": "High (needs very low latency)",
+                "value": "high",
+                "description": "Gaming, trading, or real-time collaboration"
+            }
         ]
     },
     "burstiness": {
         "question": "Do you expect sudden bursts of traffic (e.g., campaigns, sales, launches)?",
         "suggested_answers": [
-            "No significant bursts",
-            "Occasional bursts",
-            "Frequent or extreme bursts"
+            {
+                "label": "No significant bursts",
+                "value": "none",
+                "description": "Stable, predictable traffic patterns"
+            },
+            {
+                "label": "Occasional bursts",
+                "value": "occasional",
+                "description": "Marketing campaigns or scheduled events"
+            },
+            {
+                "label": "Frequent or extreme bursts",
+                "value": "frequent",
+                "description": "Flash sales, viral content, or live events"
+            }
         ]
     },
     "availability_target": {
         "question": "What availability (uptime) target do you need?",
         "suggested_answers": [
-            "99.0%",
-            "99.5%",
-            "99.9%",
-            "99.99%"
+            {
+                "label": "99.0%",
+                "value": "99",
+                "description": "~7 hours downtime/month, suitable for internal tools"
+            },
+            {
+                "label": "99.5%",
+                "value": "99.5",
+                "description": "~3.5 hours downtime/month, standard apps"
+            },
+            {
+                "label": "99.9%",
+                "value": "99.9",
+                "description": "~43 minutes downtime/month, production apps"
+            },
+            {
+                "label": "99.99%",
+                "value": "99.99",
+                "description": "~4 minutes downtime/month, mission-critical"
+            }
         ]
     },
     "recovery_time_objective": {
         "question": "If there is an outage, how quickly must the system be back up (RTO)?",
         "suggested_answers": [
-            "Hours",
-            "Within 1 hour",
-            "Within 30 minutes",
-            "Within 5 minutes"
+            {
+                "label": "Hours",
+                "value": "hours",
+                "description": "Non-critical systems, can wait for manual recovery"
+            },
+            {
+                "label": "Within 1 hour",
+                "value": "1_hour",
+                "description": "Business applications with some tolerance"
+            },
+            {
+                "label": "Within 30 minutes",
+                "value": "30_minutes",
+                "description": "Customer-facing services requiring quick recovery"
+            },
+            {
+                "label": "Within 5 minutes",
+                "value": "5_minutes",
+                "description": "Critical systems with automated failover"
+            }
         ]
     },
     "recovery_point_objective": {
         "question": "How much data loss can you tolerate in a disaster (RPO)?",
         "suggested_answers": [
-            "Up to 24 hours",
-            "Up to 4 hours",
-            "Up to 1 hour",
-            "Only a few minutes"
+            {
+                "label": "Up to 24 hours",
+                "value": "24_hours",
+                "description": "Daily backups acceptable, some data loss OK"
+            },
+            {
+                "label": "Up to 4 hours",
+                "value": "4_hours",
+                "description": "Frequent backups for important data"
+            },
+            {
+                "label": "Up to 1 hour",
+                "value": "1_hour",
+                "description": "Near real-time replication for critical data"
+            },
+            {
+                "label": "Only a few minutes",
+                "value": "minutes",
+                "description": "Synchronous replication for zero data loss"
+            }
         ]
     },
     "multi_region_required": {
         "question": "Do you require active multi-region setup for higher resilience or locality?",
         "suggested_answers": [
-            "No, single region is fine",
-            "Prefer multi-AZ only",
-            "Yes, multi-region required"
+            {
+                "label": "No, single region is fine",
+                "value": "single",
+                "description": "One region meets all needs"
+            },
+            {
+                "label": "Prefer multi-AZ only",
+                "value": "multi_az",
+                "description": "Redundancy within one region"
+            },
+            {
+                "label": "Yes, multi-region required",
+                "value": "multi_region",
+                "description": "Active-active or DR across regions"
+            }
         ]
     },
     "authentication_strength": {
         "question": "What level of authentication strength do you need?",
         "suggested_answers": [
-            "Basic login",
-            "Standard (2FA for admins)",
-            "Strong MFA for most users"
+            {
+                "label": "Basic login",
+                "value": "basic",
+                "description": "Simple email and password"
+            },
+            {
+                "label": "Standard (2FA for admins)",
+                "value": "standard",
+                "description": "MFA for privileged accounts"
+            },
+            {
+                "label": "Strong MFA for most users",
+                "value": "strong",
+                "description": "All users require multi-factor authentication"
+            }
         ]
     },
     "authorization_complexity": {
         "question": "How complex are your access control needs?",
         "suggested_answers": [
-            "Simple roles (admin/user)",
-            "Role-based with a few roles",
-            "Fine-grained permissions (many roles and rules)"
+            {
+                "label": "Simple roles (admin/user)",
+                "value": "simple",
+                "description": "Two or three basic roles"
+            },
+            {
+                "label": "Role-based with a few roles",
+                "value": "rbac",
+                "description": "Multiple roles with clear permissions"
+            },
+            {
+                "label": "Fine-grained permissions (many roles and rules)",
+                "value": "fine_grained",
+                "description": "Attribute-based or resource-level access control"
+            }
         ]
     },
     "regulatory_compliance": {
         "question": "Do you need to comply with any specific regulations?",
         "suggested_answers": [
-            "None / not sure",
-            "GDPR",
-            "HIPAA",
-            "PCI-DSS",
-            "SOC 2",
-            "ISO 27001",
-            "Multiple regulations"
+            {
+                "label": "None / not sure",
+                "value": "none",
+                "description": "No specific compliance requirements"
+            },
+            {
+                "label": "GDPR",
+                "value": "gdpr",
+                "description": "EU data protection regulation"
+            },
+            {
+                "label": "HIPAA",
+                "value": "hipaa",
+                "description": "US healthcare data protection"
+            },
+            {
+                "label": "PCI-DSS",
+                "value": "pci",
+                "description": "Payment card industry standards"
+            },
+            {
+                "label": "SOC 2",
+                "value": "soc2",
+                "description": "Service organization security controls"
+            },
+            {
+                "label": "ISO 27001",
+                "value": "iso27001",
+                "description": "Information security management"
+            },
+            {
+                "label": "Multiple regulations",
+                "value": "multiple",
+                "description": "Complex compliance requirements"
+            }
         ]
     },
     "security_posture": {
         "question": "How strict should your security posture be?",
         "suggested_answers": [
-            "Basic (small internal app, low risk)",
-            "Hardened (internet-facing production app)",
-            "Very strict / zero-trust-like (sensitive or regulated)"
+            {
+                "label": "Basic (small internal app, low risk)",
+                "value": "basic",
+                "description": "Standard security practices for low-risk apps"
+            },
+            {
+                "label": "Hardened (internet-facing production app)",
+                "value": "hardened",
+                "description": "Security best practices for public applications"
+            },
+            {
+                "label": "Very strict / zero-trust-like (sensitive or regulated)",
+                "value": "strict",
+                "description": "Maximum security for regulated or sensitive data"
+            }
         ]
     },
     "observability_level": {
         "question": "How deep do you want logging, metrics, and tracing?",
         "suggested_answers": [
-            "Basic logs only",
-            "Standard logs and metrics",
-            "Advanced with traces, dashboards, alerts"
+            {
+                "label": "Basic logs only",
+                "value": "basic",
+                "description": "Error logs and basic application output"
+            },
+            {
+                "label": "Standard logs and metrics",
+                "value": "standard",
+                "description": "Structured logging with key performance metrics"
+            },
+            {
+                "label": "Advanced with traces, dashboards, alerts",
+                "value": "advanced",
+                "description": "Full observability stack with APM and alerting"
+            }
         ]
     },
     "deployment_frequency": {
         "question": "How often do you expect to deploy changes?",
         "suggested_answers": [
-            "Monthly or less",
-            "Weekly",
-            "Daily",
-            "Multiple times per day"
+            {
+                "label": "Monthly or less",
+                "value": "monthly",
+                "description": "Stable releases with planned maintenance windows"
+            },
+            {
+                "label": "Weekly",
+                "value": "weekly",
+                "description": "Regular release cycles with testing"
+            },
+            {
+                "label": "Daily",
+                "value": "daily",
+                "description": "Continuous deployment with automated testing"
+            },
+            {
+                "label": "Multiple times per day",
+                "value": "continuous",
+                "description": "Trunk-based development with feature flags"
+            }
         ]
     },
     "change_risk_tolerance": {
         "question": "How much risk can you tolerate when deploying changes?",
         "suggested_answers": [
-            "Very low (need careful rollouts)",
-            "Medium",
-            "Higher (OK with faster iteration)"
+            {
+                "label": "Very low (need careful rollouts)",
+                "value": "low",
+                "description": "Blue-green, canary deployments required"
+            },
+            {
+                "label": "Medium",
+                "value": "medium",
+                "description": "Standard rollouts with quick rollback capability"
+            },
+            {
+                "label": "Higher (OK with faster iteration)",
+                "value": "high",
+                "description": "Move fast, fix forward approach"
+            }
         ]
     },
     "ops_team_maturity": {
         "question": "How mature is your DevOps/SRE capability?",
         "suggested_answers": [
-            "None / very little",
-            "Some experience",
-            "Dedicated or experienced SRE/DevOps team"
+            {
+                "label": "None / very little",
+                "value": "none",
+                "description": "No dedicated operations team"
+            },
+            {
+                "label": "Some experience",
+                "value": "some",
+                "description": "Part-time ops or shared responsibility"
+            },
+            {
+                "label": "Dedicated or experienced SRE/DevOps team",
+                "value": "experienced",
+                "description": "Full-time platform or SRE team"
+            }
         ]
     },
     "primary_region_hint": {
         "question": "Where are most of your end users located, or which region do you prefer?",
         "suggested_answers": [
-            "No preference",
-            "US / North America",
-            "Europe",
-            "Asia-Pacific",
-            "India",
-            "Latin America",
-            "Middle East / Africa"
+            {
+                "label": "No preference",
+                "value": "none",
+                "description": "Global distribution or flexible"
+            },
+            {
+                "label": "US / North America",
+                "value": "us",
+                "description": "Primary user base in the Americas"
+            },
+            {
+                "label": "Europe",
+                "value": "eu",
+                "description": "Primary user base in Europe"
+            },
+            {
+                "label": "Asia-Pacific",
+                "value": "apac",
+                "description": "Primary user base in Asia-Pacific region"
+            },
+            {
+                "label": "India",
+                "value": "india",
+                "description": "Primary user base in India"
+            },
+            {
+                "label": "Latin America",
+                "value": "latam",
+                "description": "Primary user base in Latin America"
+            },
+            {
+                "label": "Middle East / Africa",
+                "value": "mea",
+                "description": "Primary user base in Middle East or Africa"
+            }
         ]
     },
     "provider_lock_in_sensitivity": {
         "question": "How concerned are you about being locked into a single cloud provider?",
         "suggested_answers": [
-            "Low concern",
-            "Medium concern",
-            "High concern"
+            {
+                "label": "Low concern",
+                "value": "low",
+                "description": "Happy to use provider-specific services"
+            },
+            {
+                "label": "Medium concern",
+                "value": "medium",
+                "description": "Prefer portable solutions where practical"
+            },
+            {
+                "label": "High concern",
+                "value": "high",
+                "description": "Multi-cloud or vendor-neutral is a priority"
+            }
         ]
     },
     "ops_model": {
         "question": "Do you prefer serverless, managed services, or Kubernetes-style control?",
         "suggested_answers": [
-            "No strong preference",
-            "Serverless preference",
-            "Managed services preference",
-            "Kubernetes / cluster control"
+            {
+                "label": "No strong preference",
+                "value": "none",
+                "description": "Open to recommendations based on requirements"
+            },
+            {
+                "label": "Serverless preference",
+                "value": "serverless",
+                "description": "Lambda/Cloud Functions for minimal ops"
+            },
+            {
+                "label": "Managed services preference",
+                "value": "managed",
+                "description": "Managed databases, caches, and queues"
+            },
+            {
+                "label": "Kubernetes / cluster control",
+                "value": "kubernetes",
+                "description": "Full control with container orchestration"
+            }
         ]
     },
     "managed_db_preference": {
         "question": "Do you prefer fully managed databases or are you okay managing your own?",
         "suggested_answers": [
-            "Prefer fully managed DBs",
-            "Self-managed DB is acceptable",
-            "No database needed"
+            {
+                "label": "Prefer fully managed DBs",
+                "value": "managed",
+                "description": "RDS, Cloud SQL, or similar managed services"
+            },
+            {
+                "label": "Self-managed DB is acceptable",
+                "value": "self_managed",
+                "description": "Running databases on VMs or containers"
+            },
+            {
+                "label": "No database needed",
+                "value": "none",
+                "description": "Stateless application or external data source"
+            }
         ]
     },
     "kubernetes_required": {
         "question": "Is running Kubernetes (e.g., EKS/AKS/GKE) a hard requirement for you?",
         "suggested_answers": [
-            "No",
-            "Maybe / not sure",
-            "Yes, Kubernetes is required"
+            {
+                "label": "No",
+                "value": "no",
+                "description": "Open to simpler compute options"
+            },
+            {
+                "label": "Maybe / not sure",
+                "value": "maybe",
+                "description": "Depends on complexity and scale"
+            },
+            {
+                "label": "Yes, Kubernetes is required",
+                "value": "yes",
+                "description": "Team expertise or existing infrastructure"
+            }
         ]
     },
     "domain_fintech": {
         "question": "Is this a financial or fintech-related system (e.g., payments, trading, banking)?",
         "suggested_answers": [
-            "No",
-            "Some financial aspects",
-            "Primarily a fintech system"
+            {
+                "label": "No",
+                "value": "no",
+                "description": "Not a financial application"
+            },
+            {
+                "label": "Some financial aspects",
+                "value": "some",
+                "description": "Payment processing or financial data handling"
+            },
+            {
+                "label": "Primarily a fintech system",
+                "value": "primary",
+                "description": "Core banking, trading, or financial services"
+            }
         ]
     },
     "domain_healthcare": {
         "question": "Is this a healthcare or medical-related system (e.g., patient data, diagnostics)?",
         "suggested_answers": [
-            "No",
-            "Some health-related features",
-            "Primarily a healthcare/medical system"
+            {
+                "label": "No",
+                "value": "no",
+                "description": "Not a healthcare application"
+            },
+            {
+                "label": "Some health-related features",
+                "value": "some",
+                "description": "Fitness tracking or wellness features"
+            },
+            {
+                "label": "Primarily a healthcare/medical system",
+                "value": "primary",
+                "description": "Patient records, diagnostics, or clinical tools"
+            }
         ]
     },
     "domain_iot": {
         "question": "Will you connect and manage physical devices or sensors (IoT)?",
         "suggested_answers": [
-            "No IoT",
-            "Some devices",
-            "Large-scale IoT deployment"
+            {
+                "label": "No IoT",
+                "value": "no",
+                "description": "No hardware device integration"
+            },
+            {
+                "label": "Some devices",
+                "value": "some",
+                "description": "A few connected devices or sensors"
+            },
+            {
+                "label": "Large-scale IoT deployment",
+                "value": "large_scale",
+                "description": "Thousands of devices with real-time data"
+            }
         ]
     },
     "domain_gaming": {
         "question": "Is this a game backend or gaming-related platform?",
         "suggested_answers": [
-            "No",
-            "Some gaming features",
-            "Core gaming backend/platform"
+            {
+                "label": "No",
+                "value": "no",
+                "description": "Not a gaming application"
+            },
+            {
+                "label": "Some gaming features",
+                "value": "some",
+                "description": "Leaderboards, achievements, or casual games"
+            },
+            {
+                "label": "Core gaming backend/platform",
+                "value": "core",
+                "description": "Multiplayer, real-time game state, matchmaking"
+            }
         ]
     },
     "domain_ml_heavy": {
         "question": "Does your system rely heavily on machine learning (training or serving models)?",
         "suggested_answers": [
-            "No ML",
-            "Some ML features",
-            "ML-heavy (training and/or online inference)"
+            {
+                "label": "No ML",
+                "value": "no",
+                "description": "No machine learning components"
+            },
+            {
+                "label": "Some ML features",
+                "value": "some",
+                "description": "Pre-trained models or ML APIs"
+            },
+            {
+                "label": "ML-heavy (training and/or online inference)",
+                "value": "heavy",
+                "description": "Custom model training and real-time inference"
+            }
         ]
     },
     "domain_internal_it": {
         "question": "Is this primarily an internal IT/business tool rather than a public-facing product?",
         "suggested_answers": [
-            "Public-facing",
-            "Mixed",
-            "Mainly internal"
+            {
+                "label": "Public-facing",
+                "value": "public",
+                "description": "External customers use the application"
+            },
+            {
+                "label": "Mixed",
+                "value": "mixed",
+                "description": "Both internal and external users"
+            },
+            {
+                "label": "Mainly internal",
+                "value": "internal",
+                "description": "Employee-only tools and dashboards"
+            }
         ]
     },
     "web_ui": {
         "question": "Will there be a web user interface?",
         "suggested_answers": [
-            "No",
-            "Basic web UI",
-            "Web UI is core experience"
+            {
+                "label": "No",
+                "value": "no",
+                "description": "API-only or backend service"
+            },
+            {
+                "label": "Basic web UI",
+                "value": "basic",
+                "description": "Simple admin panel or dashboard"
+            },
+            {
+                "label": "Web UI is core experience",
+                "value": "core",
+                "description": "Rich web application for end users"
+            }
         ]
     },
     "mobile_apps": {
         "question": "Are native mobile apps part of the solution?",
         "suggested_answers": [
-            "No",
-            "Some mobile presence",
-            "Mobile is primary channel"
+            {
+                "label": "No",
+                "value": "no",
+                "description": "Web-only or responsive design"
+            },
+            {
+                "label": "Some mobile presence",
+                "value": "some",
+                "description": "Companion apps or limited mobile features"
+            },
+            {
+                "label": "Mobile is primary channel",
+                "value": "primary",
+                "description": "Native apps are the main user interface"
+            }
         ]
     },
     "public_api": {
         "question": "Will you expose a public API for external developers or clients?",
         "suggested_answers": [
-            "No public API",
-            "Limited/partner APIs",
-            "Public developer-facing API"
+            {
+                "label": "No public API",
+                "value": "no",
+                "description": "Internal APIs only"
+            },
+            {
+                "label": "Limited/partner APIs",
+                "value": "limited",
+                "description": "API access for approved partners"
+            },
+            {
+                "label": "Public developer-facing API",
+                "value": "public",
+                "description": "Open API with documentation and developer portal"
+            }
         ]
     },
     "cost_sensitivity": {
         "question": "How important is minimizing cloud cost versus performance and flexibility?",
         "suggested_answers": [
-            "Low (optimize for speed/feature first)",
-            "Medium (balanced)",
-            "High (very cost conscious)"
+            {
+                "label": "Low (optimize for speed/feature first)",
+                "value": "low",
+                "description": "Performance and features over cost"
+            },
+            {
+                "label": "Medium (balanced)",
+                "value": "medium",
+                "description": "Balance between cost and capabilities"
+            },
+            {
+                "label": "High (very cost conscious)",
+                "value": "high",
+                "description": "Minimize costs as primary concern"
+            }
         ]
     },
     "project_lifetime": {
         "question": "How long do you expect this project or system to live?",
         "suggested_answers": [
-            "Short PoC / experiment",
-            "Short-term (up to 1 year)",
-            "Long-term (1 year or more)"
+            {
+                "label": "Short PoC / experiment",
+                "value": "poc",
+                "description": "Proof of concept or temporary project"
+            },
+            {
+                "label": "Short-term (up to 1 year)",
+                "value": "short",
+                "description": "Limited lifespan or MVP phase"
+            },
+            {
+                "label": "Long-term (1 year or more)",
+                "value": "long",
+                "description": "Production system with ongoing development"
+            }
         ]
     }
 }
