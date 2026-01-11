@@ -10,16 +10,27 @@ if (process.env.EMAIL_SERVICE === 'gmail') {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
+    // 🔥 FIX: Add timeout settings for Render/cloud environments
+    connectionTimeout: 10000,  // 10 seconds to connect
+    greetingTimeout: 10000,    // 10 seconds for greeting
+    socketTimeout: 30000,      // 30 seconds for socket
   };
 } else {
   transporterConfig = {
     host: process.env.SMTP_HOST,
-    port: process.env.SMTP_PORT,
+    port: parseInt(process.env.SMTP_PORT) || 587,
     secure: process.env.SMTP_SECURE === 'true',
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
+    // 🔥 FIX: Add timeout settings for Render/cloud environments
+    connectionTimeout: 10000,  // 10 seconds to connect
+    greetingTimeout: 10000,    // 10 seconds for greeting
+    socketTimeout: 30000,      // 30 seconds for socket
+    tls: {
+      rejectUnauthorized: false  // Allow self-signed certs
+    }
   };
 }
 

@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/auth');
 const pool = require('../config/db');
-const auditService = require('../services/auditService');
+const auditService = require('../services/shared/auditService');
 
 // POST /api/feedback - New dedicated feedback endpoint
 router.post('/feedback', authMiddleware, async (req, res) => {

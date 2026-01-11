@@ -1,18 +1,19 @@
 const express = require('express');
 const router = express.Router();
-const aiService = require('../services/aiService');
+const aiService = require('../services/ai/aiService');
 const authMiddleware = require('../middleware/auth');
-const monopolyLayers = require('../services/monopolyLayers');
-const infracostService = require('../services/infracostService');
-const auditService = require('../services/auditService');
-const costHistoryService = require('../services/costHistoryService');
-const patternResolver = require('../services/patternResolver');
-const { ARCHITECTURE_PATTERNS, validateServiceSelection } = require('../services/architecturePatterns');
-const integrityService = require('../services/integrityService');
-const terraformService = require('../services/terraformService');
-const costResultModel = require('../services/costResultModel');
-const canonicalValidator = require('../services/canonicalValidator');
-const { generateServiceDisplay, groupServicesByCategory, getCategoryDisplayName } = require('../services/serviceDisplay');
+const monopolyLayers = require('../services/core/monopolyLayers');
+const infracostService = require('../services/cost/infracostService');
+const auditService = require('../services/shared/auditService');
+const costHistoryService = require('../services/cost/costHistoryService');
+const patternResolver = require('../services/core/patternResolver');
+const ARCHITECTURE_PATTERNS = require('../catalog/patterns/index');
+const { validateServiceSelection } = require('../catalog/terraform/utils');
+const integrityService = require('../services/core/integrityService');
+const terraformService = require('../services/infrastructure/terraformService');
+const costResultModel = require('../services/cost/costResultModel');
+const canonicalValidator = require('../services/core/canonicalValidator');
+const { generateServiceDisplay, groupServicesByCategory, getCategoryDisplayName } = require('../services/shared/serviceDisplay');
 const pool = require('../config/db');
 
 
@@ -1686,7 +1687,7 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
         // 🔒 STEP 3: Profile → Sizing resolver (CORE IMPLEMENTATION)
         // Same services, different numbers + tiers
         function resolveSizingForAllServices(deployableServices, profile, provider) {
-            const sizingModel = require('../services/sizingModel');
+            const sizingModel = require('../services/cost/sizingModel');
 
             const resolvedSizing = {};
 
@@ -1727,7 +1728,7 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
 
         // ✅ FIX 3: Calculate and persist sizing from Step 3
         // This locks Terraform (Step 4) to the exact sizing used for cost calculation
-        const sizingModel = require('../services/sizingModel');
+        const sizingModel = require('../services/cost/sizingModel');
         const calculatedSizing = sizingModel.getSizingForInfraSpec(infraSpec, intent, costProfile);
 
         // Persist to infraSpec (will be returned to frontend and saved to workspace)
@@ -2207,7 +2208,7 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
         const safeRange = costAnalysis.recommended_cost_range || { formatted: '$0 - $0/month' };
 
         // ✅ FIX 2: Update region with provider-specific resolved region
-        const regionResolver = require('../services/regionResolver');
+        const regionResolver = require('../services/infrastructure/regionResolver');
         const selectedProvider = safeProvider.toLowerCase();
 
         // Update region with provider-specific resolved region
@@ -2746,7 +2747,7 @@ router.post('/architecture', authMiddleware, async (req, res) => {
         console.log(`[FIX 1] Canonical Architecture: ${canonicalArchitecture.pattern}, Services: ${canonicalArchitecture.services?.length || 0}`);
 
         // Map to provider-specific services
-        const architectureDiagramService = require('../services/architectureDiagramService');
+        const architectureDiagramService = require('../services/core/architectureDiagramService');
         const providerArchitecture = architectureDiagramService.mapToProvider(canonicalArchitecture, provider);
 
         // Generate services list
@@ -2831,8 +2832,8 @@ router.post('/terraform', authMiddleware, async (req, res) => {
 
         // 🔥 TERRAFORM-SAFE MODE: Validate that deployable services have modules available for the selected provider
         if (infraSpec.canonical_architecture?.deployable_services && Array.isArray(infraSpec.canonical_architecture.deployable_services)) {
-            const terraformModules = require('../services/terraformModules');
-            const terraformServiceLocal = require('../services/terraformService');
+            const terraformModules = require('../services/terraform/terraformModules');
+            const terraformServiceLocal = require('../services/infrastructure/terraformService');
             const providerLower = provider.toLowerCase();
 
             // Check if all deployable services have modules for the selected provider
@@ -2898,7 +2899,7 @@ router.post('/terraform', authMiddleware, async (req, res) => {
         }
 
         // Generate modular Terraform project (V2)
-        const terraformService = require('../services/terraformService');
+        const terraformService = require('../services/infrastructure/terraformService');
 
         let terraformResult, terraformProject, terraformHash, deploymentManifest, services;
         try {

@@ -189,7 +189,8 @@ router.get('/', authMiddleware, async (req, res) => {
         w.step, 
         w.updated_at, 
         w.save_count,
-        w.project_id, 
+        w.project_id,
+        w.state_json,
         p.description, 
         p.created_at 
       FROM workspaces w 
@@ -274,20 +275,19 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
     // Update workspace to active deployment status
     await pool.query(
       `UPDATE workspaces 
-       SET state_json = jsonb_set(
-         COALESCE(state_json, '{}'::jsonb),
-         '{deployment}',
-         $1::jsonb
-       ),
-       step = 'active_deployment',
+       SET state_json = COALESCE(state_json, '{}'::jsonb) || $1::jsonb,
+       step = 'deployed',
        updated_at = NOW()
        WHERE id = $2`,
       [
         JSON.stringify({
-          status: 'active',
-          deployment_method,
-          provider,
-          deployed_at: new Date().toISOString()
+          is_deployed: true,
+          is_live: true,
+          deployment: {
+            method: deployment_method,
+            provider,
+            deployed_at: new Date().toISOString()
+          }
         }),
         id
       ]
@@ -359,6 +359,161 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
       });
     }
 
+    res.status(500).json({ msg: "Server Error", error: err.message });
+  }
+});
+
+/**
+ * @route PUT /api/workspaces/:id/suggestion-preference
+ * @desc Toggle using_suggestion preference for self-deployment projects
+ * @access Private
+ */
+router.put('/:id/suggestion-preference', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { using_suggestion } = req.body;
+
+    // Get current state_json
+    const wsRes = await pool.query(
+      "SELECT state_json FROM workspaces WHERE id = $1",
+      [id]
+    );
+
+    if (wsRes.rows.length === 0) {
+      return res.status(404).json({ msg: "Workspace not found" });
+    }
+
+    // Update state_json with using_suggestion preference
+    const currentState = wsRes.rows[0].state_json || {};
+    const updatedState = {
+      ...currentState,
+      using_suggestion: using_suggestion
+    };
+
+    await pool.query(
+      `UPDATE workspaces SET state_json = $1, updated_at = NOW() WHERE id = $2`,
+      [JSON.stringify(updatedState), id]
+    );
+
+    console.log(`[WORKSPACE] Using suggestion preference updated to ${using_suggestion} for workspace ${id}`);
+
+    res.json({
+      msg: "Suggestion preference updated",
+      id,
+      using_suggestion
+    });
+  } catch (err) {
+    console.error("Toggle Suggestion Preference Error:", err);
+    res.status(500).json({ msg: "Server Error", error: err.message });
+  }
+});
+
+/**
+ * @route PUT /api/workspaces/:id/deploy
+ * @desc Mark workspace as deployed and increment active deployments
+ * @access Private
+ */
+router.put('/:id/deploy', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { deployment_method, provider } = req.body;
+
+    // Get current state_json
+    const wsRes = await pool.query(
+      "SELECT state_json FROM workspaces WHERE id = $1 AND user_id = $2",
+      [id, req.user.id]
+    );
+
+    if (wsRes.rows.length === 0) {
+      return res.status(404).json({ msg: "Workspace not found" });
+    }
+
+    // Update state_json with deployment info
+    const currentState = wsRes.rows[0].state_json || {};
+    const activeDeployments = (currentState.active_deployments || 0) + 1;
+
+    const updatedState = {
+      ...currentState,
+      is_deployed: true,
+      is_live: true, // Default to live when deployed
+      deployment_method: deployment_method || 'self',
+      deployed_provider: provider,
+      deployed_at: new Date().toISOString(),
+      active_deployments: activeDeployments
+    };
+
+    await pool.query(
+      `UPDATE workspaces SET state_json = $1, updated_at = NOW() WHERE id = $2`,
+      [JSON.stringify(updatedState), id]
+    );
+
+    console.log(`[WORKSPACE] Deployed workspace ${id} with method: ${deployment_method}, provider: ${provider}, active_deployments: ${activeDeployments}`);
+
+    res.json({
+      msg: "Workspace deployed successfully",
+      id,
+      deployment_method,
+      provider,
+      active_deployments: activeDeployments
+    });
+  } catch (err) {
+    console.error("Deploy Workspace Error:", err);
+    res.status(500).json({ msg: "Server Error", error: err.message });
+  }
+});
+
+/**
+ * @route PUT /api/workspaces/:id/live-status
+ * @desc Toggle project live/offline status
+ * @access Private
+ */
+router.put('/:id/live-status', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { is_live } = req.body;
+
+    // Get current state_json with robust ownership check (Project Owner OR Workspace User)
+    const wsRes = await pool.query(
+      `SELECT w.state_json 
+       FROM workspaces w
+       JOIN projects p ON w.project_id = p.id
+       WHERE w.id = $1 AND (p.owner_id = $2 OR w.user_id = $2)`,
+      [id, String(req.user.id)]
+    );
+
+    if (wsRes.rows.length === 0) {
+      return res.status(404).json({ msg: "Workspace not found" });
+    }
+
+    // Update state_json with live status AND enforce step='deployed'
+    const currentState = wsRes.rows[0].state_json || {};
+    const updatedState = {
+      ...currentState,
+      is_live: is_live,
+      is_deployed: is_live, // Sync deployed flag with live status as requested
+      live_status_updated_at: new Date().toISOString()
+    };
+
+    // We also update 'step' to 'deployed' to ensure the toggle remains visible 
+    // even if is_deployed becomes false (OFF).
+    await pool.query(
+      `UPDATE workspaces 
+       SET state_json = $1, 
+           step = 'deployed',
+           updated_at = NOW() 
+       WHERE id = $2`,
+      [JSON.stringify(updatedState), id]
+    );
+
+    console.log(`[WORKSPACE] Live status updated to ${is_live}, is_deployed synced, step enforced to 'deployed' for workspace ${id}`);
+
+    res.json({
+      msg: "Live status updated",
+      id,
+      is_live
+    });
+  } catch (err) {
+    console.error("Live Status Update Error:", err);
     res.status(500).json({ msg: "Server Error", error: err.message });
   }
 });

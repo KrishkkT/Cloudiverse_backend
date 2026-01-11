@@ -6,9 +6,9 @@
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/auth');
-const costHistoryService = require('../services/costHistoryService');
-const templateService = require('../services/templateService');
-const auditService = require('../services/auditService');
+const costHistoryService = require('../services/cost/costHistoryService');
+const templateService = require('../services/infrastructure/templateService');
+const auditService = require('../services/shared/auditService');
 
 // ============================================================
 // TEMPLATES ENDPOINTS

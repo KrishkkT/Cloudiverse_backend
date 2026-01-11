@@ -29,6 +29,7 @@ pool.query('SELECT NOW()', async (err, res) => {
       CREATE TABLE IF NOT EXISTS workspaces (
           id SERIAL PRIMARY KEY,
           project_id INTEGER REFERENCES projects(id),
+          user_id VARCHAR(255), -- Added for ownership
           name VARCHAR(255),
           step VARCHAR(50) NOT NULL,
           state_json JSONB NOT NULL,
@@ -83,7 +84,6 @@ pool.query('SELECT NOW()', async (err, res) => {
       );
 
       -- 3. Create cost_feedback table for Step 4 (Feedback before Terraform)
-      DROP TABLE IF EXISTS cost_feedback;
       CREATE TABLE IF NOT EXISTS cost_feedback (
           id SERIAL PRIMARY KEY,
           workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -148,6 +148,11 @@ pool.query('SELECT NOW()', async (err, res) => {
               ALTER TABLE workspaces ADD COLUMN state_json JSONB DEFAULT '{}';
           END IF;
 
+          -- Add user_id to workspaces if missing
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='workspaces' AND column_name='user_id') THEN
+              ALTER TABLE workspaces ADD COLUMN user_id VARCHAR(255);
+          END IF;
+
           -- Add is_active if missing
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='workspaces' AND column_name='is_active') THEN
               ALTER TABLE workspaces ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
@@ -174,6 +179,12 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
+// Log every request to debug routing issues
+app.use((req, res, next) => {
+  console.log(`[API REQUEST] ${req.method} ${req.url}`);
+  next();
+});
+
 // Routes
 app.get('/', (req, res) => {
   res.json({ message: 'Cloudiverse Backend API' });
@@ -195,7 +206,7 @@ app.use('/api', require('./routes/feedback'));
 app.use('/api/analytics', require('./routes/analytics'));
 
 // Initialize built-in templates on startup
-const templateService = require('./services/templateService');
+const templateService = require('./services/infrastructure/templateService');
 templateService.initializeBuiltInTemplates();
 
 // 404 Handler
@@ -213,6 +224,8 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`[NETWORK] Listening on 0.0.0.0:${PORT} (All Interfaces)`);
 });
+
