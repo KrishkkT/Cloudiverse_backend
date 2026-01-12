@@ -1006,8 +1006,33 @@ class PatternResolver {
     const finalServices = Array.from(selected.keys());
     console.log(`[SERVICE RESOLUTION] Final services (${finalServices.length}):`, finalServices);
 
-    return finalServices;
+    // ═════════════════════════════════════════════════════════════════
+    // 6️⃣ PATTERN CONTRACT ENFORCEMENT (ensure JSON config services)
+    // ═════════════════════════════════════════════════════════════════
+    // 🔥 FIX 1: Ensure all services from canonicalPatterns.json are present
+    // This guarantees the validator passes without breaking capability logic
+    const patternConfig = getPatternFromConfig(pattern);
+    if (patternConfig && patternConfig.services) {
+      for (const svc of patternConfig.services) {
+        if (!selected.has(svc)) {
+          // Verify service exists in catalog before adding
+          const serviceDef = getServiceDefinition(svc);
+          if (serviceDef) {
+            selected.set(svc, { source: 'pattern_contract', pattern, removable: false });
+            console.log(`[PATTERN INTEGRITY] Adding missing service ${svc} from pattern contract`);
+          } else {
+            console.warn(`[PATTERN INTEGRITY] ⚠️ Pattern ${pattern} requires ${svc} but service not in catalog`);
+          }
+        }
+      }
+    }
+
+    const finalServicesWithContract = Array.from(selected.keys());
+    console.log(`[SERVICE RESOLUTION] Final services after contract enforcement (${finalServicesWithContract.length}):`, finalServicesWithContract);
+
+    return finalServicesWithContract;
   }
+
 
   /**
    * Select services based on requirements using service registry

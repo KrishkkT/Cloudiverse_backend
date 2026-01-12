@@ -757,18 +757,22 @@ CRITICAL RULES:
 
   } catch (error) {
     console.error("Usage Prediction Error:", error.message);
-    // Fallback safe defaults
+    // 🔥 FIX 3: Realistic SMB defaults with confidence scores
     return {
       usage_profile: {
-        monthly_users: { min: 1000, max: 10000, confidence: 0.5 },
-        storage_gb: { min: 5, max: 20 },
-        data_transfer_gb: { min: 10, max: 100 },
-        requests_per_second: { min: 1, max: 10 }
+        monthly_users: { min: 1000, max: 5000, confidence: 0.4 },
+        requests_per_user: { min: 10, max: 50, confidence: 0.5 },
+        peak_concurrency: { min: 50, max: 200, confidence: 0.4 },
+        data_transfer_gb: { min: 10, max: 50, confidence: 0.5 },
+        data_storage_gb: { min: 5, max: 20, confidence: 0.6 }
       },
-      rationale: {
-        monthly_users: "Default fallback estimation",
-        storage_gb: "Standard assumptions",
-        data_transfer_gb: "Standard assumptions"
+      confidence: 0.4,
+      reasoning: {
+        monthly_users: "SMB default: 1k-5k monthly active users",
+        requests_per_user: "Standard web app: 10-50 daily requests per user",
+        data_transfer_gb: "SMB data egress: 10-50GB/month",
+        data_storage_gb: "Standard storage: 5-20GB for small apps",
+        general: "Fallback estimation using conservative SMB assumptions"
       }
     };
   }

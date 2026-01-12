@@ -123,6 +123,22 @@ const CAPABILITY_TO_SERVICE = {
   domain_analytics: {
     required: ['datawarehouse', 'streamprocessor'],
     optional: ['objectstorage']
+  },
+
+  // 🔥 FIX 1: Capability shims for complete axes → capabilities → services chain
+  workflow_orchestration: {
+    required: ['computecontainer'],  // Jobs → Containers (Step Functions alternative)
+    optional: ['messagequeue', 'computeserverless']
+  },
+
+  cicd: {
+    required: ['containerregistry'],  // DevOps → Registry
+    optional: ['computecontainer', 'objectstorage']
+  },
+
+  siem: {
+    required: ['logging'],  // Already covered, explicit mapping
+    optional: ['monitoring', 'auditlogging']
   }
 };
 

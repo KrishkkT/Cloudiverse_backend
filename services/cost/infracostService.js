@@ -981,7 +981,7 @@ function calculateAIConsumptionCost(infraSpec, intent, costProfile, usageProfile
 /**
  * Calculate hybrid cost combining infrastructure and consumption
  */
-function calculateHybridCost(infraSpec, intent, costProfile, usageProfile) {
+async function calculateHybridCost(infraSpec, intent, costProfile, usageProfile) {
   const description = intent?.intent_classification?.project_description?.toLowerCase() || '';
 
   // Check if this is operational failure analysis
@@ -1070,7 +1070,7 @@ function calculateHybridCost(infraSpec, intent, costProfile, usageProfile) {
   }
 
   // Calculate infrastructure cost
-  const infraResult = calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile);
+  const infraResult = await calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile);
 
   // Determine if we also need AI or storage costs
 
@@ -1377,22 +1377,24 @@ const RESOURCE_CATEGORY_MAP = {
 function extractDeployableServices(infraSpec) {
   console.log('[DEPLOYABLE FILTER] Extracting services for cost estimation');
 
+  // 🔒 CRITICAL: Normalize ALL inputs to canonical service names ONLY
+  const normalizeService = (svc) => {
+    if (!svc) return null;
+    if (typeof svc === 'string') return svc;
+    if (typeof svc === 'object') {
+      // Try different possible properties that might contain the service name
+      return svc.serviceclass || svc.service_class || svc.canonical_type || svc.name || svc.service || svc.id;
+    }
+    return null;
+  };
+
   // ✅ FIX 1: Use deployable_services from Step 2 (if available)
   if (infraSpec.canonical_architecture?.deployable_services) {
     const deployableServices = infraSpec.canonical_architecture.deployable_services;
     console.log(`[DEPLOYABLE FILTER] Using pre-computed deployable_services: ${deployableServices.length} services`);
 
-    // Handle the case where deployable_services might still be objects
-    const normalizedServices = deployableServices.map(svc => {
-      if (typeof svc === 'string') return svc;
-      if (typeof svc === 'object') {
-        // Try different possible properties that might contain the service name
-        return svc.service || svc.canonical_type || svc.name || svc.service_class;
-      }
-      return null;
-    }).filter(Boolean);
-
-    console.log(`[DEPLOYABLE FILTER] Normalized to ${normalizedServices.length} string service names`);
+    const normalizedServices = deployableServices.map(normalizeService).filter(Boolean);
+    console.log('DEPLOYABLE FILTER: Normalized to', normalizedServices.length, 'services:', normalizedServices.slice(0, 5));
     return normalizedServices;
   }
 
@@ -1400,33 +1402,35 @@ function extractDeployableServices(infraSpec) {
   const allServices = infraSpec.canonical_architecture?.services || [];
   const terminalExclusions = infraSpec.locked_intent?.terminal_exclusions || [];
 
-  const deployableServices = allServices
-    .filter(svc => {
-      // Define supported services directly to avoid initialization issues
-      const SUPPORTED_SERVICES = [
-        'global_load_balancer', 'cdn', 'api_gateway', 'relational_database', 'identity_auth',
-        'logging', 'monitoring', 'websocket_gateway', 'message_queue', 'app_compute',
-        'object_storage', 'secrets_manager', 'audit_logging', 'event_bus',
-        'compute_serverless', 'serverless_compute', 'cache', 'load_balancer', 'compute_container', 'compute_vm',
-        'nosql_database', 'block_storage', 'search_engine', 'networking', 'dns',
-        'secrets_management', 'messaging_queue'
-      ];
+  // Define supported services directly to avoid initialization issues
+  const SUPPORTED_SERVICES = [
+    'global_load_balancer', 'cdn', 'api_gateway', 'relational_database', 'identity_auth',
+    'logging', 'monitoring', 'websocket_gateway', 'message_queue', 'app_compute',
+    'object_storage', 'secrets_manager', 'audit_logging', 'event_bus',
+    'compute_serverless', 'serverless_compute', 'cache', 'load_balancer', 'compute_container', 'compute_vm',
+    'nosql_database', 'block_storage', 'search_engine', 'networking', 'dns',
+    'secrets_management', 'messaging_queue', 'container_registry', 'containerregistry',
+    'payment_gateway', 'paymentgateway', 'secret_manager', 'secretsmanager'
+  ];
 
-      if (!SUPPORTED_SERVICES.includes(svc.name)) {
-        console.warn(`[DEPLOYABLE FILTER] Unknown or unsupported service: ${svc.name}`);
+  const deployableServices = allServices
+    .map(normalizeService)
+    .filter(Boolean)
+    .filter(serviceName => {
+      if (!SUPPORTED_SERVICES.includes(serviceName)) {
+        console.warn(`[DEPLOYABLE FILTER] Unknown or unsupported service: ${serviceName}`);
         return false;
       }
 
       // Must not be in terminal exclusions
-      if (terminalExclusions.includes(svc.name)) {
-        console.log(`[DEPLOYABLE FILTER] ❌ EXCLUDED (terminal): ${svc.name}`);
+      if (terminalExclusions.includes(serviceName)) {
+        console.log(`[DEPLOYABLE FILTER] ❌ EXCLUDED (terminal): ${serviceName}`);
         return false;
       }
 
-      console.log(`[DEPLOYABLE FILTER] ✅ INCLUDED: ${svc.name}`);
+      console.log(`[DEPLOYABLE FILTER] ✅ INCLUDED: ${serviceName}`);
       return true;
-    })
-    .map(svc => svc.name);
+    });
 
   console.log(`[DEPLOYABLE FILTER] Result: ${deployableServices.length}/${allServices.length} services are deployable`);
 
@@ -1468,9 +1472,18 @@ function validatePricingIntegrity(pricedServices, deployableServices) {
     // 🔥 APPLY ALIAS MAPPING: Check if this service class has an alias
     const serviceClass = SERVICE_ALIASES[rawServiceClass] || rawServiceClass;
 
-    if (!deployableServices.includes(serviceClass) && !deployableServices.includes(rawServiceClass)) {
+    // 🔥 FIX: Normalize by stripping underscores for robust matching
+    // e.g. 'relational_database' matches 'relationaldatabase' and 'global_load_balancer' matches 'loadbalancer'
+    const normalizedService = serviceClass.replace(/_/g, '').toLowerCase();
+    const normalizedDeployable = deployableServices.map(s => s.replace(/_/g, '').toLowerCase());
+
+    // Special case for load balancer aliases
+    const isLoadBalancer = (normalizedService.includes('loadbalancer') || normalizedService.includes('alb') || normalizedService.includes('gateway')) &&
+      normalizedDeployable.some(s => s.includes('loadbalancer') || s.includes('alb') || s.includes('gateway'));
+
+    if (!normalizedDeployable.includes(normalizedService) && !isLoadBalancer) {
       throw new Error(
-        `🚨 PRICING INTEGRITY VIOLATION: Service "${serviceClass}" was priced but is NOT in deployable_services. ` +
+        `🚨 PRICING INTEGRITY VIOLATION: Service "${serviceClass}" (normalized: ${normalizedService}) was priced but is NOT in deployable_services. ` +
         `This service either: (1) has terraform_supported=false, (2) was excluded by user, or (3) leaked through a bug.`
       );
     }
@@ -1601,7 +1614,7 @@ resource "aws_instance" "app" {
   }
 
   // Database - RDS vs Aurora
-  if (services.find(s => s.service_class === 'relational_database')) {
+  if (services.find(s => s.service_class === 'relational_database' || s.service_class === 'relationaldatabase')) {
     const config = sizing.services?.relational_database || {};
     const instanceClass = tier === 'LARGE' ? 'db.t3.medium' : tier === 'SMALL' ? 'db.t3.micro' : 'db.t3.small';
 
@@ -1637,7 +1650,7 @@ resource "aws_db_instance" "db" {
   }
 
   // Cache
-  if (services.find(s => s.service_class === 'cache')) {
+  if (services.find(s => s.service_class === 'cache') || infraSpec.canonical_architecture?.deployable_services?.includes('cache')) {
     const config = sizing.services?.cache || {};
     // High performance gets dedicated nodes
     const nodeType = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 'cache.m5.large'
@@ -1654,7 +1667,7 @@ resource "aws_elasticache_cluster" "cache" {
   }
 
   // Load Balancer
-  if (services.find(s => s.service_class === 'load_balancer')) {
+  if (services.find(s => s.service_class === 'load_balancer' || s.service_class === 'loadbalancer')) {
     terraform += `
 resource "aws_lb" "alb" {
   name               = "app-alb"
@@ -1664,7 +1677,7 @@ resource "aws_lb" "alb" {
   }
 
   // Object Storage
-  if (services.find(s => s.service_class === 'object_storage')) {
+  if (services.find(s => s.service_class === 'object_storage' || s.service_class === 'objectstorage')) {
     terraform += `
 resource "aws_s3_bucket" "storage" {
   bucket = "infracost-estimate-bucket"
@@ -1673,7 +1686,7 @@ resource "aws_s3_bucket" "storage" {
   }
 
   // API Gateway
-  if (services.find(s => s.service_class === 'api_gateway')) {
+  if (services.find(s => s.service_class === 'api_gateway' || s.service_class === 'apigateway')) {
     terraform += `
 resource "aws_apigatewayv2_api" "api" {
   name          = "app-api"
@@ -1683,7 +1696,7 @@ resource "aws_apigatewayv2_api" "api" {
   }
 
   // Messaging Queue
-  if (services.find(s => s.service_class === 'messaging_queue')) {
+  if (services.find(s => s.service_class === 'messaging_queue' || s.service_class === 'messagequeue')) {
     terraform += `
 resource "aws_sqs_queue" "queue" {
   name = "app-queue"
@@ -1722,6 +1735,27 @@ resource "aws_cloudfront_distribution" "cdn" {
   }
   viewer_certificate {
     cloudfront_default_certificate = true
+  }
+}
+`;
+  }
+
+  // 🔥 FIX: Object Storage (S3) - CRITICAL for static sites and file storage
+  if (services.find(s => s.service_class === 'object_storage' || s.service_class === 'objectstorage') ||
+    infraSpec.canonical_architecture?.deployable_services?.includes('objectstorage')) {
+    terraform += `
+resource "aws_s3_bucket" "main" {
+  bucket = "app-storage-bucket"
+  
+  tags = {
+    Name = "app-storage"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "main" {
+  bucket = aws_s3_bucket.main.id
+  versioning_configuration {
+    status = "Enabled"
   }
 }
 `;
@@ -1943,7 +1977,7 @@ provider "google" {
 
 `;
 
-  if (services.find(s => s.service_class === 'compute_container')) {
+  if (services.find(s => s.service_class === 'compute_container' || s.service_class === 'computecontainer')) {
     // 🔒 KILL SWITCH: Static must never have compute
     if (infraSpec.service_classes?.pattern === 'STATIC_WEB_HOSTING') {
       throw new Error("STATIC_WEB_HOSTING MUST NOT CONTAIN COMPUTE (google_container/google_cloud_run)");
@@ -1987,7 +2021,7 @@ resource "google_cloud_run_service" "app" {
     }
   }
 
-  if (services.find(s => s.service_class === 'relational_database')) {
+  if (services.find(s => s.service_class === 'relational_database' || s.service_class === 'relationaldatabase')) {
     // High Performance uses Custom instance vs Shared Core
     const dbTier = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance')
       ? 'db-custom-4-16384'
@@ -2008,7 +2042,7 @@ resource "google_sql_database_instance" "db" {
 `;
   }
 
-  if (services.find(s => s.service_class === 'cache')) {
+  if (services.find(s => s.service_class === 'cache') || infraSpec.canonical_architecture?.deployable_services?.includes('cache')) {
     const memorySize = tier === 'LARGE' ? 5 : tier === 'SMALL' ? 1 : 2;
     const cacheTier = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 'STANDARD_HA' : 'BASIC';
 
@@ -2022,7 +2056,8 @@ resource "google_redis_instance" "cache" {
 `;
   }
 
-  if (services.find(s => s.service_class === 'object_storage')) {
+  if (services.find(s => s.service_class === 'object_storage' || s.service_class === 'objectstorage') ||
+    infraSpec.canonical_architecture?.deployable_services?.includes('objectstorage')) {
     terraform += `
 resource "google_storage_bucket" "storage" {
   name     = "infracost-estimate-bucket-gcp"
@@ -2031,7 +2066,7 @@ resource "google_storage_bucket" "storage" {
 `;
   }
 
-  if (services.find(s => s.service_class === 'load_balancer')) {
+  if (services.find(s => s.service_class === 'load_balancer' || s.service_class === 'loadbalancer')) {
     terraform += `
 resource "google_compute_backend_service" "lb" {
   name        = "app-backend"
@@ -2053,7 +2088,7 @@ resource "google_compute_backend_bucket" "cdn" {
   }
 
   // Identity / Auth (Identity Platform)
-  if (services.find(s => s.service_class === 'identity_auth')) {
+  if (services.find(s => s.service_class === 'identity_auth' || s.service_class === 'identityauth')) {
     terraform += `
 resource "google_identity_platform_config" "auth" {
   project = "example-project"
@@ -2102,7 +2137,7 @@ resource "google_logging_project_sink" "app_logs" {
   }
 
   // API Gateway
-  if (services.find(s => s.service_class === 'api_gateway')) {
+  if (services.find(s => s.service_class === 'api_gateway' || s.service_class === 'apigateway')) {
     terraform += `
 resource "google_api_gateway_gateway" "api" {
   api_config = "example-config"
@@ -2113,7 +2148,7 @@ resource "google_api_gateway_gateway" "api" {
   }
 
   // Messaging Queue (Pub/Sub)
-  if (services.find(s => s.service_class === 'messaging_queue')) {
+  if (services.find(s => s.service_class === 'messaging_queue' || s.service_class === 'messagequeue')) {
     terraform += `
 resource "google_pubsub_topic" "queue" {
   name = "app-topic"
@@ -2155,7 +2190,7 @@ resource "azurerm_resource_group" "main" {
 
 `;
 
-  if (services.find(s => s.service_class === 'compute_container')) {
+  if (services.find(s => s.service_class === 'compute_container' || s.service_class === 'computecontainer')) {
     // 🔒 KILL SWITCH: Static must never have compute
     if (infraSpec.service_classes?.pattern === 'STATIC_WEB_HOSTING') {
       throw new Error("STATIC_WEB_HOSTING MUST NOT CONTAIN COMPUTE (azurerm_kubernetes/azurerm_container_app)");
@@ -2201,7 +2236,7 @@ resource "azurerm_container_app" "app" {
     }
   }
 
-  if (services.find(s => s.service_class === 'relational_database')) {
+  if (services.find(s => s.service_class === 'relational_database' || s.service_class === 'relationaldatabase')) {
     // High Performance uses Memory Optimized
     const skuName = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance')
       ? 'MO_Standard_E2ds_v4'
@@ -2222,7 +2257,7 @@ resource "azurerm_postgresql_flexible_server" "db" {
 `;
   }
 
-  if (services.find(s => s.service_class === 'cache')) {
+  if (services.find(s => s.service_class === 'cache') || infraSpec.canonical_architecture?.deployable_services?.includes('cache')) {
     const family = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 'P' : 'C'; // Premium vs Standard
     const sku = (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 'Premium' : 'Standard';
     const capacity = tier === 'LARGE' ? 2 : 1;
@@ -2239,7 +2274,8 @@ resource "azurerm_redis_cache" "cache" {
 `;
   }
 
-  if (services.find(s => s.service_class === 'object_storage')) {
+  if (services.find(s => s.service_class === 'object_storage' || s.service_class === 'objectstorage') ||
+    infraSpec.canonical_architecture?.deployable_services?.includes('objectstorage')) {
     terraform += `
 resource "azurerm_storage_account" "storage" {
   name                     = "infracoststorage"
@@ -2251,7 +2287,7 @@ resource "azurerm_storage_account" "storage" {
 `;
   }
 
-  if (services.find(s => s.service_class === 'load_balancer')) {
+  if (services.find(s => s.service_class === 'load_balancer' || s.service_class === 'loadbalancer')) {
     terraform += `
 resource "azurerm_application_gateway" "lb" {
   name                = "app-gateway"
@@ -2925,6 +2961,27 @@ function generateMockCostData(provider, infraSpec, sizing, costProfile = 'COST_E
 async function generateCostEstimate(provider, infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, deployableServices = null) {
   const sizing = sizingModel.getSizingForInfraSpec(infraSpec, intent);
   const tier = sizing.tier;
+
+  // 🔒 STATIC SITE BYPASS - Formula only, no Terraform
+  // Static sites don't need compute resources, use formula-based costing
+  const pattern = infraSpec.serviceclasses?.pattern || infraSpec.service_classes?.pattern;
+  if (pattern === 'STATICWEBHOSTING' || pattern === 'STATICSITEWITHAUTH' ||
+    pattern === 'STATIC_WEB_HOSTING' || pattern === 'STATIC_SITE_WITH_AUTH') {
+    console.log('COST ENGINE: STATIC SITE DETECTED - Using formula bypass');
+    const usageProfile = usageOverrides || {
+      expected: { storage_gb: 2, data_transfer_gb: 10 }
+    };
+    const staticResult = handleStaticWebsiteCost(infraSpec, intent, usageProfile);
+    // Return provider-specific result
+    return {
+      ...staticResult.provider_details[provider],
+      tier,
+      cost_profile: costProfile,
+      estimate_type: 'formula',
+      estimate_source: 'static_formula',
+      estimate_reason: 'Static site pricing via deterministic formula'
+    };
+  }
 
   // 🔵 PHASE 3.1: Extract deployable services if not provided
   if (!deployableServices) {
@@ -3883,10 +3940,14 @@ module.exports = {
   PROVIDER_PERFORMANCE_SCORES,
   calculateScenarios,
   // Exposed for testing
-  generateAWSTerraform,
   generateGCPTerraform,
   generateAzureTerraform,
   runInfracost,
-  normalizeInfracostOutput
+  normalizeInfracostOutput,
+  getTerraformDirs: () => ({
+    aws: path.join(INFRACOST_BASE_DIR, 'aws'),
+    gcp: path.join(INFRACOST_BASE_DIR, 'gcp'),
+    azure: path.join(INFRACOST_BASE_DIR, 'azure')
+  })
 };
 

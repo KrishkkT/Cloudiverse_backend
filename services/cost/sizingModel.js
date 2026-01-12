@@ -299,7 +299,85 @@ const SIZING_MODEL = {
     dns: { ...PLATFORM_SIZING.dns },
     monitoring: { ...OPERATIONS_SIZING.monitoring },
     logging: { ...OPERATIONS_SIZING.logging },
-    secrets_management: { ...OPERATIONS_SIZING.secrets_management }
+    secrets_management: { ...OPERATIONS_SIZING.secrets_management },
+
+    // 🔥 FIX: Aliases for catalog service IDs (no underscore versions)
+    objectstorage: { ...DATA_SIZING.object_storage },
+    blockstorage: { ...DATA_SIZING.block_storage },
+    loadbalancer: { ...TRAFFIC_SIZING.load_balancer },
+    apigateway: { ...TRAFFIC_SIZING.api_gateway },
+    messagequeue: { ...TRAFFIC_SIZING.messaging_queue },
+    eventbus: { ...TRAFFIC_SIZING.event_bus },
+    searchengine: { ...TRAFFIC_SIZING.search_engine },
+    identityauth: { ...PLATFORM_SIZING.identity_auth },
+    secretsmanagement: { ...OPERATIONS_SIZING.secrets_management },
+    computecontainer: { ...COMPUTE_SIZING.compute_container },
+    computeserverless: { ...COMPUTE_SIZING.compute_serverless },
+    computevm: { ...COMPUTE_SIZING.compute_vm },
+    relationaldatabase: { ...DATA_SIZING.relational_database },
+    nosqldatabase: { ...DATA_SIZING.nosql_database },
+
+    // 🔥 FIX: Missing service sizing (caused $0 Infracost estimates)
+    paymentgateway: {
+        cost_effective: {
+            SMALL: { transactions_per_month: 1000, mau: 500, description: "1K transactions, 500 MAU" },
+            MEDIUM: { transactions_per_month: 10000, mau: 5000, description: "10K transactions, 5K MAU" },
+            LARGE: { transactions_per_month: 100000, mau: 50000, description: "100K transactions, 50K MAU" }
+        },
+        high_performance: {
+            SMALL: { transactions_per_month: 5000, mau: 2500, description: "5K transactions, 2.5K MAU" },
+            MEDIUM: { transactions_per_month: 50000, mau: 25000, description: "50K transactions, 25K MAU" },
+            LARGE: { transactions_per_month: 500000, mau: 250000, description: "500K transactions, 250K MAU" }
+        }
+    },
+    auditlogging: {
+        cost_effective: {
+            SMALL: { ingestion_gb: 5, retention_days: 30, description: "5GB/mo, 30 day retention" },
+            MEDIUM: { ingestion_gb: 20, retention_days: 90, description: "20GB/mo, 90 day retention" },
+            LARGE: { ingestion_gb: 100, retention_days: 365, description: "100GB/mo, 365 day retention" }
+        },
+        high_performance: {
+            SMALL: { ingestion_gb: 20, retention_days: 90, description: "20GB/mo, 90 day retention" },
+            MEDIUM: { ingestion_gb: 100, retention_days: 365, description: "100GB/mo, 365 day retention" },
+            LARGE: { ingestion_gb: 500, retention_days: 730, description: "500GB/mo, 2 year retention" }
+        }
+    },
+    containerregistry: {
+        cost_effective: {
+            SMALL: { storage_gb: 5, pull_requests: 1000, description: "5GB storage, 1K pulls/mo" },
+            MEDIUM: { storage_gb: 20, pull_requests: 10000, description: "20GB storage, 10K pulls/mo" },
+            LARGE: { storage_gb: 100, pull_requests: 100000, description: "100GB storage, 100K pulls/mo" }
+        },
+        high_performance: {
+            SMALL: { storage_gb: 20, pull_requests: 10000, description: "20GB storage, 10K pulls/mo" },
+            MEDIUM: { storage_gb: 100, pull_requests: 100000, description: "100GB storage, 100K pulls/mo" },
+            LARGE: { storage_gb: 500, pull_requests: 1000000, description: "500GB storage, 1M pulls/mo" }
+        }
+    },
+    waf: {
+        cost_effective: {
+            SMALL: { rules: 5, requests_per_month: 100000, description: "5 rules, 100K requests" },
+            MEDIUM: { rules: 10, requests_per_month: 1000000, description: "10 rules, 1M requests" },
+            LARGE: { rules: 25, requests_per_month: 10000000, description: "25 rules, 10M requests" }
+        },
+        high_performance: {
+            SMALL: { rules: 10, requests_per_month: 1000000, description: "10 rules, 1M requests" },
+            MEDIUM: { rules: 25, requests_per_month: 10000000, description: "25 rules, 10M requests" },
+            LARGE: { rules: 50, requests_per_month: 100000000, description: "50 rules, 100M requests" }
+        }
+    },
+    notification: {
+        cost_effective: {
+            SMALL: { messages_per_month: 1000, description: "1K notifications/mo" },
+            MEDIUM: { messages_per_month: 10000, description: "10K notifications/mo" },
+            LARGE: { messages_per_month: 100000, description: "100K notifications/mo" }
+        },
+        high_performance: {
+            SMALL: { messages_per_month: 10000, description: "10K notifications/mo" },
+            MEDIUM: { messages_per_month: 100000, description: "100K notifications/mo" },
+            LARGE: { messages_per_month: 1000000, description: "1M notifications/mo" }
+        }
+    }
 };
 
 /**
@@ -315,13 +393,13 @@ function getSizing(serviceClass, tier = 'MEDIUM', costProfile = 'cost_effective'
         console.warn(`No sizing defined for service class: ${serviceClass}`);
         return { description: "Default sizing" };
     }
-    
+
     // Check if this service class has cost profile-specific sizing
     if (sizing.cost_effective && sizing.high_performance) {
         const profileSizing = sizing[costProfile] || sizing.cost_effective;
         return profileSizing[tier] || profileSizing.MEDIUM;
     }
-    
+
     // Fallback to original behavior if no cost profiles defined
     return sizing[tier] || sizing.MEDIUM;
 }

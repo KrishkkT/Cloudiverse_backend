@@ -13,6 +13,10 @@ const { networkingModule } = require('./templates/networking');
 const { apiGatewayModule } = require('./templates/apiGateway');
 const { serverlessComputeModule } = require('./templates/serverlessCompute');
 const { relationalDatabaseModule } = require('./templates/relationalDatabase');
+// 🔥 FIX 2: Add missing templates for 100% core coverage
+const { computeContainerModule } = require('./templates/computeContainer');
+const { nosqlDatabaseModule } = require('./templates/nosqlDatabase');
+const { loadBalancerModule } = require('./templates/loadBalancer');
 
 /**
  * Registry of specific generators.
@@ -21,18 +25,21 @@ const { relationalDatabaseModule } = require('./templates/relationalDatabase');
 const SPECIFIC_GENERATORS = {
     // Core Compute
     computeserverless: serverlessComputeModule,
+    computecontainer: computeContainerModule,  // 🔥 FIX 2: Added
 
     // Core Storage
     objectstorage: objectStorageModule,
 
     // Core Databases
     relationaldatabase: relationalDatabaseModule,
+    nosqldatabase: nosqlDatabaseModule,  // 🔥 FIX 2: Added
 
     // Core Networking
     networking: networkingModule,
     vpcnetworking: networkingModule, // mapping alias
     apigateway: apiGatewayModule,
     cdn: cdnModule,
+    loadbalancer: loadBalancerModule,  // 🔥 FIX 2: Added
 
     // Core Security
     auth: authModule,

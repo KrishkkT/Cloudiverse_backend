@@ -18,30 +18,41 @@ function sanitizeAIScoring(aiOutput, canonicalServices) {
   const sanitized = { ...aiOutput };
 
   // Normalize canonical service names for comparison
-  const normalizedServices = canonicalServices.map(s => 
-    typeof s === 'string' ? s.toLowerCase().replace(/_/g, ' ') : 
-    s.service_class ? s.service_class.toLowerCase().replace(/_/g, ' ') : ''
+  const normalizedServices = canonicalServices.map(s =>
+    typeof s === 'string' ? s.toLowerCase().replace(/_/g, ' ') :
+      s.service_class ? s.service_class.toLowerCase().replace(/_/g, ' ') : ''
   );
 
   // Filter weaknesses that contradict canonical services
   if (sanitized.weaknesses && Array.isArray(sanitized.weaknesses)) {
     const originalCount = sanitized.weaknesses.length;
-    
+
+    // 🔥 FIX 2: Logical services that AI incorrectly flags as "missing"
+    // These are not terraform-deployable and handled via API integrations
+    const logicalServices = ['paymentgateway', 'payment_gateway', 'eventbus', 'event_bus', 'waf', 'cicd', 'artifact_registry'];
+
     sanitized.weaknesses = sanitized.weaknesses.filter(weakness => {
       const weaknessLower = weakness.toLowerCase();
-      
+
+      // Filter out false positives for logical services
+      const isLogicalServiceFlag = logicalServices.some(ls => weaknessLower.includes(ls.replace('_', ' ')) || weaknessLower.includes(ls));
+      if (isLogicalServiceFlag) {
+        console.log(`[AI SANITIZER] Filtered logical service flag: ${weakness}`);
+        return false;
+      }
+
       // Check if weakness mentions a service that already exists
       const contradicts = normalizedServices.some(service => {
-        return weaknessLower.includes(service) && 
-               (weaknessLower.includes('missing') || 
-                weaknessLower.includes('lack') ||
-                weaknessLower.includes('no ') ||
-                weaknessLower.includes('without'));
+        return weaknessLower.includes(service) &&
+          (weaknessLower.includes('missing') ||
+            weaknessLower.includes('lack') ||
+            weaknessLower.includes('no ') ||
+            weaknessLower.includes('without'));
       });
-      
+
       return !contradicts;
     });
-    
+
     const removed = originalCount - sanitized.weaknesses.length;
     if (removed > 0) {
       console.log(`[AI SANITIZER] Removed ${removed} contradictory weaknesses`);
@@ -51,17 +62,17 @@ function sanitizeAIScoring(aiOutput, canonicalServices) {
   // Filter gaps that contradict canonical services
   if (sanitized.gaps && Array.isArray(sanitized.gaps)) {
     const originalCount = sanitized.gaps.length;
-    
+
     sanitized.gaps = sanitized.gaps.filter(gap => {
       const gapLower = gap.toLowerCase();
-      
-      const contradicts = normalizedServices.some(service => 
+
+      const contradicts = normalizedServices.some(service =>
         gapLower.includes(service)
       );
-      
+
       return !contradicts;
     });
-    
+
     const removed = originalCount - sanitized.gaps.length;
     if (removed > 0) {
       console.log(`[AI SANITIZER] Removed ${removed} contradictory gaps`);
@@ -82,8 +93,8 @@ function sanitizeAIScoring(aiOutput, canonicalServices) {
  */
 function prepareAIScoringInput(userInput, canonicalArchitecture) {
   const { services, pattern } = canonicalArchitecture;
-  
-  const serviceList = services.map(s => 
+
+  const serviceList = services.map(s =>
     typeof s === 'string' ? s : s.service_class || s.canonical_type
   );
 
@@ -108,12 +119,12 @@ CRITICAL RULES:
  */
 function validateAIOutput(aiOutput, canonicalServices) {
   const warnings = [];
-  
+
   if (!aiOutput) return { valid: true, warnings: [] };
-  
-  const normalizedServices = canonicalServices.map(s => 
-    typeof s === 'string' ? s.toLowerCase().replace(/_/g, ' ') : 
-    s.service_class ? s.service_class.toLowerCase().replace(/_/g, ' ') : ''
+
+  const normalizedServices = canonicalServices.map(s =>
+    typeof s === 'string' ? s.toLowerCase().replace(/_/g, ' ') :
+      s.service_class ? s.service_class.toLowerCase().replace(/_/g, ' ') : ''
   );
 
   // Check for contradictions in weaknesses
@@ -121,8 +132,8 @@ function validateAIOutput(aiOutput, canonicalServices) {
     aiOutput.weaknesses.forEach(weakness => {
       const weaknessLower = weakness.toLowerCase();
       normalizedServices.forEach(service => {
-        if (weaknessLower.includes(service) && 
-            (weaknessLower.includes('missing') || weaknessLower.includes('lack'))) {
+        if (weaknessLower.includes(service) &&
+          (weaknessLower.includes('missing') || weaknessLower.includes('lack'))) {
           warnings.push(`AI incorrectly reports missing ${service} (exists in canonical architecture)`);
         }
       });

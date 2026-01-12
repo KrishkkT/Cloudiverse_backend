@@ -15,6 +15,9 @@ const costResultModel = require('../services/cost/costResultModel');
 const canonicalValidator = require('../services/core/canonicalValidator');
 const { generateServiceDisplay, groupServicesByCategory, getCategoryDisplayName } = require('../services/shared/serviceDisplay');
 const pool = require('../config/db');
+const archiver = require('archiver');
+const fs = require('fs');
+const path = require('path');
 
 
 // ═══════════════════════════════════════════════════════════════════
@@ -854,15 +857,115 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             // --- STEP 0: PREPROCESSING (NON-AI) ---
             const normalizedInput = userInput.toLowerCase();
             const manualExclusions = [];
-            if (normalizedInput.includes('no database') || normalizedInput.includes('without database') || normalizedInput.includes('database excluded')) {
-                manualExclusions.push('database');
+
+            // 🔒 DATABASE EXCLUSIONS (15 patterns)
+            if (normalizedInput.includes('no database') || normalizedInput.includes('without database') ||
+                normalizedInput.includes('database excluded') || normalizedInput.includes('no db') ||
+                normalizedInput.includes('stateless') || normalizedInput.includes('no persistence') ||
+                normalizedInput.includes('no storage') || normalizedInput.includes('ephemeral') ||
+                normalizedInput.includes('no sql') || normalizedInput.includes('no nosql') ||
+                normalizedInput.includes('memory only') || normalizedInput.includes('no data store') ||
+                normalizedInput.includes('static site') || normalizedInput.includes('just frontend')) {
+                manualExclusions.push('database', 'datapersistence', 'nosqldatabase', 'relationaldatabase');
             }
-            if (normalizedInput.includes('no payments') || normalizedInput.includes('without payments')) {
+
+            // 🔒 PAYMENTS EXCLUSIONS (12 patterns)
+            if (normalizedInput.includes('no payments') || normalizedInput.includes('without payments') ||
+                normalizedInput.includes('no payment') || normalizedInput.includes('free only') ||
+                normalizedInput.includes('no billing') || normalizedInput.includes('no checkout') ||
+                normalizedInput.includes('no stripe') || normalizedInput.includes('no paypal') ||
+                normalizedInput.includes('non monetized') || normalizedInput.includes('no subscription') ||
+                normalizedInput.includes('marketing site') || normalizedInput.includes('portfolio')) {
                 manualExclusions.push('payments');
             }
-            if (normalizedInput.includes('no auth') || normalizedInput.includes('without auth')) {
-                manualExclusions.push('auth');
+
+            // 🔒 AUTH/LOGIN EXCLUSIONS (25 patterns)
+            if (normalizedInput.includes('no auth') || normalizedInput.includes('without auth') ||
+                normalizedInput.includes('no login') || normalizedInput.includes('no user login') ||
+                normalizedInput.includes('without login') || normalizedInput.includes('no authentication') ||
+                normalizedInput.includes('no user accounts') || normalizedInput.includes('no signup') ||
+                normalizedInput.includes('public only') || normalizedInput.includes('anonymous access') ||
+                normalizedInput.includes('no users') || normalizedInput.includes('no accounts') ||
+                normalizedInput.includes('guest only') || normalizedInput.includes('open access') ||
+                normalizedInput.includes('no registration') || normalizedInput.includes('no passwords') ||
+                normalizedInput.includes('static landing') || normalizedInput.includes('brochure site') ||
+                normalizedInput.includes('no jwt') || normalizedInput.includes('no oauth') ||
+                normalizedInput.includes('marketing page') || normalizedInput.includes('showcase')) {
+                manualExclusions.push('auth', 'identityaccess', 'userauthentication');
             }
+
+            // 🔒 BACKEND/API EXCLUSIONS (20 patterns)
+            if (normalizedInput.includes('no backend') || normalizedInput.includes('without backend') ||
+                normalizedInput.includes('no api') || normalizedInput.includes('no server') ||
+                normalizedInput.includes('just static') || normalizedInput.includes('static only') ||
+                normalizedInput.includes('frontend only') || normalizedInput.includes('no compute') ||
+                normalizedInput.includes('no lambda') || normalizedInput.includes('no functions') ||
+                normalizedInput.includes('pure static') || normalizedInput.includes('html css js') ||
+                normalizedInput.includes('no node') || normalizedInput.includes('no python') ||
+                normalizedInput.includes('landing page') || normalizedInput.includes('portfolio site') ||
+                normalizedInput.includes('no app server') || normalizedInput.includes('client side only') ||
+                normalizedInput.includes('no rest') || normalizedInput.includes('no graphql')) {
+                manualExclusions.push('backend', 'api', 'apibackend', 'computeserverless', 'computevm');
+            }
+
+            // 🔒 REALTIME EXCLUSIONS (10 patterns)
+            if (normalizedInput.includes('no realtime') || normalizedInput.includes('no live') ||
+                normalizedInput.includes('no websocket') || normalizedInput.includes('no chat') ||
+                normalizedInput.includes('no streaming') || normalizedInput.includes('batch only') ||
+                normalizedInput.includes('no updates') || normalizedInput.includes('static content') ||
+                normalizedInput.includes('no notifications') || normalizedInput.includes('no socket')) {
+                manualExclusions.push('realtime', 'websocketgateway');
+            }
+
+            // 🔒 QUEUES/MESSAGING EXCLUSIONS (8 patterns)
+            if (normalizedInput.includes('no queue') || normalizedInput.includes('no messaging') ||
+                normalizedInput.includes('no kafka') || normalizedInput.includes('no rabbitmq') ||
+                normalizedInput.includes('no sqs') || normalizedInput.includes('direct only') ||
+                normalizedInput.includes('no events') || normalizedInput.includes('no pubsub')) {
+                manualExclusions.push('messaging', 'message_queue');
+            }
+
+            // 🔒 SEARCH EXCLUSIONS (8 patterns)
+            if (normalizedInput.includes('no search') || normalizedInput.includes('no elasticsearch') ||
+                normalizedInput.includes('no algolia') || normalizedInput.includes('static menu') ||
+                normalizedInput.includes('no index') || normalizedInput.includes('no fulltext') ||
+                normalizedInput.includes('simple nav') || normalizedInput.includes('no query')) {
+                manualExclusions.push('search');
+            }
+
+            // 🔒 ADMIN DASHBOARD EXCLUSIONS (10 patterns)
+            if (normalizedInput.includes('no admin') || normalizedInput.includes('no dashboard') ||
+                normalizedInput.includes('no panel') || normalizedInput.includes('public only') ||
+                normalizedInput.includes('no cms') || normalizedInput.includes('hardcoded content') ||
+                normalizedInput.includes('no control panel') || normalizedInput.includes('marketing only') ||
+                normalizedInput.includes('no backend ui') || normalizedInput.includes('static html')) {
+                manualExclusions.push('admindashboard');
+            }
+
+            // 🔒 MOBILE EXCLUSIONS (6 patterns)
+            if (normalizedInput.includes('web only') || normalizedInput.includes('no mobile') ||
+                normalizedInput.includes('no app') || normalizedInput.includes('desktop only') ||
+                normalizedInput.includes('responsive web') || normalizedInput.includes('no react native')) {
+                manualExclusions.push('mobileclients');
+            }
+
+            // 🔒 MULTI-TENANT EXCLUSIONS (8 patterns)
+            if (normalizedInput.includes('single tenant') || normalizedInput.includes('no multi tenant') ||
+                normalizedInput.includes('personal use') || normalizedInput.includes('no teams') ||
+                normalizedInput.includes('solo project') || normalizedInput.includes('no workspaces') ||
+                normalizedInput.includes('no orgs') || normalizedInput.includes('individual only')) {
+                manualExclusions.push('multitenancy', 'multi_user_roles');
+            }
+
+            // 🔒 FILE UPLOAD EXCLUSIONS (8 patterns)
+            if (normalizedInput.includes('no uploads') || normalizedInput.includes('no files') ||
+                normalizedInput.includes('static assets') || normalizedInput.includes('no storage') ||
+                normalizedInput.includes('embedded images') || normalizedInput.includes('no documents') ||
+                normalizedInput.includes('no blob') || normalizedInput.includes('no cdn uploads')) {
+                manualExclusions.push('filestorage', 'document_storage');
+            }
+
+            console.log('[EXCLUSION DETECTOR] Manual exclusions found:', manualExclusions);
 
             console.log("--- STEP 1: AI Intent Normalization (ONCE) ---");
             const rawStep1 = await aiService.normalizeIntent(userInput, conversationHistory || []);
@@ -3072,6 +3175,99 @@ router.post('/architecture-display', async (req, res) => {
     } catch (error) {
         console.error('[ARCHITECTURE DISPLAY] Error:', error);
         res.status(500).json({ error: 'Failed to generate architecture display', message: error.message });
+    }
+});
+
+/**
+ * NEW: Export Generated Terraform as Zip
+ * GET /api/workflow/export-terraform
+ */
+router.get('/export-terraform', async (req, res) => {
+    console.log('[API] Request to export Terraform zip');
+    try {
+        const dirs = infracostService.getTerraformDirs();
+
+        // Check if any terraform files exist
+        const hasAws = fs.existsSync(dirs.aws);
+        const hasGcp = fs.existsSync(dirs.gcp);
+        const hasAzure = fs.existsSync(dirs.azure);
+
+        if (!hasAws && !hasGcp && !hasAzure) {
+            return res.status(404).json({ error: "No Terraform code generated yet. Please run analysis first." });
+        }
+
+        res.attachment('terraform-infra.zip');
+        const archive = archiver('zip', { zlib: { level: 9 } });
+
+        archive.on('error', function (err) {
+            console.error('[ZIP ERROR]', err);
+            res.status(500).send({ error: err.message });
+        });
+
+        // Pipe to response
+        archive.pipe(res);
+
+        // Add AWS
+        if (hasAws) {
+            archive.directory(dirs.aws, 'aws');
+        }
+
+        // Add GCP
+        if (hasGcp) {
+            archive.directory(dirs.gcp, 'gcp');
+        }
+
+        // Add Azure
+        if (hasAzure) {
+            archive.directory(dirs.azure, 'azure');
+        }
+
+        // Add README directly
+        const readmeContent = `# Cloudiverse Deployment Guide
+
+This zip file contains the generated Terraform configuration for your architecture.
+
+## 📂 Structure
+- \`aws/\`: Terraform configuration for Amazon Web Services
+- \`gcp/\`: Terraform configuration for Google Cloud Platform
+- \`azure/\`: Terraform configuration for Microsoft Azure
+
+## 🚀 How to Deploy
+
+### Prerequisites
+1.  **Terraform CLI**: [Install Terraform](https://developer.hashicorp.com/terraform/downloads)
+2.  **Cloud CLI**: Install and authenticate with your chosen provider:
+    - **AWS**: [Install AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) -> Run \`aws configure\`
+    - **GCP**: [Install gcloud CLI](https://cloud.google.com/sdk/docs/install) -> Run \`gcloud auth application-default login\`
+    - **Azure**: [Install Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) -> Run \`az login\`
+
+### Deploying to AWS
+1.  Navigate to the AWS directory: \`cd aws\`
+2.  Initialize Terraform: \`terraform init\`
+3.  Preview changes: \`terraform plan\`
+4.  Apply infrastructure: \`terraform apply\`
+
+### Deploying to GCP
+1.  Navigate to the GCP directory: \`cd gcp\`
+2.  Initialize: \`terraform init\`
+3.  Apply: \`terraform apply\`
+
+### Deploying to Azure
+1.  Navigate to the Azure directory: \`cd azure\`
+2.  Initialize: \`terraform init\`
+3.  Apply: \`terraform apply\`
+
+## ⚠️ Note on State Management
+This configuration uses **local state** (\`terraform.tfstate\`). For team collaboration, use remote state (S3/GCS/Azure Storage).
+`;
+
+        archive.append(readmeContent, { name: 'README.md' });
+
+        archive.finalize();
+
+    } catch (err) {
+        console.error("Export error:", err);
+        res.status(500).json({ error: "Failed to export Terraform code" });
     }
 });
 

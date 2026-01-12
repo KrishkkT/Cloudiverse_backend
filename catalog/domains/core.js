@@ -680,6 +680,69 @@ module.exports = {
                 gcp: { resource: 'google_artifact_registry_repository', name: 'Artifact Registry' },
                 azure: { resource: 'azurerm_container_registry', name: 'Artifacts (via ACR/feeds)' }
             }
+        },
+
+        // ───────────────────────────────────────────────────────────────────
+        // ADDITIONAL CRITICAL SERVICES
+        // ───────────────────────────────────────────────────────────────────
+        pushnotificationservice: {
+            id: 'pushnotificationservice',
+            name: 'Push Notification Service',
+            category: 'integration',
+            domain: 'core',
+            tags: ['mobile', 'notifications', 'push'],
+            terraform: { moduleId: 'push_notification' },
+            pricing: { engine: 'infracost', infracost: { resourceType: 'aws_sns_platform_application' } },
+            mappings: {
+                aws: { resource: 'aws_sns_platform_application', name: 'SNS Mobile Push' },
+                gcp: { resource: 'google_firebase_project', name: 'Firebase Cloud Messaging' },
+                azure: { resource: 'azurerm_notification_hub', name: 'Notification Hubs' }
+            }
+        },
+
+        websocketgateway: {
+            id: 'websocketgateway',
+            name: 'WebSocket Gateway',
+            category: 'network',
+            domain: 'core',
+            tags: ['realtime', 'websocket', 'pubsub'],
+            terraform: { moduleId: 'websocket_gateway' },
+            pricing: { engine: 'infracost', infracost: { resourceType: 'aws_apigatewayv2_api' } },
+            mappings: {
+                aws: { resource: 'aws_apigatewayv2_api', name: 'API Gateway WebSocket' },
+                gcp: { resource: 'google_cloud_run_service', name: 'Cloud Run (WebSocket)' },
+                azure: { resource: 'azurerm_signalr_service', name: 'Azure SignalR Service' }
+            }
+        },
+
+        globalloadbalancer: {
+            id: 'globalloadbalancer',
+            name: 'Global Load Balancer',
+            category: 'network',
+            domain: 'core',
+            tags: ['network', 'global', 'multi-region'],
+            terraform: { moduleId: 'global_load_balancer' },
+            pricing: { engine: 'infracost', infracost: { resourceType: 'aws_globalaccelerator_accelerator' } },
+            mappings: {
+                aws: { resource: 'aws_globalaccelerator_accelerator', name: 'Global Accelerator' },
+                gcp: { resource: 'google_compute_global_forwarding_rule', name: 'Global Load Balancer' },
+                azure: { resource: 'azurerm_frontdoor', name: 'Azure Front Door' }
+            }
+        },
+
+        multiregiondb: {
+            id: 'multiregiondb',
+            name: 'Multi-Region Database',
+            category: 'database',
+            domain: 'core',
+            tags: ['database', 'multi-region', 'ha'],
+            terraform: { moduleId: 'multi_region_db' },
+            pricing: { engine: 'infracost', infracost: { resourceType: 'aws_rds_global_cluster' } },
+            mappings: {
+                aws: { resource: 'aws_rds_global_cluster', name: 'Aurora Global Database' },
+                gcp: { resource: 'google_spanner_instance', name: 'Cloud Spanner' },
+                azure: { resource: 'azurerm_cosmosdb_account', name: 'Cosmos DB (multi-region)' }
+            }
         }
     }
 };

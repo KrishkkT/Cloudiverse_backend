@@ -163,10 +163,12 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // STORAGE SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (deployableServices.includes('object_storage')) {
+    // 🔥 FIX: Check for both 'object_storage' and 'objectstorage' (catalog uses no underscore)
+    if (deployableServices.includes('object_storage') || deployableServices.includes('objectstorage')) {
         switch (provider) {
             case 'AWS':
-                usage['aws_s3_bucket.storage'] = {
+                // Resource name must match objectStorage.js template: aws_s3_bucket.main
+                usage['aws_s3_bucket.main'] = {
                     storage_gb: storageGB,
                     monthly_tier_1_requests: monthlyRequests * 0.1, // 10% direct S3 access
                     monthly_tier_2_requests: monthlyRequests * 0.05,

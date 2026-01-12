@@ -47,7 +47,9 @@
         "data_lake": "terraform-aws-modules/s3-bucket/aws",
         "websocket_gateway": "terraform-aws-modules/apigateway-v2/aws",
         "payment_gateway": null,
-        "app_compute": "terraform-aws-modules/ecs/aws"
+        "push_notification": "terraform-aws-modules/sns/aws",
+        "app_compute": "terraform-aws-modules/ecs/aws",
+        "container_registry": "terraform-aws-modules/ecr/aws"
     },
     "gcp": {
         "compute_container": {
@@ -88,7 +90,9 @@
         "data_lake": "terraform-google-modules/cloud-storage/google",
         "websocket_gateway": "GoogleCloudPlatform/cloud-run/google",
         "payment_gateway": null,
-        "app_compute": "GoogleCloudPlatform/cloud-run/google"
+        "push_notification": "GoogleCloudPlatform/firebase/google",
+        "app_compute": "GoogleCloudPlatform/cloud-run/google",
+        "container_registry": "GoogleCloudPlatform/container-registry/google"
     },
     "azure": {
         "compute_container": {
@@ -133,6 +137,8 @@
         "data_lake": "Azure/storage/azurerm",
         "websocket_gateway": "Azure/signalr/azurerm",
         "payment_gateway": null,
-        "app_compute": "Azure/container-apps/azurerm"
+        "push_notification": "Azure/notification-hubs/azurerm",
+        "app_compute": "Azure/container-apps/azurerm",
+        "container_registry": "Azure/acr/azurerm"
     }
 }
