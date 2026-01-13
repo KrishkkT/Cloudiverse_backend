@@ -447,6 +447,42 @@
             "complexity": "complex",
             "name": "High Availability Platform",
             "cost_engine": "hybrid"
+        },
+        "CONTAINERIZED_WEB_APP": {
+            "description": "Standard web applications and REST APIs using containers",
+            "required_capabilities": [
+                "api_backend"
+            ],
+            "forbidden_capabilities": [
+                "serverless_only"
+            ],
+            "services": [
+                "loadbalancer",
+                "computecontainer",
+                "logging",
+                "monitoring",
+                "identityauth",
+                "waf",
+                "secretsmanagement"
+            ],
+            "optional_services": [
+                "relationaldatabase",
+                "cache",
+                "objectstorage",
+                "messagequeue",
+                "cdn",
+                "apigateway"
+            ],
+            "score_weights": {
+                "api_backend": 0.9,
+                "web_application": 1.0,
+                "stateful": 0.8,
+                "data_persistence": 0.8,
+                "identity_access": 0.8
+            },
+            "complexity": "complex",
+            "name": "Containerized Web App",
+            "cost_engine": "hybrid"
         }
     },
     "fallback_pattern": "HYBRID_PLATFORM",

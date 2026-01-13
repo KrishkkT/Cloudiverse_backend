@@ -347,18 +347,34 @@ const PATTERN_CATALOG = {
       payments: false,
       ml: false
     }
+  },
+
+  // 1️⃣9️⃣ CONTAINERIZED_WEB_APP
+  CONTAINERIZED_WEB_APP: {
+    name: 'Containerized Web App',
+    use_case: 'Standard web applications and REST APIs using containers',
+    mandatory_services: ['loadbalancer', 'computecontainer', 'logging', 'monitoring', 'identityauth', 'waf', 'secretsmanagement', 'dns'],
+    optional_services: ['relationaldatabase', 'cache', 'objectstorage', 'messagequeue', 'cdn', 'apigateway'],
+    forbidden_services: ['computeserverless'], // Explicitly matches 'app_compute' vs 'serverless_compute'
+    requirements: {
+      stateful: true,
+      backend: true,
+      realtime: false,
+      payments: false,
+      ml: false
+    }
   }
 };
 
 
 const SERVICE_REGISTRY = {
   relationaldatabase: {  // 🔥 CANONICAL NAME (not relational_db)
-    required_for: ["stateful", "data_stores:relational"],
+    required_for: ["stateful", "data_stores:relationaldatabase"],
     description: "Relational database service",
     category: "database"
   },
   messagequeue: {
-    required_for: ["realtime", "data_stores:queue"],
+    required_for: ["realtime", "data_stores:messagequeue"],
     description: "Message queue service",
     category: "messaging"
   },
@@ -380,6 +396,11 @@ const SERVICE_REGISTRY = {
   objectstorage: {
     required_for: ["file_storage", "data_stores:objectstorage"],  // 🔥 ADDED data_stores trigger
     description: "Object storage service",
+    category: "storage"
+  },
+  block_storage: {  // 🔥 ADDED
+    required_for: ["vm", "data_stores:block"],
+    description: "Block storage volume (EBS)",
     category: "storage"
   },
   cache: {
@@ -497,8 +518,11 @@ class PatternResolver {
         observability: {
           logs: true,
           metrics: true,
+          metrics: true,
           alerts: false
-        }
+        },
+        // Compute preference (container vs serverless)
+        compute_preference: null
       };
 
       // 🔥 CRITICAL FIX: Read from full step1Result, not just text
@@ -515,6 +539,10 @@ class PatternResolver {
 
       console.log('[EXTRACT REQUIREMENTS] Capabilities:', capabilities);
       console.log('[EXTRACT REQUIREMENTS] Terminal Exclusions:', terminalExclusions);
+
+
+      // Fallback: Also safely extract from intent text if provided
+      const text = (intent.project_description || intent.description || intent || '').toString().toLowerCase();
 
       // 🔒 FIX 1: Detect mobile_app_backend domain from intent_classification
       const primaryDomain = intentClassification.primary_domain || '';
@@ -533,6 +561,21 @@ class PatternResolver {
       if (primaryDomain === 'machine_learning' || primaryDomain.includes('ml') || primaryDomain.includes('ai')) {
         requirements.ml = true;
         console.log('[DOMAIN DETECTION] machine_learning domain → ml=true');
+      }
+
+      // 🔥 FIX 2: Map new ENUM domains to workloads
+      if (primaryDomain === 'api_backend') {
+        requirements.workload_types.push('backend_api');
+        console.log('[DOMAIN DETECTION] api_backend domain → backend_api workload');
+      }
+      if (primaryDomain === 'web_application') {
+        requirements.workload_types.push('web_app');
+        console.log('[DOMAIN DETECTION] web_application domain → web_app workload');
+      }
+      if (primaryDomain === 'ecommerce') {
+        requirements.workload_types.push('web_app');
+        requirements.payments = true; // Ecommerce implies payments
+        console.log('[DOMAIN DETECTION] ecommerce domain → web_app + payments');
       }
 
       // Merge explicit + inferred features (explicit takes precedence)
@@ -578,6 +621,20 @@ class PatternResolver {
         requirements.nfr.latency = semanticSignals.latency_sensitivity;
       }
 
+      // 🔥 FIX: Extract compute preference (app_compute = container)
+      // Check explicit features, inferred features, text, and capabilities
+      const computeSignals = [
+        allFeatures.app_compute,
+        allFeatures.computecontainer,
+        allFeatures.containers,
+        intent.target_compute === "container",
+        text.includes('container') || text.includes('kubernetes') || text.includes('fargate') || text.includes('ecs') || text.includes('gke') || text.includes('app_compute')
+      ];
+      if (computeSignals.some(s => s === true)) {
+        requirements.compute_preference = 'container';
+        console.log('[REQUIREMENTS] Detected container compute preference');
+      }
+
       // Extract from decision_axes (CRITICAL - this is what was missing!)
       if (decisionAxes.data_sensitivity) {
         requirements.data_sensitivity = decisionAxes.data_sensitivity.toLowerCase();
@@ -598,7 +655,7 @@ class PatternResolver {
       }
 
       // Fallback: Also safely extract from intent text if provided
-      const text = (intent.project_description || intent.description || intent || '').toString().toLowerCase();
+      // const text = ... (Moved to top)
 
       // Only use text parsing if features weren't already detected
       if (requirements.workload_types.length === 0) {
@@ -634,6 +691,26 @@ class PatternResolver {
         if (text.includes('login') || text.includes('auth') || text.includes('user') ||
           text.includes('profile') || text.includes('account')) {
           requirements.authentication = true;
+        }
+      }
+
+      // 🆕 NEW: Map decision axes to data stores (CRITICAL FIX)
+      if (decisionAxes.primary_data_model && decisionAxes.primary_data_model.includes('relational')) {
+        if (!requirements.data_stores.includes('relationaldatabase')) {
+          requirements.data_stores.push('relationaldatabase');
+          console.log('[REQUIREMENTS] Added relationaldatabase from axis primary_data_model');
+        }
+      }
+      if (decisionAxes.file_storage === true) {
+        if (!requirements.data_stores.includes('objectstorage')) {
+          requirements.data_stores.push('objectstorage');
+          console.log('[REQUIREMENTS] Added objectstorage from axis file_storage');
+        }
+      }
+      if (decisionAxes.messaging_queue === true) {
+        if (!requirements.data_stores.includes('messagequeue')) {
+          requirements.data_stores.push('messagequeue');
+          console.log('[REQUIREMENTS] Added messagequeue from axis messaging_queue');
         }
       }
 
@@ -866,6 +943,15 @@ class PatternResolver {
     if (requirements.workload_types.includes('backend_api') && !requirements.stateful && !requirements.ml) {
       console.log('[PATTERN SELECTION] Stateless backend API → SERVERLESS_API');
       return 'SERVERLESS_API';
+    }
+
+    // 🔥 FIX: Container preference -> CONTAINERIZED_WEB_APP (before Serverless fallbacks)
+    if (requirements.compute_preference === 'container') {
+      // If generic web_app or backend_api
+      if (requirements.workload_types.includes('web_app') || requirements.workload_types.includes('backend_api')) {
+        console.log('[PATTERN SELECTION] Container preference detected → CONTAINERIZED_WEB_APP');
+        return 'CONTAINERIZED_WEB_APP';
+      }
     }
 
     // Web app with auth or data stores = Serverless Web App
@@ -1545,6 +1631,35 @@ class PatternResolver {
       if (intent.complexity === 'SIMPLE' && pattern.complexity === 'complex') {
         score *= 0.7;
         reasoning.push('complexity_mismatch (*0.7)');
+      }
+
+      // 🔥 FIX: Enforce Compute Preference (Container vs Serverless)
+      const kubernetesRequired = intent.axes?.kubernetes_required?.value === true;
+      const isContainerPattern = patternName.includes('CONTAINER') || patternName.includes('KUBERNETES') || pattern.services?.includes('computecontainer');
+      const isServerlessPattern = patternName.includes('SERVERLESS') || pattern.services?.includes('computeserverless');
+
+      if (kubernetesRequired) {
+        if (isServerlessPattern) {
+          score *= 0.1; // Heavy penalty for serverless when K8s required
+          reasoning.push('kubernetes_req_penalizes_serverless (*0.1)');
+        }
+        if (isContainerPattern) {
+          score += 5; // Boost container patterns
+          reasoning.push('kubernetes_req_boosts_container (+5)');
+        }
+      }
+
+      // 🔥 FIX: Enforce "Serverless" preference if explicitly stated
+      const serverlessRequired = intent.axes?.ops_model?.value === 'serverless_only';
+      if (serverlessRequired) {
+        if (isContainerPattern) {
+          score *= 0.1;
+          reasoning.push('serverless_pref_penalizes_container (*0.1)');
+        }
+        if (isServerlessPattern) {
+          score += 3;
+          reasoning.push('serverless_pref_boosts_serverless (+3)');
+        }
       }
 
       scores.push({

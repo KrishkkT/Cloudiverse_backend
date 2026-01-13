@@ -1,5 +1,9 @@
 {
     "axes": {
+        "primary_domain": {
+            "type": "enum",
+            "impact": 0.8
+        },
         "static_content": {
             "type": "boolean",
             "impact": 0.7
@@ -218,6 +222,19 @@
         }
     },
     "enums": {
+        "primary_domain": [
+            "api_backend",
+            "web_application",
+            "infrastructure",
+            "devtools",
+            "saas",
+            "ecommerce",
+            "fintech",
+            "healthcare",
+            "gaming",
+            "portfolio",
+            "other"
+        ],
         "primary_data_model": [
             "none",
             "relational",

@@ -11,6 +11,7 @@ const SERVICE_DISPLAY = {
     "loadbalancer": { name: "Load Balancer", category: "traffic", icon: "cloud", description: "Traffic distribution" },
     "globalloadbalancer": { name: "Global Load Balancer", category: "traffic", icon: "globe", description: "Multi-region routing" },
     "websockets": { name: "WebSockets", category: "traffic", icon: "link", description: "Real-time connections" },
+    "dns": { name: "DNS", category: "traffic", icon: "globe", description: "Domain Name System" },
 
     // Compute
     "appcompute": { name: "App Compute", category: "compute", icon: "server", description: "Application servers" },
@@ -18,10 +19,12 @@ const SERVICE_DISPLAY = {
     "computecluster": { name: "Compute Cluster", category: "compute", icon: "server", description: "Container orchestration" },
     "mlinference": { name: "ML Inference", category: "ai", icon: "brain", description: "Model serving" },
     "mlinferencegpu": { name: "ML Inference (GPU)", category: "ai", icon: "brain", description: "GPU-accelerated inference" },
+    "computecontainer": { name: "App Container", category: "compute", icon: "server", description: "Containerized application runtime" },
 
     // Data / Storage
     "relationaldatabase": { name: "Relational Database", category: "data", icon: "database", description: "SQL database (encrypted)" },
     "objectstorage": { name: "Object Storage", category: "data", icon: "folder", description: "File & asset storage" },
+    "block_storage": { name: "Block Storage", category: "data", icon: "hard-drive", description: "Persistent disk volume" },
     "documentstorage": { name: "Document Storage", category: "data", icon: "file", description: "Document database" },
     "timeseriesdb": { name: "Time Series DB", category: "data", icon: "activity", description: "Metrics & telemetry" },
     "vectordb": { name: "Vector Database", category: "data", icon: "grid", description: "Embeddings storage" },
@@ -35,6 +38,8 @@ const SERVICE_DISPLAY = {
     "secretsmanager": { name: "Secrets Manager", category: "security", icon: "key", description: "Key & secret management" },
     "paymenttokenization": { name: "Payment Tokenization", category: "security", icon: "lock", description: "PCI tokenization" },
     "cardvault": { name: "Card Vault", category: "security", icon: "lock", description: "Secure card storage" },
+    "waf": { name: "WAF", category: "security", icon: "shield", description: "Web Application Firewall" },
+    "secretsmanagement": { name: "Secrets Manager", category: "security", icon: "key", description: "Secure secrets storage" },
 
     // Observability  
     "logging": { name: "Logging", category: "observability", icon: "list", description: "Centralized logs" },
@@ -75,7 +80,8 @@ function generateServiceDisplay(services) {
     }
 
     return services.map(svc => {
-        const canonical_type = svc.canonical_type || svc;
+        const canonical_type = (svc.canonical_type || svc).toLowerCase().trim(); // Ensure lowercase and trim
+        console.log(`[DISPLAY DEBUG] Looking up service: '${canonical_type}'`);
         const display = SERVICE_DISPLAY[canonical_type] || {
             name: canonical_type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
             category: "other",

@@ -6,37 +6,37 @@
 
 const PATTERN_MINIMUMS = {
     SERVERLESS_WEB_APP: [
-        'object_storage', // S3 (Static assets)
+        'objectstorage', // S3 (Static assets)
         'cdn',            // CloudFront
-        'identity_auth',  // Cognito
-        'compute_serverless' // Lambda/API Gateway
+        'identityauth',  // Cognito
+        'computeserverless' // Lambda/API Gateway
     ],
     STATIC_WEB_HOSTING: [
-        'object_storage',
+        'objectstorage',
         'cdn',
         'dns'
     ],
     CONTAINERIZED_WEB_APP: [
-        'compute_container',
-        'load_balancer',
-        'block_storage'
+        'computecontainer',
+        'loadbalancer',
+        'block_storage' // block_storage is canonical? Needs check. Usually it's just attached to compute.
     ],
     MOBILE_BACKEND_API: [
-        'compute_serverless',
-        'identity_auth',
-        'database' // Usually required, but handled by usage check
+        'computeserverless',
+        'identityauth',
+        'relationaldatabase' // improved from generic 'database'
     ],
     TRADITIONAL_VM_APP: [
-        'compute_vm',
+        'computevm',
         'block_storage',
         'networking'
     ]
 };
 
 const FORBIDDEN_BY_PATTERN = {
-    SERVERLESS_WEB_APP: ['compute_vm', 'compute_container'], // Can't have VMs in serverless
-    STATIC_WEB_HOSTING: ['compute_vm', 'compute_container', 'relational_database', 'nosql_database'],
-    TRADITIONAL_VM_APP: ['compute_serverless']
+    SERVERLESS_WEB_APP: ['computevm', 'computecontainer'], // Can't have VMs in serverless
+    STATIC_WEB_HOSTING: ['computevm', 'computecontainer', 'relationaldatabase', 'nosqldatabase'],
+    TRADITIONAL_VM_APP: ['computeserverless']
 };
 
 /**

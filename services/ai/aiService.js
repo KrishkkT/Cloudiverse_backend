@@ -40,15 +40,16 @@ You MUST:
 IMPORTANT PRINCIPLES:
 - You are allowed to infer reasonable defaults when the description strongly suggests them, but you must always track CONFIDENCE.
 - If something is not clearly specified, set its value to null and use low confidence.
-- Do NOT invent very specific numeric values; use the defined enums.
-- When in doubt between safety and convenience, prefer SAFETY: do not assume low data sensitivity or no compliance unless it is clearly implied.
+- Do NOT invent very specific numeric values; use the defined enums.- When in doubt between safety and convenience, prefer SAFETY: do not assume low data sensitivity or no compliance unless it is clearly implied.
+- Do NOT assume 'ecommerce' unless explicitly stated (e.g. 'shop', 'store', 'sell'). For generic APIs, use 'api_backend' or 'saas'.
+- If user mentions 'app_compute', 'containers', or 'cluster', prefer 'managed_services_pref' or 'kubernetes_pref' for ops_model.
 
 -----------------
 DECISION AXES & CATEGORIES
 -----------------
 
 A. Project & domain axes
-- primary_domain: string (e.g., portfolio, ecommerce, fintech, healthcare, gaming, devtools, saas)
+- primary_domain: enum (api_backend, web_application, infrastructure, devtools, saas, ecommerce, fintech, healthcare, gaming, portfolio, other)
 - project_categories: array of strings
 
 B. Functional capability axes (boolean)

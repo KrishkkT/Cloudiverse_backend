@@ -1595,7 +1595,10 @@ router.post('/analyze', authMiddleware, async (req, res) => {
         // === CONSTRUCT FINAL INFRASPEC ===
         const infraSpec = {
             // Tier 1 Data (Default View)
-            project_name: step2Result.project_name || identity.system_name,
+            // 🔒 FIX 2: Override hallucinated "Ecommerce" names
+            project_name: (step2Result.project_name && !step2Result.project_name.toLowerCase().includes('ecommerce') && !step2Result.project_name.toLowerCase().includes('shopping'))
+                ? step2Result.project_name
+                : (identity.system_name !== 'Cloudiverse System' ? identity.system_name : (step1Result.intent?.project_description ? "Custom Project" : "REST API Backend")),
             project_summary: step2Result.project_summary || "Cloud-native infrastructure specification",
             architecture_pattern: step2Result.architecture_pattern || "three_tier_web",
             scores: scores,
@@ -1671,6 +1674,20 @@ router.post('/analyze', authMiddleware, async (req, res) => {
                 message: validationError.message,
                 details: validationError.stack
             });
+        }
+
+        // 🔥 FIX 3: Enrich services with Descriptions for Frontend
+        if (infraSpec.canonical_architecture) {
+            infraSpec.canonical_architecture.display_services = generateServiceDisplay(
+                infraSpec.canonical_architecture.architecture_services || []
+            );
+            // Also enrich nodes if they exist
+            if (infraSpec.canonical_architecture.nodes) {
+                infraSpec.canonical_architecture.nodes = infraSpec.canonical_architecture.nodes.map(node => {
+                    const display = generateServiceDisplay([{ canonical_type: node.type }])[0];
+                    return { ...node, description: display.description, label: display.name };
+                });
+            }
         }
 
         // 🔒 FIX 1 & 2: Integrity Guard
@@ -1879,10 +1896,11 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
         }
 
         // LAYER B: If usage_profile is provided, convert ranges to scenarios and calculate range
-        if (usage_profile && usage_profile.monthly_users && (typeof usage_profile.monthly_users === 'object' || typeof usage_profile.monthly_users === 'number')) {
+        // 🔥 FIX: Handle string inputs from frontend forms by parsing them
+        // 🔥 FIX: Relaxed check to allow string inputs for monthly_users
+        if (usage_profile && (usage_profile.monthly_users || usage_profile.monthly_users === 0)) {
             console.log("Using Usage Profile for Realistic Estimation");
 
-            // Convert AI ranges (min/max) to scenarios
             // Convert AI ranges (min/max) to scenarios
             const profileScenarios = {
                 low: {
@@ -1965,7 +1983,8 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                     costAnalysis = await infracostService.performCostAnalysis(
                         infraSpec,
                         intent,
-                        costProfile
+                        costProfile,
+                        usage_profile // 🔥 FIX: Pass usage_profile to fallback verification
                     );
                 } catch (analysisError) {
                     console.error('[COST ANALYSIS ERROR]:', analysisError);
@@ -2104,7 +2123,8 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                 costAnalysis = await infracostService.performCostAnalysis(
                     infraSpec,
                     intent,
-                    costProfile
+                    costProfile,
+                    usage_profile // 🔥 FIX: Pass usage_profile to fallback verification
                 );
             } catch (analysisError) {
                 console.error('[COST ANALYSIS ERROR]:', analysisError);
@@ -3013,6 +3033,19 @@ router.post('/terraform', authMiddleware, async (req, res) => {
                 project_name || 'cloudiverse-project',
                 requirements || {}
             );
+            // 🔥 FIX: Persist canonical_architecture.json for export
+            const dirs = infracostService.getTerraformDirs();
+            // Assuming dirs structure is standard, we save to the parent of provider dirs
+            // Or save to where we can find it. Given getTerraformDirs probably returns base paths.
+            // Let's verify where getTerraformDirs points. Assuming it's the build root.
+            if (dirs.aws) {
+                const rootDir = path.dirname(dirs.aws);
+                fs.writeFileSync(
+                    path.join(rootDir, 'canonical_architecture.json'),
+                    JSON.stringify(infraSpec.canonical_architecture, null, 2)
+                );
+                console.log('[TERRAFORM] Saved canonical_architecture.json for export');
+            }
             console.log('[TERRAFORM] Project generated successfully');
 
             // Extract components from result
@@ -3231,6 +3264,7 @@ This zip file contains the generated Terraform configuration for your architectu
 - \`aws/\`: Terraform configuration for Amazon Web Services
 - \`gcp/\`: Terraform configuration for Google Cloud Platform
 - \`azure/\`: Terraform configuration for Microsoft Azure
+- \`canonical_architecture.json\`: Machine-readable architecture definition
 
 ## 🚀 How to Deploy
 
@@ -3260,6 +3294,12 @@ This zip file contains the generated Terraform configuration for your architectu
 ## ⚠️ Note on State Management
 This configuration uses **local state** (\`terraform.tfstate\`). For team collaboration, use remote state (S3/GCS/Azure Storage).
 `;
+
+        // Add canonical_architecture.json
+        const canonicalPath = path.join(path.dirname(dirs.aws), 'canonical_architecture.json');
+        if (fs.existsSync(canonicalPath)) {
+            archive.file(canonicalPath, { name: 'canonical_architecture.json' });
+        }
 
         archive.append(readmeContent, { name: 'README.md' });
 
