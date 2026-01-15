@@ -197,12 +197,13 @@ const sendDeploymentReadyEmail = async (user, deploymentDetails) => {
   console.log(`[EMAIL SERVICE] Sending Deployment Ready Email to ${user.email}`);
   const { workspaceName, provider, estimatedCost, pattern, services, region } = deploymentDetails;
 
-  const subject = `🚀 Your Infrastructure is Ready: ${workspaceName}`;
+  const subject = `Your Terraform is Ready: ${workspaceName}`;
   const body = `
-    <p>Great news! Your cloud infrastructure for <strong>${workspaceName}</strong> is ready for deployment.</p>
+    <h2 style="color: #2563EB;">Your Terraform is Ready</h2>
+    <p>The Terraform configuration for <strong>${workspaceName}</strong> has been generated and is ready for download.</p>
     
-    <div style="background-color: #f8fafc; border-radius: 12px; padding: 20px; margin: 20px 0;">
-      <h3 style="margin-top: 0; color: #1e293b;">Deployment Summary</h3>
+    <div style="background-color: #F3F4F6; padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <h3 style="margin-top: 0; color: #1e293b;">Infrastructure Summary</h3>
       <table style="width: 100%; border-collapse: collapse;">
         <tr>
           <td style="padding: 8px 0; color: #64748b;">Cloud Provider</td>
@@ -218,7 +219,7 @@ const sendDeploymentReadyEmail = async (user, deploymentDetails) => {
         </tr>
         <tr>
           <td style="padding: 8px 0; color: #64748b;">Estimated Monthly Cost</td>
-          <td style="padding: 8px 0; color: #22c55e; font-weight: 700; text-align: right;">${estimatedCost || 'N/A'}</td>
+          <td style="padding: 8px 0; color: #22c55e; font-weight: 700; text-align: right;">${estimatedCost || 'N/A'} (Heuristic Estimate)</td>
         </tr>
         <tr>
           <td style="padding: 8px 0; color: #64748b;">Services</td>
@@ -227,11 +228,11 @@ const sendDeploymentReadyEmail = async (user, deploymentDetails) => {
       </table>
     </div>
 
-    <p style="color: #475569;">Your Terraform code has been generated and is ready for deployment. You can:</p>
+    <p style="color: #475569;">Your Terraform code has been generated. No resources have been provisioned in your cloud account yet.</p>
     <ul style="color: #475569;">
       <li>Download the Terraform files from your workspace</li>
-      <li>Review the generated infrastructure code</li>
-      <li>Deploy to your cloud account using <code>terraform apply</code></li>
+      <li>Run <code>terraform init</code> and <code>terraform apply</code> in your terminal</li>
+      <li>Verify your resources in the ${provider} console</li>
     </ul>
 
     <div style="text-align: center; margin-top: 30px;">
@@ -239,7 +240,7 @@ const sendDeploymentReadyEmail = async (user, deploymentDetails) => {
     </div>
 
     <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin-top: 30px; color: #92400e;">
-      <strong>Next Steps:</strong> Make sure to configure your cloud provider credentials before running <code>terraform init</code> and <code>terraform apply</code>.
+      <strong>Next Steps:</strong> You will need to install Terraform and authenticate with your cloud provider to deploy.
     </div>
   `;
   await sendEmail(user.email, subject, getHtmlTemplate('Infrastructure Ready', body));

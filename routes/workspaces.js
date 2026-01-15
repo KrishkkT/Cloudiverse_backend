@@ -273,12 +273,13 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
     const { project_id: projectId, name: workspaceName, state_json: stateJson } = wsRes.rows[0];
 
     // Update workspace to active deployment status
-    await pool.query(
+    const updateWorkspaceRes = await pool.query(
       `UPDATE workspaces 
        SET state_json = COALESCE(state_json, '{}'::jsonb) || $1::jsonb,
        step = 'deployed',
        updated_at = NOW()
-       WHERE id = $2`,
+       WHERE id = $2 AND (state_json->>'is_deployed' IS NULL OR state_json->>'is_deployed' != 'true')
+       RETURNING id`,
       [
         JSON.stringify({
           is_deployed: true,
@@ -293,57 +294,61 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
       ]
     );
 
-    // Increment active_deployments count in projects table
-    const updateResult = await pool.query(
-      `UPDATE projects 
-       SET active_deployments = COALESCE(active_deployments, 0) + 1,
-           updated_at = NOW()
-       WHERE id = $1
-       RETURNING active_deployments`,
-      [projectId]
-    );
+    // Only proceed with side effects if the update actually happened (idempotency key)
+    let newCount = 0;
+    if (updateWorkspaceRes.rowCount > 0) {
+      // Increment active_deployments count in projects table
+      const updateResult = await pool.query(
+        `UPDATE projects 
+           SET active_deployments = COALESCE(active_deployments, 0) + 1,
+               updated_at = NOW()
+           WHERE id = $1
+           RETURNING active_deployments`,
+        [projectId]
+      );
 
-    if (updateResult.rows.length === 0) {
-      console.error(`[DEPLOYMENT] Project ${projectId} not found`);
-      return res.status(404).json({ msg: "Project not found" });
-    }
-
-    const newCount = updateResult.rows[0].active_deployments;
-    console.log(`[DEPLOYMENT] Workspace ${id} marked as ACTIVE DEPLOYMENT - ${deployment_method} to ${provider}`);
-    console.log(`[DEPLOYMENT] Project ${projectId} active_deployments incremented to ${newCount}`);
-
-    // Send Deployment Ready Email
-    try {
-      const userRes = await pool.query("SELECT email, name FROM users WHERE id = $1", [req.user.id]);
-      if (userRes.rows.length > 0) {
-        // Extract deployment details from state
-        const infraSpec = stateJson?.infraSpec || {};
-        const costEstimation = stateJson?.costEstimation || {};
-        const selectedProvider = provider || infraSpec?.resolved_region?.provider || 'unknown';
-
-        await emailService.sendDeploymentReadyEmail(userRes.rows[0], {
-          workspaceName: workspaceName || 'Untitled Project',
-          provider: selectedProvider,
-          estimatedCost: costEstimation?.rankings?.find(r => r.provider?.toLowerCase() === selectedProvider?.toLowerCase())?.formatted_cost
-            || costEstimation?.recommended?.formatted_cost
-            || 'N/A',
-          pattern: infraSpec?.canonical_architecture?.pattern_name || infraSpec?.pattern_key || 'Custom',
-          services: infraSpec?.canonical_architecture?.deployable_services || [],
-          region: infraSpec?.resolved_region?.resolved || infraSpec?.resolved_region?.logical || 'Default'
-        });
-        console.log(`[DEPLOYMENT] Sent deployment ready email to ${userRes.rows[0].email}`);
+      if (updateResult.rows.length === 0) {
+        console.error(`[DEPLOYMENT] Project ${projectId} not found`);
+        return res.status(404).json({ msg: "Project not found" });
       }
-    } catch (emailErr) {
-      console.error("Failed to send deployment email:", emailErr);
-      // Don't block the response
+
+      newCount = updateResult.rows[0].active_deployments;
+      console.log(`[DEPLOYMENT] Workspace ${id} marked as ACTIVE DEPLOYMENT - ${deployment_method} to ${provider}`);
+      console.log(`[DEPLOYMENT] Project ${projectId} active_deployments incremented to ${newCount}`);
+
+      // Send Deployment Ready Email
+      try {
+        const userRes = await pool.query("SELECT email, name FROM users WHERE id = $1", [req.user.id]);
+        if (userRes.rows.length > 0) {
+          const infraSpec = stateJson?.infraSpec || {};
+          const costEstimation = stateJson?.costEstimation || {};
+          const selectedProvider = provider || infraSpec?.resolved_region?.provider || 'unknown';
+
+          await emailService.sendDeploymentReadyEmail(userRes.rows[0], {
+            workspaceName: workspaceName || 'Untitled Project',
+            provider: selectedProvider,
+            estimatedCost: costEstimation?.rankings?.find(r => r.provider?.toLowerCase() === selectedProvider?.toLowerCase())?.formatted_cost
+              || costEstimation?.recommended?.formatted_cost
+              || 'N/A',
+            pattern: infraSpec?.canonical_architecture?.pattern_name || infraSpec?.pattern_key || 'Custom',
+            services: infraSpec?.canonical_architecture?.deployable_services || [],
+            region: infraSpec?.resolved_region?.resolved || infraSpec?.resolved_region?.logical || 'Default'
+          });
+          console.log(`[DEPLOYMENT] First-time deployment: Sent email to ${userRes.rows[0].email}`);
+        }
+      } catch (emailErr) {
+        console.error("Failed to send deployment email:", emailErr);
+      }
+    } else {
+      console.log(`[DEPLOYMENT] Workspace ${id} already deployed - skipping increment/email`);
     }
 
     res.json({
-      msg: "Workspace deployed - active_deployments incremented",
+      msg: "Workspace self-deployed - active_deployments incremented",
       id,
       deployment_method,
       provider,
-      status: 'active_deployment',
+      status: 'active_self_deployed',
       active_deployments: newCount
     });
   } catch (err) {
@@ -408,59 +413,7 @@ router.put('/:id/suggestion-preference', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * @route PUT /api/workspaces/:id/deploy
- * @desc Mark workspace as deployed and increment active deployments
- * @access Private
- */
-router.put('/:id/deploy', authMiddleware, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { deployment_method, provider } = req.body;
 
-    // Get current state_json
-    const wsRes = await pool.query(
-      "SELECT state_json FROM workspaces WHERE id = $1 AND user_id = $2",
-      [id, req.user.id]
-    );
-
-    if (wsRes.rows.length === 0) {
-      return res.status(404).json({ msg: "Workspace not found" });
-    }
-
-    // Update state_json with deployment info
-    const currentState = wsRes.rows[0].state_json || {};
-    const activeDeployments = (currentState.active_deployments || 0) + 1;
-
-    const updatedState = {
-      ...currentState,
-      is_deployed: true,
-      is_live: true, // Default to live when deployed
-      deployment_method: deployment_method || 'self',
-      deployed_provider: provider,
-      deployed_at: new Date().toISOString(),
-      active_deployments: activeDeployments
-    };
-
-    await pool.query(
-      `UPDATE workspaces SET state_json = $1, updated_at = NOW() WHERE id = $2`,
-      [JSON.stringify(updatedState), id]
-    );
-
-    console.log(`[WORKSPACE] Deployed workspace ${id} with method: ${deployment_method}, provider: ${provider}, active_deployments: ${activeDeployments}`);
-
-    res.json({
-      msg: "Workspace deployed successfully",
-      id,
-      deployment_method,
-      provider,
-      active_deployments: activeDeployments
-    });
-  } catch (err) {
-    console.error("Deploy Workspace Error:", err);
-    res.status(500).json({ msg: "Server Error", error: err.message });
-  }
-});
 
 /**
  * @route PUT /api/workspaces/:id/live-status

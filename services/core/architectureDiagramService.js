@@ -11,6 +11,7 @@
  */
 
 const { SERVICE_MAP } = require('../cost/costResultModel');
+const { SERVICE_DISPLAY } = require('../shared/serviceDisplay');
 const patternResolver = require('./patternResolver');
 const providerMappingService = require('../infrastructure/providerMappingService');
 const catalog = require('../../catalog/terraform/services');
@@ -616,6 +617,7 @@ function generateArchitectureNotes(infraSpec, usageProfile = {}, requirements = 
     return notes;
 }
 
+
 /**
  * Generate services list with descriptions for the selected provider
  * NOW USES PROVIDER ARCHITECTURE from canonical contract
@@ -632,13 +634,19 @@ function generateServicesList(providerArchitecture, provider) {
     if (providerArchitecture.nodes) {
         return providerArchitecture.nodes
             .filter(node => node.type !== 'client')
-            .map(node => ({
-                id: node.id,
-                name: node.label,
-                type: node.type,
-                description: getServiceDescription(node.type),
-                category: node.category
-            }));
+            .map(node => {
+                const type = (node.type || '').toLowerCase();
+                const display = SERVICE_DISPLAY[type] || {};
+
+                return {
+                    id: node.id,
+                    name: node.label, // Keep provider-specific name (e.g. S3 Bucket)
+                    pretty_name: display.name, // Canonical name (e.g. Object Storage)
+                    type: node.type,
+                    description: display.description || getServiceDescription(node.type),
+                    category: display.category || node.category // Use centralized category if available
+                };
+            });
     }
 
     console.warn('[GENERATE SERVICES LIST] No services found in architecture');
@@ -649,6 +657,11 @@ function generateServicesList(providerArchitecture, provider) {
  * Get description for a service type
  */
 function getServiceDescription(serviceType) {
+    const type = (serviceType || '').toLowerCase();
+    if (SERVICE_DISPLAY[type]) {
+        return SERVICE_DISPLAY[type].description;
+    }
+
     const descriptions = {
         'cdn': 'Global content delivery network for fast static asset delivery',
         'computeserverless': 'Auto-scaling serverless compute for application logic',
@@ -669,7 +682,7 @@ function getServiceDescription(serviceType) {
         'secretsmanagement': 'Secure storage and management of sensitive credentials'
     };
 
-    return descriptions[serviceType] || 'Cloud infrastructure component';
+    return descriptions[type] || 'Cloud infrastructure component';
 }
 
 /**

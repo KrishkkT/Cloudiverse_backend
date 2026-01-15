@@ -178,6 +178,8 @@ pool.query('SELECT NOW()', async (err, res) => {
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
+const path = require('path');
+app.use('/downloads', express.static(path.join(__dirname, 'public/downloads')));
 
 // Log every request to debug routing issues
 app.use((req, res, next) => {

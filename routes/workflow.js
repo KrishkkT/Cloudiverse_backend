@@ -13,7 +13,7 @@ const integrityService = require('../services/core/integrityService');
 const terraformService = require('../services/infrastructure/terraformService');
 const costResultModel = require('../services/cost/costResultModel');
 const canonicalValidator = require('../services/core/canonicalValidator');
-const { generateServiceDisplay, groupServicesByCategory, getCategoryDisplayName } = require('../services/shared/serviceDisplay');
+const { generateServiceDisplay, groupServicesByCategory, getCategoryDisplayName, SERVICE_DISPLAY } = require('../services/shared/serviceDisplay');
 const pool = require('../config/db');
 const archiver = require('archiver');
 const fs = require('fs');
@@ -1611,8 +1611,8 @@ router.post('/analyze', authMiddleware, async (req, res) => {
 
             // Region information (FIX 2: Ensure region is set in Step 2)
             region: {
-                logical_region: "US_PRIMARY", // Default to US_PRIMARY
-                resolved_region: "us-east-1",   // Default to us-east-1 for AWS
+                logical_region: "IN_PRIMARY", // Default to US_PRIMARY
+                resolved_region: "ap-south-1",   // Default to ap-south-1 for AWS
                 provider: null,                 // Will be set in Step 3 after provider selection
                 intent: "AUTO"                  // Auto-select based on provider
             },
@@ -1630,14 +1630,65 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             decision_trace: decisionTrace,
 
             // Modules derived from required service classes
-            modules: skeleton.required_services.map(service => ({
-                service_class: service.service_class,
-                category: getCategoryForService(service.service_class),
-                service_name: service.service_class.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-                description: service.description,
-                required: true,
-                specs: activeComponents[service.service_class] || {}
-            })),
+            modules: skeleton.required_services.map(service => {
+                // 1. Normalize the service key (handle snake_case, PascalCase, etc.)
+                // Example: 'Loadbalancer' -> 'loadbalancer', 'load_balancer' -> 'loadbalancer'
+                const rawKey = service.service_class;
+                const normalizedKey = rawKey.toLowerCase().replace(/_/g, '');
+
+                // 2. Lookup in Centralized Display Map (Try strict match first, then normalized)
+                let displayInfo = SERVICE_DISPLAY[rawKey] || SERVICE_DISPLAY[normalizedKey];
+
+                // 3. Fallback: Lookup by known variants or partial matches
+                if (!displayInfo) {
+                    // map common variants to canonical keys in SERVICE_DISPLAY
+                    const variants = {
+                        'loadbalancer': 'loadbalancer',
+                        'apigateway': 'apigateway',
+                        'relationaldatabase': 'relationaldatabase',
+                        'nosqldatabase': 'nosqldatabase',
+                        'identityauth': 'identityauth',
+                        'computevm': 'compute_vm', // SERVICE_DISPLAY might use underscores
+                        'computeserverless': 'computeserverless',
+                        'computecontainer': 'computecontainer',
+                        'objectstorage': 'objectstorage',
+                        'blockstorage': 'block_storage', // SERVICE_DISPLAY uses block_storage
+                        'cdn': 'cdn',
+                        'dns': 'dns',
+                        'waf': 'waf',
+                        'secretsmanager': 'secretsmanager',
+                        'messagequeue': 'messagequeue',
+                        'eventbus': 'eventbus',
+                        'logging': 'logging',
+                        'monitoring': 'monitoring',
+                        'cache': 'cache'
+                    };
+                    const canonicalKey = variants[normalizedKey];
+                    if (canonicalKey) {
+                        displayInfo = SERVICE_DISPLAY[canonicalKey];
+                    }
+                }
+
+                // 4. Ultimate Fallback (if still missing)
+                if (!displayInfo) {
+                    displayInfo = {
+                        name: rawKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                        category: getCategoryForService(rawKey) || 'other',
+                        description: service.description || 'Infrastructure Service',
+                        icon: 'cloud'
+                    };
+                }
+
+                return {
+                    service_class: service.service_class, // Keep original for reference
+                    category: displayInfo.category,
+                    service_name: displayInfo.name, // The PRETTY name (e.g. "Load Balancer")
+                    description: displayInfo.description,
+                    icon: displayInfo.icon,
+                    required: true,
+                    specs: activeComponents[service.service_class] || {}
+                };
+            }),
 
             // Summary counts
             service_summary: {
@@ -2278,6 +2329,35 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                         missing_components: costAnalysis.missing_components
                     }
                 );
+
+                // 🔥 NEW: Generate dynamic provider reasoning (Step 3.5)
+                try {
+                    const providerReasoning = await aiService.generateProviderReasoning(
+                        intent,
+                        infraSpec,
+                        costAnalysis
+                    );
+
+                    if (providerReasoning) {
+                        console.log("Injecting AI provider reasoning into rankings");
+                        costAnalysis.rankings.forEach(r => {
+                            // Handle casing flexibility
+                            const reasoning = providerReasoning[r.provider] ||
+                                providerReasoning[r.provider.toUpperCase()] ||
+                                providerReasoning[r.provider.toLowerCase()];
+
+                            if (reasoning) {
+                                r.pros = reasoning.pros || [];
+                                r.cons = reasoning.cons || [];
+                                r.best_for = reasoning.best_for || [];
+                                r.not_ideal_for = reasoning.not_ideal_for || [];
+                            }
+                        });
+                    }
+                } catch (reasoningError) {
+                    console.error("Reasoning injection failed:", reasoningError);
+                    // Fallback to hardcoded defaults in model
+                }
 
                 // Preserve existing confidence if available, otherwise calculate AI confidence
                 // Define variables that might be used in both branches
@@ -3021,131 +3101,48 @@ router.post('/terraform', authMiddleware, async (req, res) => {
             });
         }
 
-        // Generate modular Terraform project (V2)
-        const terraformService = require('../services/infrastructure/terraformService');
+        // Generate modular Terraform project (V2) - NEW GENERATOR
+        const terraformGenerator = require('../services/infrastructure/terraformGeneratorV2');
 
-        let terraformResult, terraformProject, terraformHash, deploymentManifest, services;
         try {
-            console.log('[TERRAFORM] Calling generateModularTerraform...');
-            terraformResult = await terraformService.generateModularTerraform(
-                infraSpec,
+            console.log('[TERRAFORM] Calling terraformGenerator.generateTerraform...');
+
+            const result = await terraformGenerator.generateTerraform(
+                infraSpec.canonical_architecture,
                 provider,
-                project_name || 'cloudiverse-project',
-                requirements || {}
+                infraSpec.region?.resolved_region || 'ap-south-1',
+                project_name || 'cloudiverse-project'
             );
-            // 🔥 FIX: Persist canonical_architecture.json for export
-            const dirs = infracostService.getTerraformDirs();
-            // Assuming dirs structure is standard, we save to the parent of provider dirs
-            // Or save to where we can find it. Given getTerraformDirs probably returns base paths.
-            // Let's verify where getTerraformDirs points. Assuming it's the build root.
-            if (dirs.aws) {
-                const rootDir = path.dirname(dirs.aws);
-                fs.writeFileSync(
-                    path.join(rootDir, 'canonical_architecture.json'),
-                    JSON.stringify(infraSpec.canonical_architecture, null, 2)
-                );
-                console.log('[TERRAFORM] Saved canonical_architecture.json for export');
-            }
+
             console.log('[TERRAFORM] Project generated successfully');
+            console.log(`[TERRAFORM] Files generated: ${Object.keys(result.files).length}`);
 
-            // Extract components from result
-            terraformProject = terraformResult.projectFolder;
-            terraformHash = terraformResult.terraform_hash;
-            deploymentManifest = terraformResult.deployment_manifest;
-
-            // Get services list
-            services = terraformService.getTerraformServices(infraSpec, provider);
-            console.log(`[TERRAFORM] Generated modular project with ${Object.keys(terraformProject).length} root files`);
-            console.log(`[TERRAFORM] Modules:`, Object.keys(terraformProject.modules || {}));
-            console.log(`[TERRAFORM] Hash: ${terraformHash.substring(0, 16)}...`);
-        } catch (terraformError) {
-            console.error('[TERRAFORM GENERATION ERROR]:', terraformError);
-
-            // Fallback: Return a minimal valid response to prevent frontend crashes
-            return res.status(200).json({
+            res.json({
                 success: true,
                 terraform: {
-                    project: {
-                        'main.tf': '/* Terraform generation failed - using fallback template */\n// Please review and manually create your infrastructure\nprovider "aws" {\n  region = var.aws_region\n}\n\nvariable "aws_region" {\n  default = "us-east-1"\n}\n\noutput "region" {\n  value = var.aws_region\n}',
-                        'variables.tf': 'variable "aws_region" {\n  description = "AWS region"\n  default     = "us-east-1"\n}\n',
-                        'outputs.tf': 'output "status" {\n  value = "Terraform generation failed - fallback template provided"\n}\n',
-                        modules: {} // Empty modules object
-                    },
+                    project: result.files, // Files for frontend display
                     provider,
                     profile,
                     structure: 'modular' // V2 indicator
                 },
-                services: [],
-                terraform_valid: false,
-                terraform_hash: 'fallback_hash_' + Date.now(),
-                deployment_manifest: { services: [], dependencies: [] },
-                message: 'Terraform generation failed - fallback template provided',
-                warning: 'Terraform generation encountered an error, please review the infrastructure requirements'
+                services: infraSpec.canonical_architecture.deployable_services,
+                terraform_valid: true,
+                downloadUrl: `/downloads/${result.zipPath}`, // Direct download link
+                message: 'Terraform generated successfully (modular structure)'
+            });
+        } catch (terraformError) {
+            console.error('[TERRAFORM GENERATION ERROR]:', terraformError);
+            res.status(500).json({
+                error: 'Failed to generate Terraform',
+                message: terraformError.message,
+                details: terraformError.stack
             });
         }
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // TERRAFORM INTEGRITY GATE (CRITICAL - NO BYPASS)
-        // ═══════════════════════════════════════════════════════════════════════════
-
-        // Validate Terraform project integrity
-        if (!terraformProject.modules || Object.keys(terraformProject.modules).length === 0) {
-            console.error('[TERRAFORM INTEGRITY] ✗ FAILED: No modules generated');
-            return res.status(500).json({
-                error: 'Terraform integrity check failed',
-                message: 'No Terraform modules were generated. Infrastructure is invalid.',
-                details: 'Each canonical service must generate at least one module.',
-                terraform_valid: false
-            });
-        }
-
-        // Validate main.tf exists
-        if (!terraformProject['main.tf']) {
-            console.error('[TERRAFORM INTEGRITY] ✗ FAILED: No main.tf generated');
-            return res.status(500).json({
-                error: 'Terraform integrity check failed',
-                message: 'main.tf is missing. Infrastructure is invalid.',
-                terraform_valid: false
-            });
-        }
-
-        console.log('[TERRAFORM INTEGRITY] ✓ PASSED: Valid Terraform project');
-        console.log(`[TERRAFORM INTEGRITY] ✓ ${Object.keys(terraformProject.modules).length} modules generated`);
-        console.log(`[TERRAFORM INTEGRITY] ✓ main.tf exists with ${terraformProject['main.tf'].split('\n').length} lines`);
-
-        // 🔒 MANDATORY: Validate hash and manifest exist
-        if (!terraformHash || !deploymentManifest) {
-            console.error('[TERRAFORM INTEGRITY] ✗ FAILED: Missing hash or manifest');
-            return res.status(500).json({
-                error: 'Terraform integrity check failed',
-                message: 'Terraform hash and deployment manifest are mandatory but missing.',
-                terraform_valid: false
-            });
-        }
-
-        console.log('[TERRAFORM INTEGRITY] ✓ Hash and manifest validated');
-
-        res.json({
-            success: true,
-            terraform: {
-                project: terraformProject, // Folder structure with modules
-                provider,
-                profile,
-                structure: 'modular' // V2 indicator
-            },
-            services,
-            terraform_valid: true,
-            terraform_hash: terraformHash,
-            deployment_manifest: deploymentManifest,
-            message: 'Terraform generated successfully (modular structure)'
-        });
     } catch (error) {
         console.error('[TERRAFORM] Generation Error:', error);
-        console.error('[TERRAFORM] Error stack:', error.stack);
         res.status(500).json({
             error: 'Failed to generate Terraform',
-            message: error.message,
-            details: error.stack
+            message: error.message
         });
     }
 });
@@ -3218,18 +3215,60 @@ router.post('/architecture-display', async (req, res) => {
 router.get('/export-terraform', async (req, res) => {
     console.log('[API] Request to export Terraform zip');
     try {
-        const dirs = infracostService.getTerraformDirs();
+        const targetProvider = req.query.provider ? req.query.provider.toLowerCase() : null;
+        const workspaceId = req.query.workspaceId;
+        console.log(`[EXPORT] Target provider: ${targetProvider || 'ALL'}, Workspace: ${workspaceId || 'N/A'}`);
 
-        // Check if any terraform files exist
-        const hasAws = fs.existsSync(dirs.aws);
-        const hasGcp = fs.existsSync(dirs.gcp);
-        const hasAzure = fs.existsSync(dirs.azure);
+        let exportDir = null;
 
-        if (!hasAws && !hasGcp && !hasAzure) {
-            return res.status(404).json({ error: "No Terraform code generated yet. Please run analysis first." });
+        // PATH A: High-Fidelity Export (using Workspace Data)
+        if (workspaceId && targetProvider) {
+            try {
+                const wsRes = await pool.query("SELECT state_json, name FROM workspaces WHERE id = $1", [workspaceId]);
+                if (wsRes.rows.length > 0) {
+                    const infraSpec = wsRes.rows[0].state_json?.infraSpec;
+                    const projectName = wsRes.rows[0].state_json?.infraSpec?.project_name || wsRes.rows[0].name || 'cloudiverse-project';
+
+                    if (infraSpec) {
+                        console.log('[EXPORT] Generating fresh full-project export...');
+                        // Generate fresh full project
+                        exportDir = await infracostService.generateFullProjectExport(infraSpec, targetProvider, projectName);
+                    }
+                }
+            } catch (dbErr) {
+                console.warn(`[EXPORT] Failed to fetch workspace ${workspaceId}, falling back to temp dir: ${dbErr.message}`);
+            }
         }
 
-        res.attachment('terraform-infra.zip');
+        // PATH B: Fallback to existing temp dir (Infracost artifacts)
+        let dirs = infracostService.getTerraformDirs();
+
+        // If we generated a fresh export, use that as the source for the target provider
+        if (exportDir) {
+            dirs = { ...dirs, [targetProvider]: exportDir };
+        }
+
+        // Check availability
+        const available = {
+            aws: fs.existsSync(dirs.aws),
+            gcp: fs.existsSync(dirs.gcp),
+            azure: fs.existsSync(dirs.azure)
+        };
+
+        // Determine what to include
+        const includeAws = available.aws && (!targetProvider || targetProvider === 'aws');
+        const includeGcp = available.gcp && (!targetProvider || targetProvider === 'gcp');
+        const includeAzure = available.azure && (!targetProvider || targetProvider === 'azure');
+
+        if (!includeAws && !includeGcp && !includeAzure) {
+            return res.status(404).json({
+                error: targetProvider
+                    ? `No Terraform code found for ${targetProvider}. Please generate it first.`
+                    : "No Terraform code generated yet."
+            });
+        }
+
+        res.attachment(`${(targetProvider || 'terraform')}-infra.zip`);
         const archive = archiver('zip', { zlib: { level: 9 } });
 
         archive.on('error', function (err) {
@@ -3241,17 +3280,17 @@ router.get('/export-terraform', async (req, res) => {
         archive.pipe(res);
 
         // Add AWS
-        if (hasAws) {
+        if (includeAws) {
             archive.directory(dirs.aws, 'aws');
         }
 
         // Add GCP
-        if (hasGcp) {
+        if (includeGcp) {
             archive.directory(dirs.gcp, 'gcp');
         }
 
         // Add Azure
-        if (hasAzure) {
+        if (includeAzure) {
             archive.directory(dirs.azure, 'azure');
         }
 

@@ -58,7 +58,7 @@ function detectLogicalRegion(userInput, requirements = {}) {
     if (Object.values(LogicalRegion).includes(requirements.region.primary_region)) {
       return requirements.region.primary_region;
     }
-    
+
     // Try to map it back to logical
     for (const [provider, mapping] of Object.entries(REGION_MAP)) {
       for (const [logical, physical] of Object.entries(mapping)) {
@@ -68,11 +68,11 @@ function detectLogicalRegion(userInput, requirements = {}) {
       }
     }
   }
-  
+
   // Parse user input for region hints
   if (userInput) {
     const input = userInput.toLowerCase();
-    
+
     if (input.includes('europe') || input.includes('eu') || input.includes('gdpr')) {
       return LogicalRegion.EU_PRIMARY;
     }
@@ -83,9 +83,9 @@ function detectLogicalRegion(userInput, requirements = {}) {
       return LogicalRegion.GLOBAL;
     }
   }
-  
-  // Default to US_PRIMARY
-  return LogicalRegion.US_PRIMARY;
+
+  // Default to ASIA_PRIMARY (India) as per user preference
+  return LogicalRegion.ASIA_PRIMARY;
 }
 
 /**
@@ -97,23 +97,23 @@ function resolveRegion(logicalRegion, provider) {
     console.error('[REGION] Cannot resolve region without provider');
     return null;
   }
-  
+
   const providerLower = provider.toLowerCase();
-  
+
   if (!REGION_MAP[providerLower]) {
     console.error(`[REGION] Unknown provider: ${provider}`);
     return null;
   }
-  
+
   const resolved = REGION_MAP[providerLower][logicalRegion];
-  
+
   if (!resolved) {
     console.warn(`[REGION] No mapping for ${logicalRegion} on ${provider}, using default`);
     return REGION_MAP[providerLower][LogicalRegion.US_PRIMARY];
   }
-  
+
   console.log(`[REGION] Logical=${logicalRegion} → Resolved=${provider}/${resolved}`);
-  
+
   return resolved;
 }
 
@@ -122,23 +122,23 @@ function resolveRegion(logicalRegion, provider) {
  */
 function getRegionConfig(logicalRegion, provider, multiRegion = false) {
   const primaryRegion = resolveRegion(logicalRegion, provider);
-  
+
   if (!primaryRegion) {
     return null;
   }
-  
+
   const config = {
     logical_region: logicalRegion,
     primary_region: primaryRegion,
     multi_region: multiRegion
   };
-  
+
   // Add secondary region if multi-region is enabled
   if (multiRegion) {
     const secondaryLogical = getSecondaryRegion(logicalRegion);
     config.secondary_region = resolveRegion(secondaryLogical, provider);
   }
-  
+
   return config;
 }
 
@@ -155,7 +155,7 @@ function getSecondaryRegion(primaryLogical) {
     [LogicalRegion.ASIA_SECONDARY]: LogicalRegion.ASIA_PRIMARY,
     [LogicalRegion.GLOBAL]: LogicalRegion.US_SECONDARY
   };
-  
+
   return secondaryMap[primaryLogical] || LogicalRegion.US_SECONDARY;
 }
 
@@ -166,11 +166,11 @@ function validateRegionConfig(config) {
   if (!config || !config.primary_region) {
     return { valid: false, error: 'Missing primary region' };
   }
-  
+
   if (config.multi_region && !config.secondary_region) {
     return { valid: false, error: 'Multi-region enabled but no secondary region specified' };
   }
-  
+
   return { valid: true };
 }
 
@@ -187,7 +187,7 @@ function getRegionDisplayName(logicalRegion) {
     ASIA_SECONDARY: 'Asia (Secondary)',
     GLOBAL: 'Global (Multi-region)'
   };
-  
+
   return displayNames[logicalRegion] || logicalRegion;
 }
 
@@ -198,10 +198,10 @@ function getRegionExplanation(logicalRegion, provider) {
   if (!provider) {
     return `Region: ${getRegionDisplayName(logicalRegion)} - Provider-specific region will be chosen automatically.`;
   }
-  
+
   const physicalRegion = resolveRegion(logicalRegion, provider);
   const providerUpper = provider.toUpperCase();
-  
+
   return `Final region: ${physicalRegion} (${providerUpper})`;
 }
 

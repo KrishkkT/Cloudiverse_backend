@@ -3189,20 +3189,27 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
     // ═══════════════════════════════════════════════════════════════════
     function extractCostResults(rawResult, usageData) {
       const results = {};
-      const providers = ['aws', 'gcp', 'azure', 'AWS', 'GCP', 'AZURE'];
+      // Iterate canonical lower-case providers to ensure deduplication
+      const providers = ['aws', 'gcp', 'azure'];
 
-      providers.forEach(p => {
-        const pLower = p.toLowerCase();
-        const providerData = rawResult?.provider_details?.[p] ||
-          rawResult?.provider_details?.[pLower] ||
+      providers.forEach(pLower => {
+        const pUpper = pLower.toUpperCase();
+
+        // precise lookup with fallback to different casing
+        const providerData = rawResult?.provider_details?.[pLower] ||
+          rawResult?.provider_details?.[pUpper] ||
           rawResult?.cost_estimates?.[pLower] ||
-          {};
+          rawResult?.cost_estimates?.[pUpper] ||
+          rawResult?.provider_details?.[pLower.charAt(0).toUpperCase() + pLower.slice(1)]; // Title Case
 
-        const cost = providerData?.monthly_cost ||
-          providerData?.total_monthly_cost ||
-          providerData?.total || 0;
+        if (!providerData) return;
 
-        if ((typeof cost === 'number' || cost) && !results[pLower]) {
+        const cost = providerData.monthly_cost ??
+          providerData.total_monthly_cost ??
+          providerData.total;
+
+        // Strictly check for undefined/null - allow 0 if it's a real 0 cost (e.g. Free Tier)
+        if (cost !== undefined && cost !== null && !results[pLower]) {
           // 🔥 FIX: Normalize deployableServices to service names
           const serviceNames = deployableServices.map(svc =>
             typeof svc === 'string' ? svc : (svc.name || svc.service_class || 'unknown')
@@ -3212,10 +3219,10 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
             pLower,
             pattern,
             cost,
-            serviceNames,  // ✅ CHANGED: Use normalized service names only
+            serviceNames,
             usageData
           );
-          console.log(`[SCENARIOS] ${pLower.toUpperCase()}: $${cost.toFixed(2)}`);
+          console.log(`[SCENARIOS] ${pUpper}: $${Number(cost).toFixed(2)}`);
         }
       });
 
@@ -3812,6 +3819,8 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
       scale_tier: 'MEDIUM',
       cost_mode: 'FALLBACK_MODE',
       pricing_method_used: 'fallback_calculation',
+      estimate_type: 'heuristic', // 🔥 Explicitly label as heuristic
+      estimate_reason: 'Infracost CLI failed or returned null',
       rankings: [
         {
           provider: 'AWS',
@@ -3851,6 +3860,7 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
           formatted_cost: '$100.00/month',
           service_count: 1,
           is_mock: true,
+          estimate_type: 'heuristic',
           confidence: 0.5,
           cost_range: { formatted: '$80 - $120/month' }
         },
@@ -3860,6 +3870,7 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
           formatted_cost: '$110.00/month',
           service_count: 1,
           is_mock: true,
+          estimate_type: 'heuristic',
           confidence: 0.5,
           cost_range: { formatted: '$90 - $130/month' }
         },
@@ -3869,6 +3880,7 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
           formatted_cost: '$105.00/month',
           service_count: 1,
           is_mock: true,
+          estimate_type: 'heuristic',
           confidence: 0.5,
           cost_range: { formatted: '$85 - $125/month' }
         }
@@ -3929,6 +3941,51 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
   }
 }
 
+/**
+ * Generate FULL Modular Terraform Project for Export (Zip Download)
+ * Unlike cost estimation which uses a single main.tf, this generates the full production-ready
+ * codebase with modules, variables, and outputs.
+ */
+async function generateFullProjectExport(infraSpec, provider, projectName) {
+  console.log(`[EXPORT] Generating FULL Terraform project for ${projectName} on ${provider}`);
+
+  // 1. Generate the project structure in memory
+  // Requirements can be empty for export
+  const { projectFolder } = await terraformService.generateModularTerraform(infraSpec, provider, projectName, {});
+
+  // 2. Prepare export directory
+  const exportDir = path.join(INFRACOST_BASE_DIR, 'exports', provider.toLowerCase());
+
+  // Ensure fresh start
+  if (fs.existsSync(exportDir)) {
+    try {
+      fs.rmSync(exportDir, { recursive: true, force: true });
+    } catch (e) {
+      console.warn(`[EXPORT] Failed to clear export dir: ${e.message}`);
+    }
+  }
+  ensureDir(exportDir);
+
+  // 3. Recursive write helper
+  const writeFolder = (folder, basePath) => {
+    Object.entries(folder).forEach(([name, content]) => {
+      const fullPath = path.join(basePath, name);
+      if (typeof content === 'string') {
+        fs.writeFileSync(fullPath, content);
+      } else if (typeof content === 'object') {
+        ensureDir(fullPath);
+        writeFolder(content, fullPath);
+      }
+    });
+  };
+
+  // 4. Write all files
+  writeFolder(projectFolder, exportDir);
+  console.log(`[EXPORT] Written detailed project to ${exportDir}`);
+
+  return exportDir;
+}
+
 module.exports = {
   generateCostEstimate,
   generateAllProviderEstimates,
@@ -3939,6 +3996,7 @@ module.exports = {
   identifyMissingComponents,
   PROVIDER_PERFORMANCE_SCORES,
   calculateScenarios,
+  generateFullProjectExport, // NEW Export
   // Exposed for testing
   generateGCPTerraform,
   generateAzureTerraform,

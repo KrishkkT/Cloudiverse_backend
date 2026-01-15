@@ -442,14 +442,18 @@ ${JSON.stringify(intentObject, null, 2)}
   },
   
   "explanations": {
-    "key_decision": "reason for decision"
+    "key_decision_1": "reason",
+    "key_decision_2": "reason",
+    "key_decision_3": "reason",
+    "key_decision_4": "reason"
   },
-  
+
   "project_name": "string (Creative, Professional Name for the system)",
   "project_summary": "string (Short, 1-sentence value prop)"
 }
 
 ❌ AI MUST NOT RETURN: cloud services, instance sizes, regions, CIDRs, enforcement decisions, user questions
+CRITICAL: The "explanations" object must contain EXACTLY 4 key-value pairs representing the most important architectural notes (e.g. Region, Security Mode, Scaling Pattern, Data Strategy). Keys must be short titles.
 `;
 
     const messages = [
@@ -779,5 +783,66 @@ CRITICAL RULES:
   }
 };
 
-module.exports = { normalizeIntent, generateConstrainedProposal, scoreInfraSpec, explainOutcomes, predictUsage };
+/**
+ * STEP 3.5 — PROVIDER REASONING (Dynamic "Why X?")
+ * Goal: Generate specific Pros/Cons/BestFor reasoning based on project context
+ */
+const generateProviderReasoning = async (intent, infraSpec, costAnalysis) => {
+  console.log("--- STEP 3.5: Provider Reasoning (AI) ---");
+  try {
+    const context = `
+    PROJECT: "${intent.original_input}"
+    WORKLOAD: ${intent.intent_classification?.workload_type}
+    FEATURES: ${Object.keys(intent.feature_signals || {}).join(', ')}
+    
+    COSTS:
+    - AWS: $${costAnalysis.provider_details?.AWS?.total_monthly_cost?.toFixed(2) || 'N/A'}
+    - GCP: $${costAnalysis.provider_details?.GCP?.total_monthly_cost?.toFixed(2) || 'N/A'}
+    - AZURE: $${costAnalysis.provider_details?.AZURE?.total_monthly_cost?.toFixed(2) || 'N/A'}
+    
+    SERVICES: ${infraSpec.canonical_architecture?.deployable_services?.join(', ') || 'Standard Web Stack'}
+    `;
+
+    const prompt = `
+    ACT AS: Cloud Architect.
+    GOAL: Generate specific reasoning for choosing AWS, GCP, or Azure for this SPECIFIC project.
+    
+    INPUT:
+    ${context}
+    
+    RULES:
+    1. Be specific to the project (e.g. if it's a data app, mention BigQuery for GCP).
+    2. Mention cost differences if significant (>10%).
+    3. Keep bullet points short (max 10 words).
+    4. "best_for" should be 1-2 words (e.g. "Data Analytics", "Startup Scaling").
+    
+    OUTPUT JSON:
+    {
+      "AWS": { "pros": ["..."], "cons": ["..."], "best_for": ["..."], "not_ideal_for": ["..."] },
+      "GCP": { "pros": ["..."], "cons": ["..."], "best_for": ["..."], "not_ideal_for": ["..."] },
+      "AZURE": { "pros": ["..."], "cons": ["..."], "best_for": ["..."], "not_ideal_for": ["..."] }
+    }
+    `;
+
+    const completion = await groq.chat.completions.create({
+      messages: [
+        { role: "system", content: "You are a cloud architect. Output JSON only." },
+        { role: "user", content: prompt }
+      ],
+      model: "llama-3.1-8b-instant",
+      temperature: 0.3,
+      response_format: { type: "json_object" }
+    });
+
+    const result = JSON.parse(completion.choices[0]?.message?.content || "{}");
+    console.log("AI Provider Reasoning:", JSON.stringify(result, null, 2));
+    return result;
+
+  } catch (error) {
+    console.error("Provider Reasoning Error:", error.message);
+    return null; // Return null to fall back to hardcoded defaults
+  }
+};
+
+module.exports = { normalizeIntent, generateConstrainedProposal, scoreInfraSpec, explainOutcomes, predictUsage, generateProviderReasoning };
 
