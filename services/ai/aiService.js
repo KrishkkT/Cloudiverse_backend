@@ -3,8 +3,9 @@ require('dotenv').config();
 
 console.log("Checking Groq API Key:", process.env.GROQ_API_KEY ? "Present" : "Missing");
 
+// FIX: Prevent startup crash if key missing. Use dummy key, calls will fail gracefully later.
 const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY
+  apiKey: process.env.GROQ_API_KEY || "gsk_dummy_key_for_startup_prevention"
 });
 
 // 🔒 MASTER SYSTEM PROMPT (PASTE AS-IS)
@@ -106,6 +107,10 @@ I. Domain-specific flags (boolean)
 
 J. UX / channels (boolean)
 - web_ui, mobile_apps, public_api
+
+K. Exclusions (array of strings)
+- excluded_components: list of services or components the user explicitly REJECTS (e.g. ["database", "redis", "kubernetes"])
+
 
 -----------------
 COMPLEXITY ESTIMATION
@@ -247,7 +252,8 @@ function getDefaultIntentResult() {
       data_sensitivity: { value: null, confidence: 0.3 },
       estimated_mau: { value: "low", confidence: 0.3 },
       availability_target: { value: "99.5", confidence: 0.3 },
-      allowed_providers: { value: [], confidence: 0.1 }
+      allowed_providers: { value: [], confidence: 0.1 },
+      excluded_components: { value: [], confidence: 0.1 }
     },
     ranked_axes_for_questions: [
       { axis_key: "data_sensitivity", priority: 0.9 },
@@ -299,28 +305,30 @@ const STEP_2_SYSTEM_PROMPT = `
 STEP 2 — SYSTEM PROMPT 
 You are an infrastructure analysis AI inside a deterministic backend system.
 
-STRICT ROLE BOUNDARIES:
-1. You do NOT choose cloud providers.
-2. You do NOT choose instance sizes.
-3. You do NOT write Terraform or IaC.
-4. You do NOT enforce security, availability, or compliance.
-5. You do NOT modify the intent object.
+ROLE:
+1. You act as the **PLANNER**: You propose the logical architecture and services.
+2. The Backend acts as the **COMPILER**: It verifies your proposal against hard constraints.
 
-Your job is ONLY to:
-- Analyze the locked intent object
-- Propose logical architecture patterns
-- Describe component roles
-- Highlight risks and tradeoffs
-- Provide review scores and explanations
+YOUR TASKS:
+1. Analyze the locked intent object.
+2. **PROPOSE** a list of canonical service classes (e.g. 'computeserverless', 'relationaldatabase').
+3. **SUGGEST REMOVALS** if specific services are not needed despite being common.
+4. Describe component roles and risks.
 
-You MUST:
-- Output STRICT JSON only
-- Follow the schema exactly
-- Avoid cloud-specific terms (no EC2, GKE, RDS, etc.)
-- Avoid defaults
-- Avoid guessing numbers
+STRICT RULES:
+1. **Canonical IDs Only**: You MUST use only the following canonical service IDs:
+   - Compute: computeserverless, computecontainer, compute_vm, app_compute
+   - Data: relationaldatabase, nosqldatabase, cache, objectstorage, blockstorage, filestorage
+   - Network: loadbalancer, apigateway, cdn, waf, vpc_networking, dns
+   - Integration: messagequeue, eventbus, paymentgateway, workfloworchestration
+   - Security: identityauth, secretsmanagement, keymanagement
+   - Obs: logging, monitoring, auditlogging
 
-Think like a senior architect doing a design review.
+2. **No Provider SKUs**: Do NOT say 'AWS Lambda' or 'Cloud Run'. Say 'computeserverless' or 'computecontainer'.
+3. **No Configuration**: Do NOT specify instance sizes (e.g. t3.micro).
+4. **Output JSON Only**: Follow the schema exactly.
+
+Think like a senior architect designing a minimal, efficient system.
 `;
 
 // 🔥 FINAL SYSTEM PROMPT (STEP 2 → STEP 5 SAFE)
@@ -404,29 +412,38 @@ ${JSON.stringify(intentObject, null, 2)}
 
 🔹 REQUIRED OUTPUT SCHEMA (JSON)
 {
-  "architecture_pattern": "string (e.g. stateful_multi_user_platform, three_tier_web, event_driven)",
+  "architecture_pattern_suggestion": "string (e.g. CONTAINERIZED_WEB_APP, SERVERLESS_API)",
   
+  "ai_services": [
+    { 
+      "service_class": "string (canonical id only)", 
+      "reason": "string (why is this needed?)",
+      "confidence": number (0-1)
+    }
+  ],
+
+  "ai_removals": [
+    {
+      "service_class": "string (canonical id)",
+      "reason": "string (why remove it?)",
+      "confidence": number (0-1)
+    }
+  ],
+
   "component_roles": {
-    "networking": {
-      "isolation_required": boolean
-    },
+    "networking": { "isolation_required": boolean },
     "compute": {
-      "execution_model": "string (e.g. orchestrated_runtime, serverless, monolith)",
+      "execution_model": "string",
       "stateful": boolean,
-      "scaling_driver": "string (e.g. request_latency, cpu_utilization, queue_depth)"
+      "scaling_driver": "string"
     },
     "data": {
-      "database_type": "string (e.g. relational, document, key_value)",
-      "consistency": "string (e.g. strong, eventual)",
-      "write_intensity": "string (e.g. low, medium, high)"
+      "database_type": "string",
+      "consistency": "string",
+      "write_intensity": "string"
     },
-    "cache": {
-      "recommended": boolean,
-      "purpose": "string (e.g. read_acceleration, session_storage)"
-    },
-    "observability": {
-      "importance": "string (e.g. low, medium, high)"
-    }
+    "cache": { "recommended": boolean, "purpose": "string" },
+    "observability": { "importance": "string" }
   },
   
   "risk_review": {
@@ -448,8 +465,8 @@ ${JSON.stringify(intentObject, null, 2)}
     "key_decision_4": "reason"
   },
 
-  "project_name": "string (Creative, Professional Name for the system)",
-  "project_summary": "string (Short, 1-sentence value prop)"
+  "project_name": "string (Creative Name)",
+  "project_summary": "string (Short value prop)"
 }
 
 ❌ AI MUST NOT RETURN: cloud services, instance sizes, regions, CIDRs, enforcement decisions, user questions
@@ -475,7 +492,13 @@ CRITICAL: The "explanations" object must contain EXACTLY 4 key-value pairs repre
     console.error("AI Proposal Error:", error.message);
     // Return safe fallback instead of throwing
     return {
-      architecture_pattern: "generic_web_application",
+      architecture_pattern_suggestion: "CONTAINERIZED_WEB_APP",
+      ai_services: [
+        { service_class: "loadbalancer", reason: "Default entry point", confidence: 1.0 },
+        { service_class: "computecontainer", reason: "Default compute", confidence: 1.0 },
+        { service_class: "relationaldatabase", reason: "Default persistence", confidence: 1.0 }
+      ],
+      ai_removals: [],
       component_roles: {
         networking: { isolation_required: true },
         compute: { execution_model: "orchestrated_runtime", stateful: false, scaling_driver: "cpu_utilization" },

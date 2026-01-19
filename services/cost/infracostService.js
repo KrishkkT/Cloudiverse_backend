@@ -33,6 +33,7 @@ const servicesCatalog = require('../../catalog/terraform/services');
 const sizingModel = require('./sizingModel');
 const costResultModel = require('./costResultModel');
 const usageNormalizer = require('./usageNormalizer');
+const terraformService = require('../infrastructure/terraformService');
 
 // Base temp directory for Terraform files
 const INFRACOST_BASE_DIR = path.join(os.tmpdir(), 'infracost');
@@ -211,23 +212,23 @@ async function calculateCostForMode(costMode, infraSpec, intent, costProfile, us
         },
         {
           provider: 'GCP',
-          monthly_cost: 110,
-          formatted_cost: '$110.00',
+          monthly_cost: 100,
+          formatted_cost: '$100.00',
           rank: 2,
           recommended: false,
           confidence: 0.5,
           score: 45,
-          cost_range: { formatted: '$90 - $130/month' }
+          cost_range: { formatted: '$80 - $120/month' }
         },
         {
           provider: 'AZURE',
-          monthly_cost: 105,
-          formatted_cost: '$105.00',
+          monthly_cost: 100,
+          formatted_cost: '$100.00',
           rank: 3,
           recommended: false,
           confidence: 0.5,
           score: 48,
-          cost_range: { formatted: '$85 - $125/month' }
+          cost_range: { formatted: '$80 - $120/month' }
         }
       ],
       provider_details: {
@@ -242,21 +243,21 @@ async function calculateCostForMode(costMode, infraSpec, intent, costProfile, us
         },
         GCP: {
           provider: 'GCP',
-          total_monthly_cost: 110,
-          formatted_cost: '$110.00/month',
+          total_monthly_cost: 100,
+          formatted_cost: '$100.00/month',
           service_count: 1,
           is_mock: true,
           confidence: 0.5,
-          cost_range: { formatted: '$90 - $130/month' }
+          cost_range: { formatted: '$80 - $120/month' }
         },
         AZURE: {
           provider: 'AZURE',
-          total_monthly_cost: 105,
-          formatted_cost: '$105.00/month',
+          total_monthly_cost: 100,
+          formatted_cost: '$100.00/month',
           service_count: 1,
           is_mock: true,
           confidence: 0.5,
-          cost_range: { formatted: '$85 - $125/month' }
+          cost_range: { formatted: '$80 - $120/month' }
         }
       },
       recommended_provider: 'AWS',
@@ -1290,77 +1291,416 @@ const RESOURCE_CATEGORY_MAP = {
   'aws_rds_cluster': 'relational_database',
   'aws_dynamodb_table': 'nosql_database',
   'aws_elasticache_cluster': 'cache',
-  'aws_elasticache_replication_group': 'cache',
-  'aws_lb': 'load_balancer',
-  'aws_alb': 'load_balancer',
-  'aws_api_gateway_rest_api': 'api_gateway',
-  'aws_apigatewayv2_api': 'api_gateway',
   'aws_s3_bucket': 'object_storage',
   'aws_ebs_volume': 'block_storage',
+  'aws_lb': 'load_balancer',
+  'aws_apigatewayv2_api': 'api_gateway',
   'aws_cloudfront_distribution': 'cdn',
-  'aws_vpc': 'networking',
-  'aws_nat_gateway': 'networking',
-  'aws_cognito_user_pool': 'identity_auth',
-  'aws_route53_zone': 'dns',
-  'aws_cloudwatch_log_group': 'logging',
-  'aws_cloudwatch_metric_alarm': 'monitoring',
-  'aws_secretsmanager_secret': 'secrets_management',
   'aws_sqs_queue': 'messaging_queue',
-  'aws_sns_topic': 'messaging_queue',
-  'aws_cloudwatch_event_rule': 'event_bus',
-  'aws_opensearch_domain': 'search_engine',
-  // Compute expansion
-  'aws_eks_cluster': 'compute_container',
-  'aws_eks_node_group': 'compute_container',
-  'aws_fargate_profile': 'compute_container',
+  'aws_cloudwatch_event_bus': 'event_bus',
+  'aws_sfn_state_machine': 'workflow_orchestration',
+  'aws_nat_gateway': 'nat_gateway',
+  'aws_vpn_connection': 'vpn',
+  'aws_service_discovery_private_dns_namespace': 'service_discovery',
+  'aws_appmesh_mesh': 'service_mesh',
+  'aws_globalaccelerator_accelerator': 'global_load_balancer',
 
   // GCP
-  'google_cloud_run_service': 'compute_container',
-  'google_cloud_run_v2_service': 'compute_container',
-  'google_container_cluster': 'compute_container',
   'google_cloudfunctions_function': 'compute_serverless',
+  'google_cloud_run_service': 'compute_container',
   'google_compute_instance': 'compute_vm',
   'google_sql_database_instance': 'relational_database',
   'google_firestore_database': 'nosql_database',
   'google_redis_instance': 'cache',
-  'google_compute_forwarding_rule': 'load_balancer',
-  'google_compute_backend_service': 'load_balancer',
   'google_storage_bucket': 'object_storage',
   'google_compute_disk': 'block_storage',
-  'google_compute_network': 'networking',
-  'google_compute_router_nat': 'networking',
-  'google_dns_managed_zone': 'dns',
-  'google_logging_project_sink': 'logging',
-  'google_monitoring_alert_policy': 'monitoring',
-  'google_secret_manager_secret': 'secrets_management',
+  'google_compute_url_map': 'load_balancer',
+  'google_api_gateway_api': 'api_gateway',
+  'google_compute_backend_bucket': 'cdn',
   'google_pubsub_topic': 'messaging_queue',
-  // Compute expansion
-  'google_container_node_pool': 'compute_container',
+  'google_eventarc_trigger': 'event_bus',
+  'google_workflows_workflow': 'workflow_orchestration',
+  'google_compute_router_nat': 'nat_gateway',
+  'google_compute_vpn_gateway': 'vpn',
+  'google_service_directory_namespace': 'service_discovery',
+  'google_gke_hub_feature': 'service_mesh',
+  'google_compute_global_forwarding_rule': 'global_load_balancer',
 
-  // Azure
-  'azurerm_container_app': 'compute_container',
-  'azurerm_container_app_environment': 'compute_container',
-  'azurerm_kubernetes_cluster': 'compute_container',
+  // AZURE
   'azurerm_function_app': 'compute_serverless',
+  'azurerm_container_app': 'compute_container',
   'azurerm_virtual_machine': 'compute_vm',
   'azurerm_postgresql_flexible_server': 'relational_database',
-  'azurerm_mysql_flexible_server': 'relational_database',
   'azurerm_cosmosdb_account': 'nosql_database',
   'azurerm_redis_cache': 'cache',
-  'azurerm_application_gateway': 'load_balancer',
-  'azurerm_lb': 'load_balancer',
   'azurerm_storage_account': 'object_storage',
   'azurerm_managed_disk': 'block_storage',
-  'azurerm_virtual_network': 'networking',
-  'azurerm_nat_gateway': 'networking',
-  'azurerm_dns_zone': 'dns',
+  'azurerm_lb': 'load_balancer',
+  'azurerm_api_management': 'api_gateway',
+  'azurerm_cdn_profile': 'cdn',
+  'azurerm_servicebus_queue': 'messaging_queue',
+  'azurerm_eventgrid_topic': 'event_bus',
+  'azurerm_logic_app_workflow': 'workflow_orchestration',
+  'azurerm_nat_gateway': 'nat_gateway',
+  'azurerm_virtual_network_gateway': 'vpn',
+  'azurerm_private_dns_zone': 'service_discovery',
+  'azurerm_kubernetes_cluster': 'service_mesh',
+  'azurerm_frontdoor': 'global_load_balancer',
+  'azurerm_application_gateway': 'load_balancer',
   'azurerm_log_analytics_workspace': 'logging',
-  'azurerm_monitor_metric_alert': 'monitoring',
-  'azurerm_key_vault': 'secrets_management',
-  'azurerm_servicebus_namespace': 'messaging_queue',
-  // Compute expansion
-  'azurerm_kubernetes_cluster_node_pool': 'compute_container',
+  'azurerm_monitor_action_group': 'monitoring'
 };
+
+
+// ═══════════════════════════════════════════════════════════════════
+// CATALOG-DRIVEN TERRAFORM GENERATION
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Generate Minimal Terraform for Infracost using Catalog Definitions
+ * Single Source of Truth: backend/catalog/terraform/services.js
+ */
+function generateCatalogTerraform(provider, deployableServices, infraSpec) {
+  const normProvider = provider.toLowerCase(); // aws, gcp, azure
+
+  // 🔥 FIX: Use resolved region from infraSpec (early resolution)
+  let region = 'us-east-1'; // Default Fallback
+
+  if (infraSpec?.region?.provider_regions?.[normProvider]) {
+    region = infraSpec.region.provider_regions[normProvider];
+  } else if (infraSpec?.region?.resolved_region) {
+    region = infraSpec.region.resolved_region;
+  } else {
+    // Legacy hardcoded fallback (if infraSpec region mapping is missing)
+    const regionMap = {
+      aws: 'ap-south-1',
+      gcp: 'asia-south1',
+      azure: 'centralindia'
+    };
+    region = regionMap[normProvider] || 'us-east-1';
+  }
+
+  let tfContent = `# Auto-generated ${provider} Terraform for Infracost
+# Generated at: ${new Date().toISOString()}
+`;
+
+  // 1. Provider Block
+  if (normProvider === 'aws') {
+    tfContent += `provider "aws" {\n  region = "${region}"\n}\n\n`;
+  } else if (normProvider === 'gcp') {
+    tfContent += `provider "google" {\n  project = "infracost-project"\n  region  = "${region}"\n}\n\n`;
+  } else if (normProvider === 'azure') {
+    tfContent += `provider "azurerm" {\n  features {}\n}\n\n`;
+    tfContent += `resource "azurerm_resource_group" "main" {\n  name     = "infracost-rg"\n  location = "${region}"\n}\n\n`;
+  }
+
+  // 🔥 FIX: Track generated resourceTypes to prevent duplicates from service aliases
+  // (e.g., identityauth and identity_auth both map to azurerm_active_directory_b2c)
+  const generatedResourceTypes = new Set();
+
+  // 2. Iterate Deployable Services
+  deployableServices.forEach(rawId => {
+    // Normalize ID: handle objects or strings, resolve aliases
+    let serviceId = typeof rawId === 'object' ? (rawId.service_class || rawId.id) : rawId;
+    if (!serviceId) return;
+
+    // Use catalog alias resolution if needed, though input should be canonical
+    // backend/catalog/services.js handles aliases internally, so we access directly
+    const serviceDef = servicesCatalog[serviceId];
+
+    if (!serviceDef) {
+      console.warn(`[TF GEN] Warning: Service '${serviceId}' not found in catalog. Skipping.`);
+      return;
+    }
+    // 🔥 FIX: Check correct nested paths - catalog has terraform.terraform_supported, not serviceDef.terraform_supported
+    const terraformSupported = serviceDef.terraform?.terraform_supported || serviceDef.terraform_supported;
+    const pricingEngine = serviceDef.pricing?.engine;
+
+    // Skip if not supported by Terraform/Infracost
+    if (!terraformSupported) {
+      console.debug(`[TF GEN] Service '${serviceId}' not terraform_supported, skipping`);
+      return;
+    }
+    if (pricingEngine !== 'infracost') {
+      console.debug(`[TF GEN] Service '${serviceId}' uses ${pricingEngine} engine, not infracost - skipping`);
+      return;
+    }
+
+    // 🔥 FIX: Catalog structure is pricing.infracost[provider], NOT pricing.infracost.resourceType[provider]
+    // Also check terraform.resourceType as fallback
+    const resourceType = serviceDef.pricing?.infracost?.[normProvider] ||
+      serviceDef.pricing?.infracost?.resourceType?.[normProvider] ||
+      serviceDef.terraform?.resourceType?.[normProvider];
+    // Check if resourceType is valid string (not null/undefined)
+    if (!resourceType) {
+      // Optional service for this provider? Or missing mapping?
+      console.debug(`[TF GEN] Service '${serviceId}' has no Infracost mapping for ${provider}`);
+      return;
+    }
+
+    // 🔥 FIX: Skip if this resourceType was already generated (from a service alias)
+    if (generatedResourceTypes.has(resourceType)) {
+      console.debug(`[TF GEN] Skipping duplicate resourceType '${resourceType}' from service '${serviceId}'`);
+      return;
+    }
+    generatedResourceTypes.add(resourceType);
+
+    // Generate Resource Block
+    // Naming convention: "TYPE" "main" (or "app", "db" etc - needs to match UsageNormalizer)
+    // We standardize on a suffix derived from category or 'main' to match existing UsageNormalizer patterns
+    // or better: generated blocks should use a PREDICTABLE name that UsageNormalizer targets.
+
+    // USAGE NORMALIZER TARGETS:
+    // compute_serverless -> .app / .api
+    // compute_container -> .app
+    // relational_database -> .db
+    // object_storage -> .main or .storage
+    // etc.
+
+    // To support ALL services without hardcoding usageNormalizer logic here,
+    // we need a convention. For now, we will try to match what UsageNormalizer expects
+    // by using a predictable suffix, but UsageNormalizer often expects specific suffixes per category.
+
+    let resourceName = 'main'; // Default
+    const category = serviceDef.category || 'other';
+
+    // FIX: Explicitly match UsageNormalizer keys
+    if (serviceId === 'relational_database') resourceName = 'db';
+    else if (serviceId === 'logging') resourceName = 'logging';
+    else if (serviceId === 'monitoring') resourceName = 'monitoring';
+    else if (serviceId === 'compute_container' || serviceId === 'compute_serverless') resourceName = 'app';
+    else if (serviceId === 'object_storage') resourceName = 'main'; // S3 uses main
+    else if (category === 'compute') resourceName = 'app';
+    else if (category === 'database') resourceName = 'db';
+    else if (category === 'cache') resourceName = 'cache';
+    else if (category === 'storage') resourceName = 'storage';
+
+
+    // Azure needs resource group ref
+    let body = '';
+    if (normProvider === 'azure') {
+      body += `  resource_group_name = azurerm_resource_group.main.name\n  location            = azurerm_resource_group.main.location\n`;
+    }
+
+    // Add minimal required fields to make Terraform valid enough for Infracost
+    // This often requires specific required args (like bucket name, instance class)
+    // We can use a minimal generic filler or look up a template.
+    // Since we removed specific generators, we need a robust minimal fallback.
+
+    const minimalBody = getMinimalBody(resourceType, normProvider, region);
+    body += minimalBody;
+
+    tfContent += `resource "${resourceType}" "${resourceName}" {\n${body}}\n\n`;
+  });
+
+  return tfContent;
+}
+
+/**
+ * Helper to provide minimal valid HCL body for frequent resources
+ * so Terraform/Infracost doesn't error out on missing required arguments.
+ */
+function getMinimalBody(resourceType, provider, region = 'us-east-1') {
+  // 🔥 FIX: Use dynamic region for all resources
+  const gcpRegion = provider === 'gcp' ? (region || 'asia-south1') : 'asia-south1';
+  const gcpLocation = gcpRegion.toUpperCase().replace(/-/g, '_').split('_').slice(0, 2).join('-').toUpperCase(); // ASIA-SOUTH1
+
+  // AWS DEFAULTS (Expanded for Infracost accuracy)
+  if (resourceType === 'aws_lambda_function') return `  function_name = "main"\n  role = "arn:aws:iam::123456789012:role/service-role/role"\n  handler = "index.handler"\n  runtime = "nodejs18.x"\n  memory_size = 128\n  timeout = 3\n`;
+  if (resourceType === 'aws_ecs_service') return `  name = "main"\n  cluster = "arn:aws:ecs:${region}:123456789012:cluster/main"\n  launch_type = "FARGATE"\n  desired_count = 1\n  network_configuration {\n    subnets = ["subnet-12345678"]\n    security_groups = ["sg-12345678"]\n    assign_public_ip = true\n  }\n`;
+  if (resourceType === 'aws_db_instance') return `  instance_class = "db.t3.micro"\n  engine = "postgres"\n  allocated_storage = 20\n  multi_az = false\n  backup_retention_period = 7\n`;
+  if (resourceType === 'aws_s3_bucket') return `  bucket = "main-bucket-${Math.floor(Math.random() * 10000)}"\n  acl = "private"\n  server_side_encryption_configuration {\n    rule {\n      apply_server_side_encryption_by_default {\n        sse_algorithm = "AES256"\n      }\n    }\n  }\n`;
+  if (resourceType === 'aws_dynamodb_table') return `  name = "main"\n  hash_key = "id"\n  billing_mode = "PAY_PER_REQUEST"\n  attribute {\n    name = "id"\n    type = "S"\n  }\n`;
+  if (resourceType === 'aws_lb') return `  name = "main"\n  load_balancer_type = "application"\n  subnets = ["subnet-12345678"]\n  enable_deletion_protection = false\n`;
+  if (resourceType === 'aws_nat_gateway') return `  subnet_id = "subnet-12345678"\n  connectivity_type = "public"\n`;
+  if (resourceType === 'aws_apigatewayv2_api') return `  name = "main"\n  protocol_type = "HTTP"\n`;
+  if (resourceType === 'aws_cloudfront_distribution') return `  enabled = true\n  price_class = "PriceClass_100"\n  origin {\n    domain_name = "example.com"\n    origin_id   = "example"\n  }\n  default_cache_behavior {\n    target_origin_id = "example"\n    viewer_protocol_policy = "allow-all"\n  }\n  restrictions {\n    geo_restriction {\n      restriction_type = "none"\n    }\n  }\n  viewer_certificate {\n    cloudfront_default_certificate = true\n  }\n`;
+  if (resourceType === 'aws_cognito_user_pool') return `  name = "main-pool"\n  password_policy {\n    minimum_length = 8\n    require_lowercase = true\n  }\n`;
+  if (resourceType === 'aws_elasticache_cluster') return `  cluster_id = "main"\n  engine = "redis"\n  node_type = "cache.t3.micro"\n  num_cache_nodes = 1\n  port = 6379\n`;
+  if (resourceType === 'aws_sqs_queue') return `  name = "main-queue"\n  visibility_timeout_seconds = 30\n  message_retention_seconds = 86400\n`;
+  if (resourceType === 'aws_sns_topic') return `  name = "main-topic"\n`;
+  if (resourceType === 'aws_kinesis_stream') return `  name = "main-stream"\n  shard_count = 1\n  retention_period = 24\n`;
+  if (resourceType === 'aws_ecr_repository') return `  name = "main-repo"\n  image_tag_mutability = "MUTABLE"\n`;
+  if (resourceType === 'aws_secretsmanager_secret') return `  name = "main-secret"\n  recovery_window_in_days = 7\n`;
+  if (resourceType === 'aws_kms_key') return `  description = "Main KMS key"\n  deletion_window_in_days = 7\n`;
+  if (resourceType === 'aws_wafv2_web_acl') return `  name = "main-waf"\n  scope = "REGIONAL"\n  default_action {\n    allow {}\n  }\n  visibility_config {\n    cloudwatch_metrics_enabled = false\n    metric_name = "main-waf"\n    sampled_requests_enabled = false\n  }\n`;
+
+  // AZURE DEFAULTS (Minimal Valid Config)
+  if (provider === 'azure') {
+    if (resourceType === 'azurerm_storage_account') return `  name = "sa${Math.floor(Math.random() * 10000)}"\n  account_tier = "Standard"\n  account_replication_type = "LRS"\n  account_kind = "StorageV2"\n`;
+    if (resourceType === 'azurerm_postgresql_flexible_server') return `  name = "psql-main"\n  sku_name = "B_Standard_B1ms"\n  version = "13"\n  storage_mb = 32768\n  backup_retention_days = 7\n`;
+    if (resourceType === 'azurerm_application_gateway') return `  name = "main-appgw"\n  sku {\n    name     = "Standard_v2"\n    tier     = "Standard_v2"\n    capacity = 2\n  }\n`;
+    if (resourceType === 'azurerm_api_management') return `  name = "main-apim"\n  sku_name = "Developer_1"\n  publisher_name = "Admin"\n  publisher_email = "admin@example.com"\n`;
+    if (resourceType === 'azurerm_redis_cache') return `  name = "main-redis"\n  capacity = 2\n  family = "C"\n  sku_name = "Standard"\n`;
+    if (resourceType === 'azurerm_log_analytics_workspace') return `  name = "main-logs"\n  sku = "PerGB2018"\n  retention_in_days = 30\n`;
+    if (resourceType === 'azurerm_monitor_action_group') return `  name = "main-actiongroup"\n  short_name = "mainag"\n`;
+    if (resourceType === 'azurerm_lb') return `  name = "main-lb"\n  sku = "Standard"\n  frontend_ip_configuration {\n    name = "PublicIPAddress"\n    public_ip_address_id = "mock-ip-id"\n  }\n`;
+    if (resourceType === 'azurerm_public_ip') return `  name = "main-ip"\n  allocation_method = "Static"\n  sku = "Standard"\n`;
+    if (resourceType === 'azurerm_linux_web_app') return `  name = "main-app"\n  service_plan_id = "mock-plan-id"\n  site_config {}\n`;
+    if (resourceType === 'azurerm_service_plan') return `  name = "main-plan"\n  os_type = "Linux"\n  sku_name = "P1v2"\n`;
+    if (resourceType === 'azurerm_cdn_endpoint') return `  name = "main-cdn"\n  profile_name = "mock-profile"\n  resource_group_name = "mock-rg"\n  location = "${region}"\n`;
+    if (resourceType === 'azurerm_linux_function_app') return `  name = "main-func"\n  service_plan_id = "mock-plan-id"\n  storage_account_name = "mockstore"\n  storage_account_access_key = "mock-key"\n  site_config {}\n`;
+    if (resourceType === 'azurerm_active_directory_b2c') return `  domain_name = "mockdomain.onmicrosoft.com"\n  sku_name = "Standard"\n  resource_group_name = "mock-rg"\n  country_code = "US"\n  data_residency_location = "United States"\n`;
+    if (resourceType === 'azurerm_servicebus_queue') return `  name = "main-queue"\n  namespace_id = "mock-id"\n`;
+    if (resourceType === 'azurerm_cosmosdb_account') return `  name = "main-cosmos"\n  offer_type = "Standard"\n  kind = "GlobalDocumentDB"\n  consistency_policy {\n    consistency_level = "Session"\n  }\n  geo_location {\n    location = "${region}"\n    failover_priority = 0\n  }\n`;
+    if (resourceType === 'azurerm_container_app') return `  name = "main-app"\n  container_app_environment_id = "mock-env-id"\n  revision_mode = "Single"\n  template {\n    container {\n      name = "main"\n      image = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"\n      cpu = 0.5\n      memory = "1.0Gi"\n    }\n  }\n`;
+  }
+
+  // GCP DEFAULTS
+  if (provider === 'gcp') {
+    if (resourceType === 'google_sql_database_instance') return `  name = "main"\n  database_version = "POSTGRES_14"\n  region = "${gcpRegion}"\n  settings {\n    tier = "db-f1-micro"\n    availability_type = "ZONAL"\n    disk_size = 10\n  }\n`;
+    if (resourceType === 'google_storage_bucket') return `  name = "main-bucket-${Math.floor(Math.random() * 10000)}"\n  location = "${gcpRegion.toUpperCase()}"\n  force_destroy = true\n  storage_class = "STANDARD"\n`;
+    if (resourceType === 'google_cloud_run_service') return `  name = "main"\n  location = "${gcpRegion}"\n  template {\n    spec {\n      containers {\n        image = "gcr.io/cloudrun/hello"\n      }\n    }\n  }\n`;
+    if (resourceType === 'google_compute_global_forwarding_rule') return `  name = "main-rule"\n  target = "mock-target"\n  port_range = "80"\n`;
+    if (resourceType === 'google_compute_url_map') return `  name = "main-url-map"\n  default_service = "mock-backend"\n`;
+    if (resourceType === 'google_compute_backend_service') return `  name = "main-backend"\n  health_checks = ["mock-check"]\n`;
+    if (resourceType === 'google_pubsub_topic') return `  name = "main-topic"\n`;
+    if (resourceType === 'google_redis_instance') return `  name = "main-redis"\n  memory_size_gb = 1\n  region = "${gcpRegion}"\n  tier = "BASIC"\n`;
+    if (resourceType === 'google_compute_backend_bucket') return `  name = "main-backend-bucket"\n  bucket_name = "mock-bucket"\n`;
+    if (resourceType === 'google_cloudfunctions_function') return `  name = "main-function"\n  runtime = "nodejs16"\n  available_memory_mb = 128\n  entry_point = "helloWorld"\n`;
+    if (resourceType === 'google_identity_platform_config') return `  project = "mock-project"\n`;
+    if (resourceType === 'google_api_gateway_api') return `  api_id = "main-api"\n`;
+    if (resourceType === 'google_artifact_registry_repository') return `  repository_id = "main-repo"\n  format = "DOCKER"\n`;
+  }
+
+  // Generic fallback for others (might fail validtaion if required args missing)
+  // Ensure at least empty block is closed
+  return `  # Minimal attributes populated\n`;
+}
+
+
+
+/**
+ * Generate cost estimate for a single provider (CATALOG DRIVEN)
+ * 
+ * ✅ FIX 2: Infracost is now PRIMARY path
+ * ✅ FIX 3: Usage normalized to resource-level keys (Catalog Based)
+ */
+async function generateCostEstimate(provider, infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, deployableServices = null) {
+  const sizing = sizingModel.getSizingForInfraSpec(infraSpec, intent);
+  const tier = sizing.tier;
+
+  // 🔒 STATIC SITE BYPASS - Formula only
+  const pattern = infraSpec.service_classes?.pattern || 'UNKNOWN';
+  if (['STATIC_WEB_HOSTING', 'STATIC_SITE', 'STATIC_SITE_WITH_AUTH'].includes(pattern)) {
+    // ... (keep specifically if needed, or rely on catalog if s3 is configured correctly)
+    // For safety, keeping existing bypass if it's reliable, OR we could move S3 to catalog pricing entirely.
+    // Let's defer to existing reliable formula for static sites for now to minimize risk.
+    // But strictly speaking, catalog approach should handle S3 pricing fine.
+  }
+
+  // 🔵 PHASE 3.1: Extract deployable services if not provided
+  if (!deployableServices) {
+    deployableServices = extractDeployableServices(infraSpec);
+  }
+
+  console.log(`[COST ESTIMATE ${provider}] Deployable services: ${deployableServices.length}`);
+
+  // Create provider directory
+  // 🔥 FIX: Strict isolation per run AND provider
+  // INFRACOST_BASE_DIR is already /tmp/infracost/<runId>/<provider> from the calculateScenarios/generateCostEstimate caller context
+  // BUT the caller might have only passed /tmp/infracost/<runId>. 
+  // Safety check: append provider if not present in path to prevent collision
+  let providerDir = INFRACOST_BASE_DIR;
+  if (!providerDir.toLowerCase().includes(provider.toLowerCase())) {
+    providerDir = path.join(INFRACOST_BASE_DIR, provider.toLowerCase());
+  }
+
+  // 🔥 FIX: COMPLETE directory wipe to prevent Infracost cache contamination
+  // Delete entire provider directory and recreate fresh
+  try {
+    if (fs.existsSync(providerDir)) {
+      fs.rmSync(providerDir, { recursive: true, force: true });
+    }
+  } catch (cleanupErr) {
+    console.error(`[CLEANUP] Failed to clean ${providerDir}: ${cleanupErr.message}`);
+  }
+  ensureDir(providerDir);
+
+  let estimate_type = 'heuristic';
+  let estimate_source = 'formula_fallback';
+
+  // 🔵 PHASE 3.2: Normalize usage into resource-level Infracost keys
+  // NOW SINGLE SOURCE OF TRUTH: usageNormalizer
+  let usageFilePath = null;
+  try {
+    const normalized = usageNormalizer.normalizeUsageForInfracost(usageOverrides || {}, deployableServices, provider);
+    const usageYaml = usageNormalizer.toInfracostYAML(normalized);
+    if (usageYaml) {
+      usageFilePath = path.join(providerDir, 'infracost-usage.yml');
+      fs.writeFileSync(usageFilePath, usageYaml);
+      // console.log(`[USAGE] Generated usage file for ${provider} at ${usageFilePath}`);
+    }
+  } catch (usageError) {
+    console.error(`[USAGE] Failed to normalize usage: ${usageError.message}`);
+  }
+
+  // 🔵 PHASE 3.3: Generate Catalog-Driven Terraform
+  let terraformContent = '';
+  try {
+    terraformContent = generateCatalogTerraform(provider, deployableServices);
+
+    // 🔥 DEBUG: Log terraform content stats
+    const resourceCount = (terraformContent.match(/^resource "/gm) || []).length;
+    console.log(`[TERRAFORM] Generated for ${provider}: ${resourceCount} resources, ${terraformContent.length} chars`);
+
+    if (resourceCount === 0 && deployableServices.length > 0) {
+      console.error(`[TERRAFORM] ⚠️ WARNING: 0 resources generated for ${provider} despite ${deployableServices.length} deployable services!`);
+      console.error(`[TERRAFORM] Deployable services: ${deployableServices.slice(0, 5).join(', ')}...`);
+    }
+
+    const tfPath = path.join(providerDir, 'main.tf');
+    fs.writeFileSync(tfPath, terraformContent);
+    console.log(`[TERRAFORM] Written to ${tfPath}`);
+
+  } catch (terraformError) {
+    console.error(`[TERRAFORM] Failed to generate for ${provider}: ${terraformError.message}`);
+    // Fallback...
+    return {
+      ...generateMockCostData(provider, infraSpec, sizing, costProfile),
+      estimate_type: 'heuristic',
+      estimate_source: 'formula_fallback',
+      estimate_reason: 'Terraform generation failed'
+    };
+  }
+
+  // 🔵 PHASE 3.4: PRIMARY PATH - Run Infracost CLI
+  // (Keep existing execution logic)
+  try {
+    const infracostResult = await runInfracost(providerDir, usageFilePath);
+
+    if (infracostResult) {
+      const normalized = normalizeInfracostOutput(infracostResult, provider, infraSpec, costProfile);
+      if (normalized && normalized.service_count > 0) {
+        console.log(`[INFRACOST] ✅ SUCCESS: ${provider} with ${normalized.service_count} services`);
+
+        // Integrity Check
+        try {
+          validatePricingIntegrity(normalized.services || [], deployableServices);
+        } catch (e) { console.error(e.message); /* Log but don't crash whole request? */ }
+
+        return {
+          ...normalized,
+          tier,
+          cost_profile: costProfile,
+          estimate_type: 'exact',
+          estimate_source: 'infracost',
+          estimate_reason: 'Real Infracost pricing'
+        };
+      }
+    }
+  } catch (infracostError) {
+    console.error(`[INFRACOST] Execution failed: ${infracostError.message}`);
+  }
+
+  // 🔵 PHASE 3.5: FALLBACK
+  return {
+    ...generateMockCostData(provider, infraSpec, sizing, costProfile),
+    estimate_type: 'heuristic',
+    estimate_source: 'formula_fallback',
+    estimate_reason: 'Infracost execution failed'
+  };
+}
 
 /**
  * 🔵 PHASE 3.1 — PREPARE DEPLOYABLE PRICING INPUT (NEW)
@@ -1448,11 +1788,13 @@ function validatePricingIntegrity(pricedServices, deployableServices) {
 
   // 🔥 SERVICE ALIAS MAPPING: Infracost returns different service class names
   // than our canonical deployable services. Map them here.
+  // 🔥 SERVICE ALIAS MAPPING: Infracost returns different service class names
+  // than our canonical deployable services. Map them here.
   const SERVICE_ALIASES = {
-    'load_balancer': 'global_load_balancer',  // aws_alb maps to load_balancer, but we use global_load_balancer
-    'compute_container': 'app_compute',       // aws_ecs_fargate maps to compute_container, but we use app_compute
-    'serverless_compute': 'compute_serverless', // alias
-    'compute_serverless': 'serverless_compute', // reverse alias
+    // Removed legacy aliases to strictly enforce canonical IDs
+    // 'load_balancer': 'global_load_balancer',
+    // 'compute_container': 'app_compute', 
+    // 'serverless_compute': 'compute_serverless',
   };
 
   // 🔥 FIX 2: DEFENSIVE COST ENGINE - Handle undefined values safely
@@ -1511,7 +1853,7 @@ function generateAWSTerraform(infraSpec, sizing, costProfile) {
 
   let terraform = `# Auto-generated AWS Terraform for Infracost
 provider "aws" {
-  region = "us-east-1"
+  region = "ap-south-1"
 }
 
 `;
@@ -1972,7 +2314,7 @@ function generateGCPTerraform(infraSpec, sizing, costProfile) {
   let terraform = `# Auto-generated GCP Terraform for Infracost
 provider "google" {
   project = "example-project"
-  region  = "us-central1"
+  region  = "asia-south1"
 }
 
 `;
@@ -2629,7 +2971,9 @@ resource_type_default_usage:
     const serviceDef = catalog[id];
 
     if (serviceDef && serviceDef.pricing && serviceDef.pricing.infracost && serviceDef.pricing.infracost.resourceType) {
-      const resourceType = serviceDef.pricing.infracost.resourceType;
+      const resourceType = serviceDef.pricing.infracost.resourceType?.[provider.toLowerCase()];
+      if (!resourceType) return;
+
       const usage = getDefaultUsage(resourceType, sizing);
 
       ymlContent += `  ${resourceType}:\n`;
@@ -2651,7 +2995,7 @@ resource_type_default_usage:
  * Run Infracost CLI and get JSON output
  * ASYNC: Uses exec with promisify to prevent blocking the event loop
  */
-async function runInfracost(terraformDir, usageFilePath = null) {
+async function runInfracost(terraformDir, usageFilePath = null, customEnv = null) {
   try {
     // Check if Infracost API key is set
     if (!process.env.INFRACOST_API_KEY) {
@@ -2661,7 +3005,7 @@ async function runInfracost(terraformDir, usageFilePath = null) {
 
     // Verify that terraformDir exists and contains Terraform files
     if (!fs.existsSync(terraformDir)) {
-      console.error(`[INFRACOST] Terraform directory does not exist: ${terraformDir} `);
+      console.error(`[INFRACOST] Terraform directory does not exist: ${terraformDir}`);
       return null;
     }
 
@@ -2669,16 +3013,16 @@ async function runInfracost(terraformDir, usageFilePath = null) {
     const terraformFiles = files.filter(f => f.endsWith('.tf'));
 
     if (terraformFiles.length === 0) {
-      console.error(`[INFRACOST] No Terraform files found in directory: ${terraformDir} `);
-      console.error(`[INFRACOST] Files found: ${files.join(', ')} `);
+      console.error(`[INFRACOST] No Terraform files found in directory: ${terraformDir}`);
+      console.error(`[INFRACOST] Files found: ${files.join(', ')}`);
       return null;
     }
 
-    console.log(`[INFRACOST] Found ${terraformFiles.length} Terraform files: ${terraformFiles.join(', ')} `);
+    console.log(`[INFRACOST] Found ${terraformFiles.length} Terraform files: ${terraformFiles.join(', ')}`);
 
     // Verify usage file exists if provided
     if (usageFilePath && !fs.existsSync(usageFilePath)) {
-      console.warn(`[INFRACOST] Usage file does not exist: ${usageFilePath} `);
+      console.warn(`[INFRACOST] Usage file does not exist: ${usageFilePath}`);
       usageFilePath = null; // Reset to null to avoid passing non-existent file
     }
 
@@ -2693,21 +3037,27 @@ async function runInfracost(terraformDir, usageFilePath = null) {
       '--log-level', 'info'
     ];
 
-    if (usageFilePath && fs.existsSync(usageFilePath)) {
+    if (usageFilePath) {
       args.push('--usage-file', usageFilePath);
     }
 
     console.log(`[INFRACOST] Executing: infracost ${args.map(a => a.includes(' ') ? `"${a}"` : a).join(' ')}`);
 
+    // 🔥 FIX: Use customEnv if provided (for isolation), otherwise default to process.env
+    // Ensure API Key is always present
+    const envVars = customEnv || { ...process.env };
+    if (!envVars.INFRACOST_API_KEY && process.env.INFRACOST_API_KEY) {
+      envVars.INFRACOST_API_KEY = process.env.INFRACOST_API_KEY;
+    }
+
     const { stdout, stderr } = await execFilePromise('infracost', args, {
-      env: {
-        ...process.env,
-        INFRACOST_API_KEY: process.env.INFRACOST_API_KEY
-      },
+      env: envVars,
       timeout: 60000,
       maxBuffer: 1024 * 1024 * 20,
       windowsHide: true
     });
+
+
 
     if (stderr && stderr.trim()) {
       console.log(`[INFRACOST] CLI output: ${stderr} `);
@@ -2958,7 +3308,7 @@ function generateMockCostData(provider, infraSpec, sizing, costProfile = 'COST_E
  * ✅ FIX 2: Infracost is now PRIMARY path, formula is FALLBACK
  * ✅ FIX 3: Usage normalized to resource-level keys
  */
-async function generateCostEstimate(provider, infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, deployableServices = null) {
+async function generateCostEstimate(provider, infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, deployableServices = null, runContext = null) {
   const sizing = sizingModel.getSizingForInfraSpec(infraSpec, intent);
   const tier = sizing.tier;
 
@@ -2990,8 +3340,23 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
 
   console.log(`[COST ESTIMATE ${provider}] Deployable services: ${deployableServices.length}`);
 
-  // Create provider directory
-  const providerDir = path.join(INFRACOST_BASE_DIR, provider.toLowerCase());
+  // 🔥 FIX: Create UNIQUE directory per run using runContext if available
+  // Use runId from context or fallback to timestamp + random
+  const runId = runContext?.runId || `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+  // 🔥 FIX: Include provider in path for complete isolation
+  const providerDir = path.join(INFRACOST_BASE_DIR, runId, provider.toLowerCase());
+
+  console.log(`[INFRACOST] Using isolated directory: ${providerDir} (Run: ${runId})`);
+
+  // Clean up any existing files (should be fresh, but just in case)
+  try {
+    if (fs.existsSync(providerDir)) {
+      fs.rmSync(providerDir, { recursive: true, force: true });
+    }
+  } catch (cleanupErr) {
+    console.warn(`[CLEANUP] Failed to clean ${providerDir}: ${cleanupErr.message}`);
+  }
   ensureDir(providerDir);
 
   let estimate_type = 'heuristic'; // Default to heuristic, upgrade to 'exact' if Infracost succeeds
@@ -3020,29 +3385,29 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
     usageFilePath = forceGenerateUsageFile(provider, sizing, deployableServices);
   }
 
-  // 🔵 PHASE 3.3: Generate minimal pricing Terraform
-  let terraform;
+  // 🔵 PHASE 3.3: Generate Catalog-Driven Terraform (UNIFIED APPROACH)
+  // 🔥 FIX: Use catalog-driven generation instead of legacy provider-specific functions
+  let terraformContent = '';
   try {
-    switch (provider) {
-      case 'AWS':
-        terraform = generateAWSTerraform(infraSpec, sizing, costProfile);
-        break;
-      case 'GCP':
-        terraform = generateGCPTerraform(infraSpec, sizing, costProfile);
-        break;
-      case 'AZURE':
-        terraform = generateAzureTerraform(infraSpec, sizing, costProfile);
-        break;
-      default:
-        throw new Error(`Unknown provider: ${provider}`);
+    // Use unified catalog-driven terraform generator
+    terraformContent = generateCatalogTerraform(provider, deployableServices, infraSpec);
+
+    // 🔥 DEBUG: Log terraform content stats
+    const resourceCount = (terraformContent.match(/^resource "/gm) || []).length;
+    console.log(`[TERRAFORM] Generated for ${provider}: ${resourceCount} resources, ${terraformContent.length} chars`);
+
+    if (resourceCount === 0 && deployableServices.length > 0) {
+      console.error(`[TERRAFORM] ⚠️ WARNING: 0 resources generated for ${provider} despite ${deployableServices.length} deployable services!`);
+      console.error(`[TERRAFORM] Deployable services: ${deployableServices.slice(0, 5).map(s => typeof s === 'string' ? s : s.service_class || s.name).join(', ')}...`);
     }
 
     // Write Terraform file
     const tfPath = path.join(providerDir, 'main.tf');
-    fs.writeFileSync(tfPath, terraform);
-    console.log(`[TERRAFORM] Generated for ${provider} at ${tfPath}`);
+    fs.writeFileSync(tfPath, terraformContent);
+    console.log(`[TERRAFORM] Written to ${tfPath}`);
   } catch (terraformError) {
     console.error(`[TERRAFORM] Failed to generate for ${provider}: ${terraformError.message}`);
+    console.error(terraformError.stack);
     // Cannot proceed with Infracost without Terraform
     console.log(`[COST ESTIMATE ${provider}] Falling back to formula engine`);
     return {
@@ -3054,24 +3419,73 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
   }
 
   // 🔵 PHASE 3.4: PRIMARY PATH - Run Infracost CLI
+  // Validate Terraform file exists and has content before running
+  const tfPath = path.join(providerDir, 'main.tf');
   try {
-    const infracostResult = await runInfracost(providerDir, usageFilePath);
+    if (!fs.existsSync(tfPath)) {
+      throw new Error('Terraform file not found');
+    }
+    const stats = fs.statSync(tfPath);
+    if (stats.size < 50) { // Minimal valid terraform is likely > 50 bytes
+      throw new Error(`Terraform file too small (${stats.size} bytes), likely malformed`);
+    }
+  } catch (err) {
+    console.error(`[INFRACOST] ❌ Invalid Terraform file for ${provider}: ${err.message}`);
+    throw new Error(`Invalid Terraform generated for ${provider}`);
+  }
+
+  try {
+    console.log(`[INFRACOST] Running execution in isolated context: ${providerDir}`);
+
+    // 🔥 FIX: Strict Environment Isolation
+    // Override both Terraform dir and Cache dir to ensure NO reuse happens
+    const strictEnv = {
+      ...process.env,
+      INFRACOST_TERRAFORM_DIR: providerDir,
+      INFRACOST_CACHE_DIR: path.join(providerDir, '.cache'),
+      // Prevent any global usage or updates
+      INFRACOST_SKIP_UPDATE_CHECK: 'true'
+    };
+
+    const infracostResult = await runInfracost(providerDir, usageFilePath, strictEnv);
 
     if (infracostResult) {
       // Normalize real Infracost data with proper service class mapping
       const normalized = normalizeInfracostOutput(infracostResult, provider, infraSpec, costProfile);
-      if (normalized && normalized.service_count > 0) {
-        console.log(`[INFRACOST] ✅ SUCCESS: ${provider} with ${normalized.service_count} services`);
+      if (normalized) {
+
+        // 🔥 FIX: Provider Sanity Check - Detect cross-provider contamination
+        const selectedServices = Object.values(normalized.services || {});
+        const wrongProviderResources = selectedServices.filter(svc => {
+          const resourceType = (svc.resource_type || '').toLowerCase();
+          if (provider.toLowerCase() === 'gcp' && (resourceType.startsWith('aws_') || resourceType.startsWith('azurerm_'))) return true;
+          if (provider.toLowerCase() === 'aws' && (resourceType.startsWith('google_') || resourceType.startsWith('azurerm_'))) return true;
+          if (provider.toLowerCase() === 'azure' && (resourceType.startsWith('aws_') || resourceType.startsWith('google_'))) return true;
+          return false;
+        });
+
+        if (wrongProviderResources.length > 0) {
+          console.error(`[INFRACOST] ❌ PROVIDER CONTAMINATION DETECTED: ${provider} run contains resources from wrong provider!`);
+          console.error(`[INFRACOST] Wrong resources: ${wrongProviderResources.map(s => s.resource_type).join(', ')}`);
+          throw new Error(`Cross-provider contamination: ${provider} run contains ${wrongProviderResources.length} wrong-provider resources`);
+        }
+
+        // 🔥 FIX: Reject 0 resources when deployable services exist - must fall back to formula
+        const deployableCount = deployableServices.filter(s => s).length;
+        if (normalized.service_count === 0 && deployableCount > 0) {
+          console.error(`[INFRACOST] ❌ ZERO RESOURCES: ${provider} parsed 0 resources despite ${deployableCount} deployable services`);
+          throw new Error(`Zero resources parsed for ${deployableCount} deployable services`);
+        }
+
+        console.log(`[INFRACOST] ✅ SUCCESS: ${provider} with ${normalized.service_count} services ($${normalized.total_monthly_cost})`);
 
         // 🔒 PHASE 3.6: PRICING INTEGRITY FIREWALL
         try {
-          // 🔥 FIX: Normalize deployableServices before integrity check to handle undefined values
           const normalizedDeployableServices = deployableServices
             .map(s => {
               if (!s) return null;
               if (typeof s === 'string') return s;
               if (typeof s === 'object') {
-                // Try different possible properties that might contain the service name
                 return s.service || s.canonical_type || s.name || s.service_class;
               }
               return null;
@@ -3113,8 +3527,14 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
  * 
  * ✅ FIX: Now uses deployable_services ONLY
  */
-async function calculateScenarios(infraSpec, intent, usageProfile) {
-  console.log('[SCENARIOS] Building canonical cost scenarios...');
+/**
+ * Calculate costs for Low/Expected/High scenarios (CORRECTED)
+ * 
+ * ✅ FIX: Now uses deployable_services ONLY
+ * 🔒 FIX: Accepts runContext for isolation
+ */
+async function calculateScenarios(infraSpec, intent, usageProfile, runContext) {
+  console.log(`[SCENARIOS] Building canonical cost scenarios (Run: ${runContext?.runId || 'legacy'})...`);
 
   // ═══════════════════════════════════════════════════════════════════
   // STEP 1: CLASSIFY WORKLOAD INTO COST MODE
@@ -3148,16 +3568,28 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
       return;
     }
     // Define supported services directly to avoid initialization issues
+    // 🔥 FIX: Include both naming conventions (with and without underscores)
     const SUPPORTED_SERVICES = [
-      'computeserverless', 'computecontainer', 'computevm', 'computebatch', 'computeedge',
-      'relationaldatabase', 'nosqldatabase', 'timeseriesdatabase', 'vectordatabase', 'cache', 'searchengine',
-      'objectstorage', 'blockstorage', 'filestorage',
-      'apigateway', 'loadbalancer', 'vpcnetworking', 'natgateway', 'cdn', 'dns',
-      'messagequeue', 'eventbus', 'workfloworchestration', 'eventstreaming', 'paymentgateway',
-      'identityauth', 'secretsmanagement', 'keymanagement', 'certificatemanagement', 'waf',
-      'logging', 'monitoring', 'auditlogging'
+      'computeserverless', 'compute_serverless', 'computecontainer', 'compute_container',
+      'computevm', 'compute_vm', 'computebatch', 'compute_batch', 'computeedge', 'compute_edge',
+      'relationaldatabase', 'relational_database', 'nosqldatabase', 'nosql_database',
+      'timeseriesdatabase', 'time_series_database', 'vectordatabase', 'vector_database',
+      'cache', 'searchengine', 'search_engine',
+      'objectstorage', 'object_storage', 'blockstorage', 'block_storage', 'filestorage', 'file_storage',
+      'apigateway', 'api_gateway', 'loadbalancer', 'load_balancer',
+      'vpcnetworking', 'vpc_networking', 'natgateway', 'nat_gateway', 'cdn', 'dns',
+      'messagequeue', 'message_queue', 'messagingqueue', 'messaging_queue', 'eventbus', 'event_bus',
+      'workfloworchestration', 'workflow_orchestration', 'eventstreaming', 'event_streaming',
+      'paymentgateway', 'payment_gateway', 'paymentsprocessor', 'payments_processor', // 🔥 FIX: Added payments_processor
+      'identityauth', 'identity_auth', 'secretsmanagement', 'secrets_management',
+      'keymanagement', 'key_management', 'certificatemanagement', 'certificate_management', 'waf',
+      'logging', 'monitoring', 'auditlogging', 'audit_logging',
+      'iotcore', 'iot_core', 'eventstream', 'event_stream' // 🔥 FIX: Added IoT services
     ];
-    if (!SUPPORTED_SERVICES.includes(serviceName)) {
+    // Normalize service name before check (remove underscores)
+    const normalizedServiceName = serviceName.toLowerCase().replace(/_/g, '');
+    const normalizedSupportedServices = SUPPORTED_SERVICES.map(s => s.toLowerCase().replace(/_/g, ''));
+    if (!normalizedSupportedServices.includes(normalizedServiceName)) {
       throw new Error(`[SCENARIOS] INTEGRITY ERROR: ${serviceName} is not terraform-deployable but is in deployable list`);
     }
   });
@@ -3179,9 +3611,9 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
   // Use the cost mode classification to calculate scenarios appropriately
   try {
     const [costEffectiveRaw, standardRaw, highPerfRaw] = await Promise.all([
-      performCostAnalysis(infraSpec, intent, 'COST_EFFECTIVE', usageProfile.low, true, deployableServices),
-      performCostAnalysis(infraSpec, intent, 'COST_EFFECTIVE', usageProfile.expected, true, deployableServices),
-      performCostAnalysis(infraSpec, intent, 'HIGH_PERFORMANCE', usageProfile.high, true, deployableServices)
+      performCostAnalysis(infraSpec, intent, 'COST_EFFECTIVE', usageProfile.low, true, deployableServices, runContext),
+      performCostAnalysis(infraSpec, intent, 'COST_EFFECTIVE', usageProfile.expected, true, deployableServices, runContext),
+      performCostAnalysis(infraSpec, intent, 'HIGH_PERFORMANCE', usageProfile.high, true, deployableServices, runContext)
     ]);
 
     // ═══════════════════════════════════════════════════════════════════
@@ -3319,6 +3751,70 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
  * Perform full cost analysis across providers
  * Now accepts optional `usageOverrides` for deterministic behavior (Layer B)
  */
+async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, skipCache = false, deployableServices = null, runContext = null) {
+  // If deployableServices not passed, extract them
+  if (!deployableServices) {
+    deployableServices = extractDeployableServices(infraSpec);
+  }
+
+  // Generate estimates for all providers
+  const providers = ['AWS', 'GCP', 'AZURE'];
+  const estimates = {};
+
+  // Parallel execution for speed
+  await Promise.all(providers.map(async (provider) => {
+    estimates[provider] = await generateCostEstimate(
+      provider,
+      infraSpec,
+      intent,
+      costProfile,
+      usageOverrides,
+      deployableServices,
+      runContext
+    );
+  }));
+
+  // Calculate rankings
+  const allProviderCosts = {};
+  providers.forEach(p => { allProviderCosts[p] = estimates[p]?.total_monthly_cost || 0; });
+
+  const rankings = providers.map(p => {
+    const cost = estimates[p]?.total_monthly_cost || 0;
+    const score = calculateProviderScore(p, cost, allProviderCosts, costProfile);
+    return {
+      provider: p,
+      monthly_cost: cost,
+      formatted_cost: estimates[p]?.formatted_cost || '$0.00',
+      rank: 0, // Assigned after sort
+      score: score.finalScore,
+      confidence: estimates[p]?.confidence || 0.5
+    };
+  }).sort((a, b) => b.score - a.score)
+    .map((r, i) => ({ ...r, rank: i + 1, recommended: i === 0 }));
+
+  const recommended = rankings[0];
+
+  return {
+    cost_profile: costProfile,
+    deployment_type: 'infrastructure',
+    scale_tier: sizingModel.getSizingForInfraSpec(infraSpec, intent).tier,
+    rankings: rankings,
+    provider_details: estimates,
+    recommended_provider: recommended.provider,
+    recommended: {
+      provider: recommended.provider,
+      monthly_cost: recommended.monthly_cost,
+      formatted_cost: recommended.formatted_cost,
+      service_count: estimates[recommended.provider]?.service_count || 0,
+      score: recommended.score
+    },
+    confidence: recommended.confidence,
+    ai_explanation: {
+      confidence_score: recommended.confidence,
+      rationale: `Analysis based on ${deployableServices.length} deployable services.`
+    }
+  };
+}
 
 
 function shouldSkipProvider(provider, infraSpec) {
@@ -3328,12 +3824,12 @@ function shouldSkipProvider(provider, infraSpec) {
 /**
  * Generate cost estimates for all providers
  */
-async function generateAllProviderEstimates(infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null) {
+async function generateAllProviderEstimates(infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, runContext = null) {
   const providers = ['AWS', 'GCP', 'AZURE'];
 
   // Parallelize provider estimates
   const estimatePromises = providers.map(provider =>
-    generateCostEstimate(provider, infraSpec, intent, costProfile, usageOverrides)
+    generateCostEstimate(provider, infraSpec, intent, costProfile, usageOverrides, null, runContext)
   );
 
   const results = await Promise.all(estimatePromises);
@@ -3775,6 +4271,59 @@ function identifyMissingComponents(infraSpec) {
 }
 
 /**
+ * Classify workload to determine cost engine mode
+ */
+function classifyWorkload(intent, infraSpec) {
+  const pattern = infraSpec.service_classes?.pattern ||
+    infraSpec.service_classes?.pattern_id ||
+    intent?.architectural_decision?.pattern_id ||
+    'standard';
+
+  if (['STATIC_WEB_HOSTING', 'STATIC_SITE_WITH_AUTH'].includes(pattern)) {
+    return 'formula';
+  }
+
+  // Default to full Infracost engine
+  return 'infracost';
+}
+
+/**
+ * Route to appropriate cost calculation method based on mode
+ */
+async function calculateCostForMode(costMode, infraSpec, intent, costProfile, usageOverrides, runContext) {
+  // 1. Formula Mode (Static Sites)
+  if (costMode === 'formula') {
+    return handleStaticWebsiteCost(infraSpec, intent, usageOverrides);
+  }
+
+  // 2. Infracost Mode (Terraform)
+  // If usageOverrides provided, we are likely in a specific scenario calculation (recursion)
+  // so we just calculate for that specific point using the standard engine
+  if (usageOverrides) {
+    const estimates = await generateAllProviderEstimates(infraSpec, intent, costProfile, usageOverrides, runContext);
+    const rankings = rankProviders(estimates, costProfile);
+
+    // Return a simplified result structure for this specific point
+    return {
+      rankings,
+      provider_details: estimates,
+      total_monthly_cost: rankings[0].monthly_cost, // Best provider
+      recommended_provider: rankings[0].provider,
+      service_count: rankings[0].service_count,
+      is_partial: true
+    };
+  }
+
+  // 3. Full Scenario Analysis (Default Entry Point)
+  // If no overrides, we are doing the FULL analysis (Step 3 main entry)
+  // This calculates Low/Expected/High scenarios
+  const scenarioResults = await calculateScenarios(infraSpec, intent, null);
+
+  // Return the full scenario result which matches what performCostAnalysis expects
+  return scenarioResults;
+}
+
+/**
  * Perform full cost analysis across providers
  * 
  * CORE PRINCIPLE:
@@ -3786,8 +4335,8 @@ function identifyMissingComponents(infraSpec) {
  *   - 'hybrid':  Formula + optional Infracost (SERVERLESS, MOBILE)
  *   - 'infracost': Full Terraform IR (CONTAINERIZED, VM, PIPELINE)
  */
-async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, onlyPrimary = false, deployableServicesOverride = null) {
-  console.log(`--- STEP 3: Cost Analysis Started (Profile: ${costProfile}) ---`);
+async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, onlyPrimary = false, deployableServicesOverride = null, runContext = null) {
+  console.log(`--- STEP 3: Cost Analysis Started (Profile: ${costProfile}, Run: ${runContext?.runId || 'legacy'}) ---`);
 
   try {
     // ═══════════════════════════════════════════════════════════════════
@@ -3800,7 +4349,7 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
     // ═══════════════════════════════════════════════════════════════════
     // STEP 2: ROUTE TO APPROPRIATE COST CALCULATION METHOD
     // ═══════════════════════════════════════════════════════════════════
-    const result = await calculateCostForMode(costMode, infraSpec, intent, costProfile, usageOverrides);
+    const result = await calculateCostForMode(costMode, infraSpec, intent, costProfile, usageOverrides, runContext);
 
     // Add cost mode information to result
     result.cost_mode = costMode;
@@ -3986,7 +4535,17 @@ async function generateFullProjectExport(infraSpec, provider, projectName) {
   return exportDir;
 }
 
+/**
+ * Helper to ensure directory exists
+ */
+function ensureDir(dir) {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
 module.exports = {
+  calculateInfrastructureCost, // Main Entry Point
   generateCostEstimate,
   generateAllProviderEstimates,
   rankProviders,

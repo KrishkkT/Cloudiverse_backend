@@ -1,0 +1,552 @@
+{
+    "_meta": {
+        "description": "Core Product Domains for Cloudiverse Infrastructure Classification. Used by UI for domain/subdomain selection. Maps to domainStrategies.json for detailed axes and defaults.",
+        "version": "2.0",
+        "last_updated": "2026-01-16",
+        "counts": {
+            "strategies": 20,
+            "facets": 9
+        }
+    },
+    "domains": {
+        "static_content": {
+            "id": "static_content",
+            "name": "Static & Content Platforms",
+            "description": "Portfolio, marketing sites, blogs, docs, CMS sites, news portals.",
+            "icon": "language",
+            "subdomains": {
+                "portfolio_personal": {
+                    "label": "Portfolio / Personal Site"
+                },
+                "marketing_landing": {
+                    "label": "Marketing / Landing Pages"
+                },
+                "blog": {
+                    "label": "Blog"
+                },
+                "documentation_portal": {
+                    "label": "Documentation Portal"
+                },
+                "news_magazine": {
+                    "label": "News / Magazine Site"
+                },
+                "knowledge_base": {
+                    "label": "Knowledge Base"
+                },
+                "cms_backed_site": {
+                    "label": "CMS-backed Website"
+                }
+            }
+        },
+        "saas_web_app": {
+            "id": "saas_web_app",
+            "name": "SaaS Web Applications",
+            "description": "CRMs, dashboards, HR tools, subscription software, internal tools.",
+            "icon": "web",
+            "subdomains": {
+                "project_management": {
+                    "label": "Project management tool"
+                },
+                "crm": {
+                    "label": "CRM system"
+                },
+                "subscription_product": {
+                    "label": "Subscription-based product"
+                },
+                "internal_dashboard": {
+                    "label": "Internal business dashboard"
+                },
+                "hr_payroll": {
+                    "label": "HR / Payroll tool"
+                },
+                "support_ticket_system": {
+                    "label": "Support ticket system"
+                },
+                "form_builder": {
+                    "label": "Form builder"
+                },
+                "scheduling_system": {
+                    "label": "Scheduling system"
+                }
+            }
+        },
+        "ecommerce_marketplace": {
+            "id": "ecommerce_marketplace",
+            "name": "E-Commerce & Marketplaces",
+            "description": "Online stores, booking systems, multi-vendor platforms, ticketing.",
+            "icon": "shopping_cart",
+            "subdomains": {
+                "online_store": {
+                    "label": "Online store"
+                },
+                "digital_products": {
+                    "label": "Digital product store"
+                },
+                "multi_vendor": {
+                    "label": "Multi-vendor marketplace"
+                },
+                "booking_reservations": {
+                    "label": "Booking & reservation system"
+                },
+                "food_delivery": {
+                    "label": "Food delivery platform"
+                },
+                "event_ticketing": {
+                    "label": "Event ticketing"
+                },
+                "subscription_commerce": {
+                    "label": "Subscription commerce"
+                },
+                "pos_integrated": {
+                    "label": "POS-integrated commerce"
+                }
+            }
+        },
+        "api_backend": {
+            "id": "api_backend",
+            "name": "API-Only & Backend Platforms",
+            "description": "Mobile app backends, public APIs, microservices, webhook services.",
+            "icon": "api",
+            "subdomains": {
+                "mobile_backend": {
+                    "label": "Mobile app backend"
+                },
+                "public_developer_api": {
+                    "label": "Public developer API"
+                },
+                "partner_integration_api": {
+                    "label": "Partner integration API"
+                },
+                "microservices_backend": {
+                    "label": "Microservice backend"
+                },
+                "bff": {
+                    "label": "Backend-for-Frontend (BFF)"
+                },
+                "webhook_processor": {
+                    "label": "Webhook processing service"
+                }
+            }
+        },
+        "media_streaming": {
+            "id": "media_streaming",
+            "name": "Media & Streaming Platforms",
+            "description": "Video platforms, audio/podcast hosting, file sharing, live streaming, LMS media delivery.",
+            "icon": "play_circle",
+            "subdomains": {
+                "video_streaming": {
+                    "label": "Video streaming platform"
+                },
+                "audio_podcast": {
+                    "label": "Audio / podcast hosting"
+                },
+                "image_hosting": {
+                    "label": "Image hosting"
+                },
+                "file_sharing": {
+                    "label": "File sharing"
+                },
+                "live_streaming": {
+                    "label": "Live streaming"
+                },
+                "video_conferencing": {
+                    "label": "Video conferencing"
+                },
+                "lms_media_delivery": {
+                    "label": "LMS video delivery"
+                }
+            }
+        },
+        "realtime_collaboration": {
+            "id": "realtime_collaboration",
+            "name": "Realtime & Collaboration Products",
+            "description": "Chat apps, collaborative editors, multiplayer games, live dashboards.",
+            "icon": "groups",
+            "subdomains": {
+                "chat_app": {
+                    "label": "Chat application"
+                },
+                "collaborative_editor": {
+                    "label": "Collaborative editor (docs/whiteboard)"
+                },
+                "multiplayer_game_backend": {
+                    "label": "Multiplayer game backend"
+                },
+                "live_dashboard": {
+                    "label": "Live dashboard (realtime monitoring/ops)"
+                }
+            }
+        },
+        "mobile_first_platforms": {
+            "id": "mobile_first_platforms",
+            "name": "Mobile-First Platforms",
+            "description": "Consumer apps, ride-sharing, fitness apps, social mobile apps.",
+            "icon": "smartphone",
+            "subdomains": {
+                "consumer_social_app": {
+                    "label": "Consumer social app"
+                },
+                "ride_sharing": {
+                    "label": "Ride-sharing / mobility"
+                },
+                "fitness_health_app": {
+                    "label": "Fitness app"
+                },
+                "mobile_commerce_app": {
+                    "label": "Mobile commerce companion"
+                }
+            }
+        },
+        "data_analytics_platforms": {
+            "id": "data_analytics_platforms",
+            "name": "Data & Analytics Platforms",
+            "description": "BI dashboards, event tracking, data lakes, ETL, analytics SaaS.",
+            "icon": "bar_chart",
+            "subdomains": {
+                "bi_dashboard": {
+                    "label": "BI dashboards"
+                },
+                "event_tracking": {
+                    "label": "Event tracking (product analytics)"
+                },
+                "data_lake": {
+                    "label": "Data lake / lakehouse"
+                },
+                "etl_elt_platform": {
+                    "label": "ETL/ELT platform"
+                },
+                "analytics_saas": {
+                    "label": "Analytics SaaS"
+                }
+            }
+        },
+        "ai_ml_products": {
+            "id": "ai_ml_products",
+            "name": "AI / ML Products",
+            "description": "AI chat apps, model inference APIs, recommendation systems, AI automation tools.",
+            "icon": "psychology",
+            "subdomains": {
+                "ai_chat_app": {
+                    "label": "AI chat application"
+                },
+                "model_inference_api": {
+                    "label": "Model inference API"
+                },
+                "recommendation_system": {
+                    "label": "Recommendation system"
+                },
+                "ai_automation_tool": {
+                    "label": "AI automation (agents/workflows)"
+                }
+            }
+        },
+        "iot_device_platforms": {
+            "id": "iot_device_platforms",
+            "name": "IoT & Device Platforms",
+            "description": "Smart home systems, fleet tracking, sensor ingestion, edge computing.",
+            "icon": "sensors",
+            "subdomains": {
+                "smart_home": {
+                    "label": "Smart home platform"
+                },
+                "fleet_tracking": {
+                    "label": "Fleet tracking"
+                },
+                "sensor_ingestion": {
+                    "label": "Sensor ingestion pipeline"
+                },
+                "edge_computing": {
+                    "label": "Edge computing / gateways"
+                }
+            }
+        },
+        "enterprise_internal_systems": {
+            "id": "enterprise_internal_systems",
+            "name": "Enterprise & Internal Business Systems",
+            "description": "ERP, finance systems, inventory systems, corporate portals.",
+            "icon": "business",
+            "subdomains": {
+                "erp_system": {
+                    "label": "ERP system"
+                },
+                "finance_accounting": {
+                    "label": "Finance / accounting system"
+                },
+                "inventory_supply_chain": {
+                    "label": "Inventory / supply chain"
+                },
+                "corporate_portal": {
+                    "label": "Corporate portal (intranet)"
+                }
+            }
+        },
+        "fintech_regulated_financial": {
+            "id": "fintech_regulated_financial",
+            "name": "FinTech & Regulated Financial Systems",
+            "description": "Banking apps, payment gateways, trading systems, KYC/AML services.",
+            "icon": "account_balance",
+            "subdomains": {
+                "banking_app": {
+                    "label": "Banking application"
+                },
+                "payment_gateway": {
+                    "label": "Payment gateway / processor"
+                },
+                "trading_system": {
+                    "label": "Trading system"
+                },
+                "kyc_aml_service": {
+                    "label": "KYC/AML service"
+                }
+            }
+        },
+        "healthcare_life_sciences": {
+            "id": "healthcare_life_sciences",
+            "name": "Healthcare & Life Sciences Systems",
+            "description": "EHR, telemedicine, medical imaging, wearable health systems.",
+            "icon": "local_hospital",
+            "subdomains": {
+                "ehr_system": {
+                    "label": "EHR / EMR system"
+                },
+                "telemedicine": {
+                    "label": "Telemedicine"
+                },
+                "medical_imaging": {
+                    "label": "Medical imaging (PACS-like workflows)"
+                },
+                "wearable_health": {
+                    "label": "Wearable health system"
+                }
+            }
+        },
+        "education_learning_platforms": {
+            "id": "education_learning_platforms",
+            "name": "Education & Learning Platforms",
+            "description": "LMS, online courses, virtual classrooms, assessments.",
+            "icon": "school",
+            "subdomains": {
+                "lms": {
+                    "label": "Learning management system (LMS)"
+                },
+                "online_courses": {
+                    "label": "Online courses / content platform"
+                },
+                "virtual_classroom": {
+                    "label": "Virtual classroom"
+                },
+                "assessments_exams": {
+                    "label": "Assessments / exams"
+                }
+            }
+        },
+        "government_public_sector": {
+            "id": "government_public_sector",
+            "name": "Government & Public Sector Systems",
+            "description": "Citizen portals, tax systems, digital ID, public data platforms.",
+            "icon": "account_balance",
+            "subdomains": {
+                "citizen_portal": {
+                    "label": "Citizen portal"
+                },
+                "tax_revenue_system": {
+                    "label": "Tax / revenue system"
+                },
+                "digital_id": {
+                    "label": "Digital ID / identity services"
+                },
+                "public_data_platform": {
+                    "label": "Public data platform (open data)"
+                }
+            }
+        },
+        "devtools_developer_platforms": {
+            "id": "devtools_developer_platforms",
+            "name": "DevTools & Developer Platforms",
+            "description": "CI/CD products, cloud management tools, infrastructure automation SaaS.",
+            "icon": "terminal",
+            "subdomains": {
+                "cicd_platform": {
+                    "label": "CI/CD platform"
+                },
+                "cloud_management_console": {
+                    "label": "Cloud management console"
+                },
+                "infrastructure_automation_saas": {
+                    "label": "Infrastructure automation SaaS (IaC orchestration)"
+                },
+                "artifact_registry": {
+                    "label": "Artifact registry (packages/images)"
+                }
+            }
+        },
+        "gaming_platforms": {
+            "id": "gaming_platforms",
+            "name": "Gaming Platforms",
+            "description": "Online game backends, matchmaking, leaderboards, game asset delivery.",
+            "icon": "sports_esports",
+            "subdomains": {
+                "online_game_backend": {
+                    "label": "Online game backend"
+                },
+                "matchmaking_service": {
+                    "label": "Matchmaking service"
+                },
+                "leaderboards_profiles": {
+                    "label": "Leaderboards and player profiles"
+                },
+                "game_asset_delivery": {
+                    "label": "Game asset delivery (patches/DLC/CDN origin)"
+                }
+            }
+        },
+        "logistics_supply_chain": {
+            "id": "logistics_supply_chain",
+            "name": "Logistics & Supply Chain Systems",
+            "description": "Shipment tracking, warehouse systems, route optimization.",
+            "icon": "local_shipping",
+            "subdomains": {
+                "shipment_tracking": {
+                    "label": "Shipment tracking"
+                },
+                "warehouse_management": {
+                    "label": "Warehouse management system (WMS)"
+                },
+                "route_optimization": {
+                    "label": "Route optimization"
+                },
+                "last_mile_delivery": {
+                    "label": "Last-mile delivery (driver app backend)"
+                }
+            }
+        },
+        "search_knowledge_systems": {
+            "id": "search_knowledge_systems",
+            "name": "Search & Knowledge Systems",
+            "description": "Enterprise search, document indexing, semantic search, knowledge graphs.",
+            "icon": "search",
+            "subdomains": {
+                "enterprise_search": {
+                    "label": "Enterprise search"
+                },
+                "document_indexing": {
+                    "label": "Document indexing pipeline"
+                },
+                "semantic_search": {
+                    "label": "Semantic search (embeddings)"
+                },
+                "knowledge_graph": {
+                    "label": "Knowledge graph"
+                }
+            }
+        },
+        "communication_infrastructure_platforms": {
+            "id": "communication_infrastructure_platforms",
+            "name": "Communication Infrastructure Platforms",
+            "description": "Email delivery, SMS gateways, push notification systems, VoIP services.",
+            "icon": "mail",
+            "subdomains": {
+                "email_delivery": {
+                    "label": "Email delivery platform"
+                },
+                "sms_gateway": {
+                    "label": "SMS gateway"
+                },
+                "push_notification_service": {
+                    "label": "Push notification system"
+                },
+                "voip_platform": {
+                    "label": "VoIP / calling platform"
+                }
+            }
+        }
+    },
+    "facets": {
+        "_description": "Cross-cutting concerns that modify architecture templates. These are NOT domains unless the user is building a product IN this category.",
+        "security_cybersecurity": {
+            "name": "Security & Cybersecurity",
+            "description": "Cross-cutting security toggles (IAM/SSO, SIEM, encryption, zero-trust).",
+            "toggles": [
+                "iam_sso",
+                "siem_threat_detection",
+                "encryption_key_management",
+                "zero_trust_access"
+            ]
+        },
+        "observability_monitoring": {
+            "name": "Observability & Monitoring",
+            "description": "Logging, metrics, tracing, and alerting.",
+            "toggles": [
+                "logging",
+                "metrics",
+                "tracing",
+                "alerting"
+            ]
+        },
+        "compliance_governance": {
+            "name": "Compliance & Governance",
+            "description": "GDPR, HIPAA, PCI, audit logs, and data residency controls.",
+            "toggles": [
+                "gdpr_pack",
+                "hipaa_pack",
+                "pci_pack",
+                "audit_logs",
+                "data_residency"
+            ]
+        },
+        "scalability_high_availability": {
+            "name": "Scalability & High Availability",
+            "description": "Auto-scaling, multi-region, and disaster recovery toggles.",
+            "toggles": [
+                "auto_scaling",
+                "multi_region",
+                "disaster_recovery"
+            ]
+        },
+        "performance_caching": {
+            "name": "Performance & Caching",
+            "description": "CDN, caching layers, and query optimization.",
+            "toggles": [
+                "cdn",
+                "redis_memcache",
+                "query_optimization"
+            ]
+        },
+        "billing_subscription": {
+            "name": "Billing & Subscription",
+            "description": "Payment integration, usage tracking, and invoicing.",
+            "toggles": [
+                "payment_integration",
+                "usage_tracking",
+                "invoicing",
+                "subscriptions"
+            ]
+        },
+        "notifications": {
+            "name": "Notifications",
+            "description": "Email, SMS, and push notification capabilities.",
+            "toggles": [
+                "email_notifications",
+                "sms_notifications",
+                "push_notifications"
+            ]
+        },
+        "background_processing": {
+            "name": "Background Processing",
+            "description": "Queues, worker systems, and cron/scheduled jobs.",
+            "toggles": [
+                "queues",
+                "worker_systems",
+                "cron_jobs"
+            ]
+        },
+        "search": {
+            "name": "Search",
+            "description": "Full-text search, semantic search, and indexing pipelines.",
+            "toggles": [
+                "full_text_search",
+                "semantic_search"
+            ]
+        }
+    }
+}

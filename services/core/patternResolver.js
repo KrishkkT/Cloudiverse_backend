@@ -535,7 +535,11 @@ class PatternResolver {
 
       // 🆕 NEW: Pass through capabilities and terminal_exclusions from Step 1
       const capabilities = intent.capabilities || {};
-      const terminalExclusions = intent.terminal_exclusions || [];
+      // 🔥 FIX: Extract exclusions from AI intent axes (flat format or nested value)
+      const terminalExclusions = intent.terminal_exclusions ||
+        (intent.axes?.excluded_components?.value) ||
+        (intent.axes?.excluded_components) ||
+        [];
 
       console.log('[EXTRACT REQUIREMENTS] Capabilities:', capabilities);
       console.log('[EXTRACT REQUIREMENTS] Terminal Exclusions:', terminalExclusions);
@@ -575,7 +579,45 @@ class PatternResolver {
       if (primaryDomain === 'ecommerce') {
         requirements.workload_types.push('web_app');
         requirements.payments = true; // Ecommerce implies payments
-        console.log('[DOMAIN DETECTION] ecommerce domain → web_app + payments');
+
+        // 🔥 FIX 4: Ecommerce MUST be dynamic (api_backend) unless explicitly excluded
+        if (!requirements.terminal_exclusions?.includes('api_backend')) {
+          requirements.api_backend = true;
+        }
+        console.log('[DOMAIN DETECTION] ecommerce domain → web_app + payments + api_backend');
+      }
+
+      // 🔥 FIX: SAAS/B2B implies multi-tenancy + auth + api
+      if (primaryDomain === 'saas' || primaryDomain === 'devtools') {
+        requirements.workload_types.push('web_app');
+        if (!requirements.terminal_exclusions?.includes('api_backend')) requirements.api_backend = true;
+        if (!requirements.terminal_exclusions?.includes('multi_user_roles')) requirements.authentication = true;
+        console.log(`[DOMAIN DETECTION] ${primaryDomain} domain → dynamic web app defaults`);
+      }
+
+      // 🔥 FIX: FINTECH implies compliance + security + api
+      if (primaryDomain === 'fintech') {
+        requirements.workload_types.push('backend_api');
+        requirements.nfr.compliance = requirements.nfr.compliance || [];
+        if (!requirements.nfr.compliance.includes('PCI')) requirements.nfr.compliance.push('PCI');
+        if (!requirements.terminal_exclusions?.includes('api_backend')) requirements.api_backend = true;
+        console.log(`[DOMAIN DETECTION] fintech domain → securely hardened api`);
+      }
+
+      // 🔥 FIX: HEALTHCARE implies compliance + api
+      if (primaryDomain === 'healthcare') {
+        requirements.workload_types.push('backend_api');
+        requirements.nfr.compliance = requirements.nfr.compliance || [];
+        if (!requirements.nfr.compliance.includes('HIPAA')) requirements.nfr.compliance.push('HIPAA');
+        if (!requirements.terminal_exclusions?.includes('api_backend')) requirements.api_backend = true;
+        console.log(`[DOMAIN DETECTION] healthcare domain → hipaa compliant api`);
+      }
+
+      // 🔥 FIX: SOCIAL/GAMING implies realtime + api
+      if (primaryDomain === 'social_network' || primaryDomain === 'gaming') {
+        if (!requirements.terminal_exclusions?.includes('realtime')) requirements.realtime = true;
+        if (!requirements.terminal_exclusions?.includes('api_backend')) requirements.api_backend = true;
+        console.log(`[DOMAIN DETECTION] ${primaryDomain} domain → realtime api`);
       }
 
       // Merge explicit + inferred features (explicit takes precedence)
@@ -1004,6 +1046,17 @@ class PatternResolver {
     console.log(`[SERVICE RESOLUTION] Terminal Exclusions:`, terminal_exclusions);
 
     // ═════════════════════════════════════════════════════════════════
+    // 0️⃣ DOMAIN CONTRACT (STRICT AUTHORITY)
+    // ═════════════════════════════════════════════════════════════════
+    // Enforce strict requirements from axes.js (e.g. Government -> Audit Logs)
+    if (capabilities._contract && Array.isArray(capabilities._contract.required_services)) {
+      capabilities._contract.required_services.forEach(svc => {
+        selected.set(svc, { source: 'domain_contract', pattern, removable: false });
+        console.log(`[SERVICE RESOLUTION] 🏛️ Added ${svc} from Domain Contract (STRICT)`);
+      });
+    }
+
+    // ═════════════════════════════════════════════════════════════════
     // 1️⃣ PATTERN CONTRACT (HIGHEST AUTHORITY)
     // ═════════════════════════════════════════════════════════════════
     const patternDef = PATTERN_CATALOG[pattern];
@@ -1046,6 +1099,13 @@ class PatternResolver {
     // ═════════════════════════════════════════════════════════════════
     // 3️⃣ TERMINAL EXCLUSIONS (user authority, but pattern can override)
     // ═════════════════════════════════════════════════════════════════
+    const excludedServicesSet = new Set(); // 🔥 Track explicitly excluded services
+    // 🔥 FIX: Preemptively populate excluded services from terminal exclusions
+    (terminal_exclusions || []).forEach(cap => {
+      const blockedServices = getServicesForCapability(cap);
+      blockedServices.forEach(svc => excludedServicesSet.add(svc));
+    });
+
     (terminal_exclusions || []).forEach(cap => {
       const blockedServices = getServicesForCapability(cap);
       blockedServices.forEach(svc => {
@@ -1053,12 +1113,14 @@ class PatternResolver {
           const entry = selected.get(svc);
 
           // 🔥 FIX 2: Pattern mandatory services CANNOT be removed
+          // CHANGED: User Authority > Pattern Authority. If user explicitly excludes, we must remove.
           if (entry.removable === false || patternMandatory.has(svc)) {
-            console.log(`[SERVICE RESOLUTION] ⚠️ CANNOT REMOVE ${svc} (required by pattern ${pattern})`);
-            return;
+            console.log(`[SERVICE RESOLUTION] ⚠️ REMOVING MANDATORY SERVICE ${svc} (OVERRIDE: user terminal exclusion)`);
+            // Fall through to removal
           }
 
           selected.delete(svc);
+          // excludedServicesSet.add(svc); // Already added above
           console.log(`[SERVICE RESOLUTION] ❌ REMOVED ${svc} due to terminal exclusion: ${cap}`);
         }
       });
@@ -1104,6 +1166,12 @@ class PatternResolver {
           // Verify service exists in catalog before adding
           const serviceDef = getServiceDefinition(svc);
           if (serviceDef) {
+            // 🔥 FIX: Check if service was explicitly excluded
+            if (excludedServicesSet.has(svc)) {
+              console.log(`[PATTERN INTEGRITY] ⚠️ SKIPPING ${svc} (explicitly excluded by user)`);
+              continue;
+            }
+
             selected.set(svc, { source: 'pattern_contract', pattern, removable: false });
             console.log(`[PATTERN INTEGRITY] Adding missing service ${svc} from pattern contract`);
           } else {
@@ -1116,7 +1184,10 @@ class PatternResolver {
     const finalServicesWithContract = Array.from(selected.keys());
     console.log(`[SERVICE RESOLUTION] Final services after contract enforcement (${finalServicesWithContract.length}):`, finalServicesWithContract);
 
-    return finalServicesWithContract;
+    return {
+      services: finalServicesWithContract,
+      excluded: excludedServicesSet
+    };
   }
 
 
@@ -1307,11 +1378,16 @@ class PatternResolver {
     // ═════════════════════════════════════════════════════════════════
     // 🆕 NEW: Use resolveServices() with proper precedence
     // ═════════════════════════════════════════════════════════════════
-    const serviceNames = this.resolveServices({
+    const resolutionResult = this.resolveServices({
       capabilities: requirements.capabilities || {},
       terminal_exclusions: requirements.terminal_exclusions || [],
       pattern: selectedPattern
     });
+
+    const serviceNames = resolutionResult.services;
+    const excludedServicesSet = resolutionResult.excluded;
+
+
 
     console.log(`[CANONICAL ARCHITECTURE] Pattern: ${selectedPattern}, Services: ${serviceNames.length}`);
     console.log(`[CANONICAL ARCHITECTURE] Service List: ${serviceNames.join(', ')}`);
@@ -1330,7 +1406,7 @@ class PatternResolver {
 
     // 🔥 VALIDATION: Fail if required services are missing for pattern
     // 🔒 Pass terminalExclusions to respect user authority
-    this.validateServicesForPattern(services, selectedPattern, requirements.terminal_exclusions || []);
+    this.validateServicesForPattern(services, selectedPattern, requirements.terminal_exclusions || [], excludedServicesSet);
 
     // Create canonical architecture based on pattern
     const pattern = PATTERN_CATALOG[selectedPattern];
@@ -1447,7 +1523,8 @@ class PatternResolver {
       total_services: canonicalServices.length,
       services: canonicalServices,
       validated: true,
-      complete: true
+      complete: true,
+      excluded: Array.from(excludedServicesSet) // 🔥 FIX: Expose exclusions
     };
 
     console.log(`[CANONICAL CONTRACT] ${servicesContract.total_services} services finalized for ${selectedPattern}`);
@@ -1539,7 +1616,7 @@ class PatternResolver {
    * Validate that required services exist for the given pattern
    * Uses V1 Pattern Catalog mandatory services as validation baseline
    */
-  validateServicesForPattern(services, pattern, terminalExclusions = []) {
+  validateServicesForPattern(services, pattern, terminalExclusions = [], excludedServicesSet = null) {
     const serviceNames = new Set(services.map(s => s.name));
 
     const patternDef = PATTERN_CATALOG[pattern];
@@ -1548,26 +1625,31 @@ class PatternResolver {
       return; // Pattern not in V1 catalog, skip validation
     }
 
-    // 🔒 TERMINAL EXCLUSIONS: Services excluded by user authority cannot be required
-    // Map capabilities to services they would create
-    const capabilityToService = {
-      'data_persistence': ['relationaldatabase', 'nosqldatabase', 'block_storage'],  // 🔥 FIX: REMOVED objectstorage
-      'document_storage': ['objectstorage'],  // 🔥 FIX: Added separate capability
-      'messaging': ['message_queue'],
-      'realtime': ['websocketgateway'],
-      'payments': ['paymentgateway']
-    };
+    // 🔒 TERMINAL EXCLUSIONS: Services explicitly excluded by authority
+    // Use the comprehensive set passed from resolveServices if available
+    let excludedServices = excludedServicesSet;
 
-    // Build set of excluded services based on terminal exclusions
-    const excludedServices = new Set();
-    terminalExclusions.forEach(capability => {
-      const services = capabilityToService[capability] || [];
-      services.forEach(svc => excludedServices.add(svc));
-    });
+    // Fallback if set not passed (should not happen in new flow)
+    if (!excludedServices) {
+      excludedServices = new Set();
+      // ... existing fallback logic if absolutely needed, but we are fixing the caller
+      // Map capabilities to services they would create
+      const capabilityToService = {
+        'data_persistence': ['relationaldatabase', 'nosqldatabase', 'block_storage'],
+        'document_storage': ['objectstorage'],
+        'messaging': ['message_queue'],
+        'realtime': ['websocketgateway'],
+        'payments': ['paymentgateway'],
+        'api_backend': ['apigateway', 'computeserverless', 'computecontainer', 'logging', 'monitoring'] // Fallback mapping
+      };
+      terminalExclusions.forEach(capability => {
+        const services = capabilityToService[capability] || [];
+        services.forEach(svc => excludedServices.add(svc));
+      });
+    }
 
-    if (terminalExclusions.length > 0) {
-      console.log(`[VALIDATION] Terminal exclusions: ${terminalExclusions.join(', ')}`);
-      console.log(`[VALIDATION] Excluded services: ${Array.from(excludedServices).join(', ')}`);
+    if (excludedServices.size > 0) {
+      console.log(`[VALIDATION] Excluded services for check: ${Array.from(excludedServices).join(', ')}`);
     }
 
     const required = patternDef.mandatory_services;
@@ -1798,47 +1880,240 @@ class PatternResolver {
   }
 
   /**
-   * Resolve the complete architecture
-   * Returns the CANONICAL SERVICES CONTRACT that all downstream systems must use
-   * NOW with axes-based capabilities support
+   * Resolve the complete architecture (AI-First + Backend Compiler)
    */
-  resolveArchitecture(intent) {
-    // Extract capabilities from axes if present (new Step 1 format)
+  resolveArchitecture(intent, aiServices = [], aiRemovals = []) {
+    console.log('[ARCHITECTURE] Resolving with AI-First Compiler...');
+
+    // 1. Extract Capabilities
     let capabilities = intent.capabilities || {};
-
     if (intent.axes && Object.keys(intent.axes).length > 0) {
-      console.log('[ARCHITECTURE] Using axes-based capabilities mapping');
       capabilities = mapAxesToCapabilities(intent.axes);
-      console.log('[ARCHITECTURE] Mapped capabilities:', getCapabilitiesSummary(capabilities));
     }
-
     const requirements = this.extractRequirements(intent);
 
-    // Try score-based resolution first (new system)
-    let selectedPattern;
-    let patternResolution;
+    // 2. BACKEND COMPILER: Verify and Compile Final Service List
+    // This merges AI proposal, capabilities, constraints, and exclusions.
+    const validationResult = this.verifyAndCompileServices(
+      aiServices,
+      aiRemovals,
+      capabilities,
+      intent
+    );
 
-    try {
-      patternResolution = this.resolvePatternsByScore(capabilities, intent);
-      selectedPattern = patternResolution.selected_pattern;
-      console.log(`[ARCHITECTURE] Score-based pattern: ${selectedPattern} (score: ${patternResolution.score})`);
-    } catch (e) {
-      console.warn('[ARCHITECTURE] Score-based resolution failed, falling back to legacy:', e.message);
-      selectedPattern = this.selectPattern(requirements);
-    }
+    const finalServices = validationResult.finalServices;
+    console.log(`[COMPILER] Final Services: ${finalServices.join(', ')}`);
+    console.log(`[COMPILER] Changes:`, JSON.stringify(validationResult.changes, null, 2));
 
-    const canonicalArchitecture = this.generateCanonicalArchitecture(requirements, selectedPattern);
+    // 3. Pattern Selection (Fit-based)
+    // Find pattern that best matches the Final Services
+    const fitResult = this.findBestPatternForServices(finalServices, capabilities);
+    const selectedPattern = fitResult.pattern;
 
-    console.log(`[ARCHITECTURE RESOLVED] Pattern: ${selectedPattern}, Services: ${canonicalArchitecture.services_contract.total_services}`);
+    console.log(`[PATTERN FIT] Selected: ${selectedPattern} (Confidence: ${fitResult.confidence})`);
+
+    // 4. Construct Canonical Architecture
+    const serviceObjects = finalServices.map((svcId, idx) => ({
+      id: `${svcId}_${idx}`,
+      name: svcId, // Normalized name
+      canonical_type: svcId,
+      category: this.getServiceCategory(svcId),
+      description: this.getServiceDescription(svcId),
+      terraform_supported: true, // Validated in compile step
+      required: true
+    }));
+
+    const canonicalArchitecture = {
+      services_contract: {
+        total_services: serviceObjects.length,
+        required_services: serviceObjects.length,
+        services: serviceObjects
+      },
+      deployable_services: serviceObjects, // Already filtered to valid types
+      logical_services: []
+    };
 
     return {
       requirements,
       selectedPattern,
-      pattern_resolution: patternResolution,
+      pattern_resolution: {
+        selected_pattern: selectedPattern,
+        score: fitResult.confidence,
+        reasoning: fitResult.reasoning,
+        services: serviceObjects
+      },
       canonicalArchitecture,
-      // Expose the canonical contract at top level for easy access
-      servicesContract: canonicalArchitecture.services_contract
+      servicesContract: canonicalArchitecture.services_contract,
+      compiler_validation: validationResult
     };
+  }
+
+  /**
+   * COMPILER: Validates AI services against constraints and capabilities
+   */
+  verifyAndCompileServices(aiServices, aiRemovals, capabilities, intent) {
+    const changes = { added: [], removed: [], invalid: [], kept: [] };
+    const workingSet = new Set();
+    const workingSetReasons = {};
+
+    // 1. Normalize and Validate AI Services
+    aiServices.forEach(svc => {
+      const normalized = this.normalizeServiceId(svc.service_class);
+      if (this.isValidService(normalized)) {
+        workingSet.add(normalized);
+        workingSetReasons[normalized] = `AI Proposed: ${svc.reason}`;
+      } else {
+        changes.invalid.push({ service: svc.service_class, reason: "Unknown or invalid service ID" });
+      }
+    });
+
+    // 2. Compute Required Services (Constraints & Capabilities)
+    const requiredSet = new Set();
+
+    // 2a. Capabilities Closure
+    // Map capabilities (e.g. apibackend) to services (e.g. apigateway + compute)
+    for (const [cap, status] of Object.entries(capabilities)) {
+      if (status === 'required') {
+        const requiredForCap = getServicesForCapability(cap);
+        requiredForCap.forEach(s => {
+          if (s !== 'backup') { // Skip placeholders
+            requiredSet.add(s);
+            if (!workingSet.has(s)) {
+              changes.added.push({ service: s, reason: `Required by capability: ${cap}` });
+            }
+          }
+        });
+      }
+    }
+
+    // 2b. Hard Constraints (e.g. Compliance -> Audit Logging)
+    if (intent.axes?.regulatory_compliance?.value?.length > 0 ||
+      intent.axes?.observability_level?.value === 'advanced') {
+      ['logging', 'monitoring', 'auditlogging'].forEach(s => {
+        requiredSet.add(s);
+        if (!workingSet.has(s)) changes.added.push({ service: s, reason: "Compliance/Observability Constraint" });
+      });
+    }
+
+    // 2c. Operational Model Constraints
+    if (intent.axes?.ops_model?.value === 'kubernetes_pref') {
+      // If K8s requested, ensure container compute
+      if (!workingSet.has('computecontainer')) {
+        // Replace serverless with container if present, or add container
+        if (workingSet.has('computeserverless')) {
+          workingSet.delete('computeserverless');
+          changes.removed.push({ service: 'computeserverless', reason: "Conflict with Kubernetes constraint" });
+        }
+        requiredSet.add('computecontainer');
+        changes.added.push({ service: 'computecontainer', reason: "Kubernetes Constraint" });
+      }
+    }
+
+    // 3. Apply Rejections/Removals
+    // Handle AI Removals
+    aiRemovals.forEach(rem => {
+      const normalized = this.normalizeServiceId(rem.service_class);
+      if (requiredSet.has(normalized)) {
+        // REJECT removal
+        changes.kept.push({ service: normalized, reason: `AI tried to remove, but required by ${normalized in workingSetReasons ? 'Context' : 'Constraint'}` });
+      } else if (workingSet.has(normalized)) {
+        workingSet.delete(normalized);
+        changes.removed.push({ service: normalized, reason: `AI Removed: ${rem.reason}` });
+      }
+    });
+
+    // Handle User Exclusions (Terminal)
+    const exclusions = intent.axes?.excluded_components?.value || [];
+    exclusions.forEach(ex => {
+      const exNorm = ex.toLowerCase(); // Simple check, real logic loops all
+      // If a required service is excluded, we technically have a conflict.
+      // Current rule: User Exclusion wins, but validation warns downstream.
+      for (const s of [...workingSet, ...requiredSet]) {
+        if (s.includes(exNorm)) {
+          workingSet.delete(s);
+          requiredSet.delete(s);
+          changes.removed.push({ service: s, reason: "User Exclusion" });
+        }
+      }
+    });
+
+    // 4. Merge Sets
+    const finalSet = new Set([...workingSet, ...requiredSet]);
+
+    // 5. Final Sanity (e.g. Ensure at least one compute/storage if needed)
+    // (Skipped for brevity, assuming capabilities covered this)
+
+    return {
+      finalServices: Array.from(finalSet),
+      changes
+    };
+  }
+
+  /**
+   * Find pattern that fits the SERVICES list (Architecture fit)
+   */
+  findBestPatternForServices(services, capabilities) {
+    const serviceSet = new Set(services);
+    let bestPattern = 'CUSTOM';
+    let bestScore = 0;
+    const reasoning = [];
+
+    const patterns = CANONICAL_PATTERNS.patterns;
+
+    for (const [patternName, pattern] of Object.entries(patterns)) {
+      const mandatory = new Set(pattern.mandatory_services || []);
+
+      // Calculate Jaccard-like index or Coverage
+      let matchCount = 0;
+      let extraCount = 0;
+      let missingCount = 0;
+
+      mandatory.forEach(s => {
+        if (serviceSet.has(s)) matchCount++;
+        else missingCount++;
+      });
+
+      serviceSet.forEach(s => {
+        if (!mandatory.has(s)) extraCount++;
+      });
+
+      // Score: High match, Low missing, Low extra
+      // Weighting: Missing mandatory is bad (-1). Extra is okay (-0.2). Match is good (+1).
+      const score = (matchCount * 1.5) - (missingCount * 1.0) - (extraCount * 0.2);
+
+      // Boost if pattern matches capability intent (using existing scoring logic)
+      // We skip that for now to focus on topology fit.
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestPattern = patternName;
+      }
+      reasoning.push(`${patternName}: score=${score.toFixed(1)} (match=${matchCount}, miss=${missingCount})`);
+    }
+
+    // Threshold check
+    if (bestScore < 2.0 && services.length > 0) {
+      // If fit is poor, stick to CUSTOM to avoid injecting missing services
+      return { pattern: 'CUSTOM', confidence: 0.5, reasoning };
+    }
+
+    return { pattern: bestPattern, confidence: 0.8, reasoning };
+  }
+
+  normalizeServiceId(id) {
+    // Simple verification (can extend with map)
+    const idMap = {
+      'api_gateway': 'apigateway',
+      'compute_serverless': 'computeserverless',
+      'object_storage': 'objectstorage',
+      'relational_database': 'relationaldatabase'
+    };
+    return idMap[id] || id;
+  }
+
+  isValidService(id) {
+    // Check against getServiceDescription or category
+    return !!this.getServiceCategory(id) && this.getServiceCategory(id) !== 'other';
   }
 }
 

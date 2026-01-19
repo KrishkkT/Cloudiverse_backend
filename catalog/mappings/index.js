@@ -1,9 +1,7 @@
 /**
  * backend/catalog/mappings/index.js
- *
  * Aggregates all mapping exports for convenient access.
  */
-
 'use strict';
 
 const cloud = require('./cloud');

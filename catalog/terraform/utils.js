@@ -7,7 +7,6 @@
  * - Provider mapping helpers
  * - Pattern/service selection validation
  */
-
 'use strict';
 
 const services = require('./services');
@@ -26,12 +25,8 @@ function assertProvider(provider) {
 /**
  * SERVICES HELPERS
  */
-
 const getServiceDefinition = (serviceId) => {
     const def = services[serviceId] || null;
-    if (!def && serviceId && !serviceId.startsWith('__')) {
-        // console.warn(`[CATALOG UTILS] getServiceDefinition: Service '${serviceId}' not found.`);
-    }
     return def;
 };
 
@@ -42,7 +37,6 @@ const getServiceOrThrow = (serviceId) => {
 };
 
 const getAllServiceIds = () => Object.keys(services);
-
 const getAllServices = () => getAllServiceIds().map((id) => ({ id, ...services[id] }));
 
 const getServicesByCategory = (category) =>
@@ -53,7 +47,6 @@ const getServicesByDomain = (domain) =>
 
 const isDeployable = (serviceId) => {
     const service = getServiceDefinition(serviceId);
-    // Treat a service as deployable only if terraform.moduleId exists and is non-empty
     return !!(service?.terraform?.moduleId);
 };
 
@@ -73,21 +66,40 @@ const getProviderMapping = (serviceId, provider) => {
 
 const getProviderResourceId = (serviceId, provider) => {
     const mapping = getProviderMapping(serviceId, provider);
-    // Expect mapping like: { resource: 'aws_s3_bucket', name: 'S3', ... } (as seen in packs)
     return mapping?.resource || null;
 };
 
-const getInfracostResourceType = (serviceId) => {
+/**
+ * CHANGED:
+ * - Supports:
+ *   - old: pricing.infracost.resourceType = "aws_s3_bucket"
+ *   - new: pricing.infracost.resourceType = { aws:"...", gcp:"...", azure:"..." }
+ * - Backward compatible:
+ *   - if provider omitted, returns string (old) OR prefers aws when object provided
+ */
+const getInfracostResourceType = (serviceId, provider = null) => {
     const svc = getServiceDefinition(serviceId);
-    return svc?.pricing?.engine === 'infracost' ? (svc?.pricing?.infracost?.resourceType || null) : null;
+    if (!svc) return null;
+
+    if (svc?.pricing?.engine !== 'infracost') return null;
+
+    const rt = svc?.pricing?.infracost?.resourceType;
+    if (!rt) return null;
+
+    if (typeof rt === 'string') return rt;
+
+    if (rt && typeof rt === 'object') {
+        const p = provider ? assertProvider(provider) : 'aws';
+        return rt[p] || null;
+    }
+
+    return null;
 };
 
 /**
  * PATTERNS HELPERS
  */
-
 const getPattern = (patternId) => patterns[patternId] || null;
-
 const getPatternNames = () => Object.keys(patterns);
 
 const getAllowedServices = (patternId) => {
@@ -114,7 +126,7 @@ const getRecommendedServices = (patternId) => {
  * Validate chosen services against a pattern.
  *
  * Options:
- * - strictAllowed: if true, enforce allowed_services as well (recommended once patterns stabilize)
+ * - strictAllowed: if true, enforce allowed_services as well
  * - requireRequired: if true, ensures all required_services are present
  */
 const validateServiceSelection = (patternId, serviceIds, opts = {}) => {

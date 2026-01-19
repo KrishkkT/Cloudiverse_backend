@@ -277,19 +277,52 @@ function generateOutputsTf(provider, pattern, services) {
  * Generate main.tf (ONLY module references, NO direct resources)
  */
 function generateMainTf(provider, pattern, services) {
+  const p = provider.toLowerCase();
+
   let mainTf = `# Main Terraform Configuration
 # Pattern: ${pattern}
-# Provider: ${provider.toUpperCase()}
+# Provider: ${p.toUpperCase()}
 #
 # This file ONLY references modules - no direct resource blocks allowed.
 # All cloud resources are defined in their respective modules.
 
-provider "${provider.toLowerCase()}" {
+`;
+
+  if (p === 'aws') {
+    mainTf += `provider "aws" {
   region = var.region
   # Make sure to configure credentials via environment variables or CLI
 }
 
 `;
+  } else if (p === 'gcp') {
+    mainTf += `provider "google" {
+  project = var.project_id
+  region  = var.region
+}
+
+`;
+  } else if (p === 'azure') {
+    mainTf += `terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "main" {
+  name     = "rg-\${var.project_name}"
+  location = var.location
+}
+
+`;
+  }
 
   // 1. Networking Module (Explicit or Implicit)
   // Check if networking is explicitly requested, else might need default
@@ -309,8 +342,19 @@ provider "${provider.toLowerCase()}" {
   source = "./modules/${service}"
 
   project_name = var.project_name
-  region       = var.region
-  
+`;
+
+      // 🔥 FIX: Provider-specific module variables
+      if (p === 'azure') {
+        mainTf += `  location            = var.location
+  resource_group_name = azurerm_resource_group.main.name
+`;
+      } else {
+        mainTf += `  region = var.region
+`;
+      }
+
+      mainTf += `  
   # Inject common dependencies if available
   # vpc_id = module.networking.vpc_id 
 }
@@ -635,14 +679,26 @@ async function generateTerraform(canonicalArchitecture, provider, region, projec
   let files = {};
   // Normalize services to ensure we have a list of strings (service IDs)
   // canonicalArchitecture.services can be an array of objects or strings
+  // 🔥 CRITICAL FIX: Strict Canonicalization & Deduplication
   const rawServices = canonicalArchitecture.services || [];
-  const services = rawServices.map(s => {
-    if (typeof s === 'string') return s;
-    if (typeof s === 'object' && s !== null) {
-      return s.name || s.canonical_type || s.id || 'unknown_service';
+  const uniqueServices = new Set();
+
+  rawServices.forEach(s => {
+    let serviceId = '';
+    if (typeof s === 'string') serviceId = s;
+    else if (typeof s === 'object' && s !== null) {
+      serviceId = s.canonical_type || s.name || s.id || '';
     }
-    return String(s);
+
+    if (serviceId) {
+      // Normalize: "relational_database" -> "relationaldatabase"
+      const cleanId = serviceId.toLowerCase().replace(/_/g, '');
+      uniqueServices.add(cleanId);
+    }
   });
+
+  const services = Array.from(uniqueServices);
+  console.log(`[TERRAFORM GEN] Normalized & Deduped Services: ${services.join(', ')}`);
 
   const pattern = canonicalArchitecture.pattern || 'custom';
 
@@ -998,6 +1054,228 @@ variable "monitoring_enabled" { type = bool }`,
           variables: ``,
           outputs: ``
         }
+    }
+  }
+
+
+
+  // 2. AZURE IMPLEMENTATIONS
+  if (provider === 'azure') {
+    switch (service) {
+      case 'computeserverless':
+        return {
+          main: `resource "random_id" "func_suffix" {
+  byte_length = 4
+}
+
+resource "azurerm_storage_account" "func_store" {
+  name                     = "stfunc\${var.project_name}\${random_id.func_suffix.hex}"
+  resource_group_name      = var.resource_group_name
+  location                 = var.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_service_plan" "func_plan" {
+  name                = "plan-\${var.project_name}-func"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  os_type             = "Linux"
+  sku_name            = "Y1" # Consumption
+}
+
+resource "azurerm_linux_function_app" "main" {
+  name                = "func-\${var.project_name}-\${random_id.func_suffix.hex}"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+
+  storage_account_name       = azurerm_storage_account.func_store.name
+  storage_account_access_key = azurerm_storage_account.func_store.primary_access_key
+  service_plan_id            = azurerm_service_plan.func_plan.id
+
+  site_config {
+    application_stack {
+      node_version = "18"
+    }
+  }
+
+  tags = { Project = var.project_name }
+}`,
+          variables: `variable "project_name" { type = string }
+variable "location" { type = string }
+variable "resource_group_name" { type = string }`,
+          outputs: `output "function_app_name" { value = azurerm_linux_function_app.main.name }`
+        };
+
+      case 'computecontainer':
+      case 'appcompute':
+        return {
+          main: `resource "azurerm_container_app_environment" "env" {
+  name                = "\${var.project_name}-env"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+}
+
+resource "azurerm_container_app" "app" {
+  name                         = "\${var.project_name}-app"
+  container_app_environment_id = azurerm_container_app_environment.env.id
+  resource_group_name          = var.resource_group_name
+  revision_mode                = "Single"
+
+  template {
+    container {
+      name   = "main"
+      image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+      cpu    = 0.5
+      memory = "1.0Gi"
+    }
+    min_replicas = 1
+  }
+  
+  ingress {
+    external_enabled = true
+    target_port      = 80
+    traffic_weight {
+      percentage = 100
+      latest_revision = true
+    }
+  }
+}`,
+          variables: `variable "project_name" { type = string }
+variable "location" { type = string }
+variable "resource_group_name" { type = string }`,
+          outputs: `output "app_fqdn" { value = azurerm_container_app.app.latest_revision_fqdn }`
+        };
+
+      case 'relationaldatabase':
+        return {
+          main: `resource "random_password" "pass" {
+  length           = 16
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
+}
+
+resource "azurerm_postgresql_flexible_server" "db" {
+  name                   = "psql-\${var.project_name}"
+  resource_group_name    = var.resource_group_name
+  location               = var.location
+  version                = "13"
+  administrator_login    = "psqladmin"
+  administrator_password = random_password.pass.result
+  storage_mb             = 32768
+  storage_tier           = "P4"
+  sku_name               = "B_Standard_B1ms"
+}
+
+resource "azurerm_postgresql_flexible_server_database" "default" {
+  name      = "defaultdb"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  collation = "en_US.utf8"
+  charset   = "utf8"
+}`,
+          variables: `variable "project_name" { type = string }
+variable "location" { type = string }
+variable "resource_group_name" { type = string }`,
+          outputs: `output "db_server" { value = azurerm_postgresql_flexible_server.db.name }`
+        };
+
+      case 'objectstorage':
+        return {
+          main: `resource "random_id" "st_suffix" {
+  byte_length = 4
+}
+resource "azurerm_storage_account" "sa" {
+  name                     = "st\${var.project_name}\${random_id.st_suffix.hex}"
+  resource_group_name      = var.resource_group_name
+  location                 = var.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+resource "azurerm_storage_container" "data" {
+  name                  = "data"
+  storage_account_name  = azurerm_storage_account.sa.name
+  container_access_type = "private"
+}`,
+          variables: `variable "project_name" { type = string }
+variable "location" { type = string }
+variable "resource_group_name" { type = string }
+variable "encryption_at_rest" { type = bool default = true }`,
+          outputs: `output "storage_account_name" { value = azurerm_storage_account.sa.name }`
+        };
+
+      case 'apigateway':
+        return {
+          main: `resource "azurerm_api_management" "apim" {
+  name                = "apim-\${var.project_name}-\${random_id.st_suffix.hex}"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  publisher_name      = "Cloudiverse"
+  publisher_email     = "admin@cloudiverse.io"
+  sku_name            = "Consumption_0"
+}
+`,
+          variables: `variable "project_name" { type = string }
+variable "location" { type = string }
+variable "resource_group_name" { type = string }`,
+          outputs: `output "gateway_url" { value = azurerm_api_management.apim.gateway_url }`
+        };
+
+      case 'loadbalancer':
+        return {
+          main: `resource "azurerm_public_ip" "lb_ip" {
+  name                = "lb-ip-\${var.project_name}"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+resource "azurerm_lb" "main" {
+  name                = "lb-\${var.project_name}"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  sku                 = "Standard"
+
+  frontend_ip_configuration {
+    name                 = "PublicIPAddress"
+    public_ip_address_id = azurerm_public_ip.lb_ip.id
+  }
+}
+`,
+          variables: `variable "project_name" { type = string }
+variable "location" { type = string }
+variable "resource_group_name" { type = string }`,
+          outputs: `output "lb_ip" { value = azurerm_public_ip.lb_ip.ip_address }`
+        };
+
+      case 'logging':
+      case 'auditlogging':
+        return {
+          main: `resource "azurerm_log_analytics_workspace" "main" {
+  name                = "log-\${var.project_name}"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+}`,
+          variables: `variable "project_name" { type = string }
+variable "location" { type = string }
+variable "resource_group_name" { type = string }`,
+          outputs: `output "log_workspace_id" { value = azurerm_log_analytics_workspace.main.id }`
+        };
+
+      case 'identityauth':
+        return {
+          main: `resource "azurerm_user_assigned_identity" "auth" {
+  location            = var.location
+  name                = "id-\${var.project_name}"
+  resource_group_name = var.resource_group_name
+}`,
+          variables: `variable "project_name" { type = string }
+variable "location" { type = string }
+variable "resource_group_name" { type = string }`,
+          outputs: `output "identity_id" { value = azurerm_user_assigned_identity.auth.id }`
+        };
     }
   }
 

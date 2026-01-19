@@ -1,0 +1,4352 @@
+{
+    "_meta": {
+        "description": "Cloudiverse Domain Strategies (Domain-driven questioning + defaults + add-ons). Defaults are auto-applied into workspace axes and therefore MUST NOT be asked again. Add-ons are only shown if their trigger conditions indicate they are missing/unknown.",
+        "version": "1.0.0",
+        "last_updated": "2026-01-16",
+        "axis_key_convention": "snake_case (matches workflow axes like backup_retention_days, primary_region_hint)."
+    },
+    "shared": {
+        "global_critical_axes": [
+            {
+                "axis_key": "backup_retention_days",
+                "priority": 95,
+                "ui": {
+                    "type": "number",
+                    "min": 1,
+                    "max": 3650,
+                    "step": 1,
+                    "placeholder": "e.g., 30"
+                },
+                "question": "How long do you need to keep backups (days)?",
+                "why": "Backup retention impacts cost, recovery, and compliance."
+            },
+            {
+                "axis_key": "primary_region_hint",
+                "priority": 90,
+                "ui": {
+                    "type": "text",
+                    "placeholder": "e.g., India, US-East, Europe"
+                },
+                "question": "Where are most of your end users located, or which region do you prefer?",
+                "why": "Region affects latency and cost."
+            },
+            {
+                "axis_key": "regulatory_compliance",
+                "priority": 85,
+                "ui": {
+                    "type": "multiselect",
+                    "options": [
+                        "none",
+                        "gdpr",
+                        "hipaa",
+                        "pci_dss",
+                        "soc2",
+                        "iso27001"
+                    ]
+                },
+                "question": "Do you need to comply with any specific regulations?",
+                "why": "Compliance changes security posture, audit logging, and retention."
+            }
+        ],
+        "default_baseline_axes": {
+            "allowed_providers": [
+                "aws",
+                "azure",
+                "gcp"
+            ],
+            "ops_model": "managed_services_pref",
+            "managed_db_preference": "prefer_managed",
+            "observability_level": "standard",
+            "availability_target": "99.9",
+            "recovery_time_objective": "1_hour",
+            "recovery_point_objective": "4_hours",
+            "multi_region_required": false,
+            "data_residency_required": false,
+            "data_sensitivity": "low"
+        },
+        "addon_trigger_rules": {
+            "semantics": "A trigger matches if current workspace axes meet ALL conditions. A condition value can be a single value or an array of acceptable values.",
+            "missing_values": [
+                "unknown",
+                null,
+                false,
+                ""
+            ]
+        }
+    },
+    "strategies": {
+        "static_content": {
+            "label": "Static & Content Platforms",
+            "description": "Portfolio, marketing sites, blogs, docs, CMS sites, news portals.",
+            "pattern_hints": [
+                "STATICSITE",
+                "SERVERLESSWEBAPP"
+            ],
+            "subdomains": {
+                "portfolio_personal": {
+                    "label": "Portfolio / Personal Site",
+                    "defaults_override": {
+                        "static_content": true,
+                        "api_backend": false,
+                        "user_authentication": false,
+                        "payments": false,
+                        "search": false,
+                        "traffic_pattern": "steady",
+                        "performance_sensitivity": "medium"
+                    }
+                },
+                "marketing_landing": {
+                    "label": "Marketing / Landing Pages",
+                    "defaults_override": {
+                        "static_content": true,
+                        "api_backend": false,
+                        "user_authentication": false,
+                        "payments": false,
+                        "search": false,
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "blog": {
+                    "label": "Blog",
+                    "defaults_override": {
+                        "static_content": true,
+                        "api_backend": false,
+                        "search": true,
+                        "traffic_pattern": "steady"
+                    }
+                },
+                "documentation_portal": {
+                    "label": "Documentation Portal",
+                    "defaults_override": {
+                        "static_content": true,
+                        "api_backend": false,
+                        "search": true,
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "news_magazine": {
+                    "label": "News / Magazine Site",
+                    "defaults_override": {
+                        "static_content": true,
+                        "api_backend": true,
+                        "search": true,
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "knowledge_base": {
+                    "label": "Knowledge Base",
+                    "defaults_override": {
+                        "static_content": true,
+                        "api_backend": true,
+                        "search": true,
+                        "user_authentication": "unknown"
+                    }
+                },
+                "cms_backed_site": {
+                    "label": "CMS-backed Website",
+                    "defaults_override": {
+                        "static_content": false,
+                        "api_backend": true,
+                        "file_storage": true,
+                        "search": "unknown",
+                        "user_authentication": "unknown"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "primary_region_hint",
+                    "priority": 100,
+                    "question": "Where are most of your visitors located?",
+                    "ui": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "axis_key": "traffic_pattern",
+                    "priority": 90,
+                    "question": "Is traffic steady or spiky (campaigns, launches)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "steady",
+                            "spiky",
+                            "seasonal",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "search",
+                    "priority": 70,
+                    "question": "Do you need search across articles/docs/pages?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "user_authentication",
+                    "priority": 60,
+                    "question": "Do you need logins (members-only content)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                }
+            ],
+            "defaults": {
+                "static_content": true,
+                "api_backend": false,
+                "realtime_updates": false,
+                "messaging_queue": false,
+                "scheduled_jobs": false,
+                "payments": false,
+                "billing_subscription": false,
+                "file_storage": true,
+                "performance_sensitivity": "medium",
+                "observability_level": "basic"
+            },
+            "addons": [
+                {
+                    "id": "custom_domain_ssl",
+                    "label": "Custom domain + SSL",
+                    "description": "Add DNS + TLS/HTTPS setup for a production domain.",
+                    "priority": 90,
+                    "trigger_when": {
+                        "static_content": [
+                            true
+                        ]
+                    },
+                    "apply_axes": {
+                        "security_posture": "standard"
+                    }
+                },
+                {
+                    "id": "site_analytics",
+                    "label": "Analytics integration",
+                    "description": "Traffic analytics and conversion tracking.",
+                    "priority": 60,
+                    "trigger_when": {
+                        "third_party_integrations": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "third_party_integrations": true
+                    }
+                },
+                {
+                    "id": "contact_forms",
+                    "label": "Form handling",
+                    "description": "Contact forms or newsletter signup processing.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "api_backend": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "api_backend": true,
+                        "scheduled_jobs": true
+                    }
+                }
+            ]
+        },
+        "saas_web_app": {
+            "label": "SaaS Web Applications",
+            "description": "CRMs, dashboards, HR tools, subscription software, internal tools.",
+            "pattern_hints": [
+                "CONTAINERIZEDWEBAPP",
+                "STATEFULWEBPLATFORM",
+                "SERVERLESSWEBAPP"
+            ],
+            "subdomains": {
+                "project_management": {
+                    "label": "Project management tool"
+                },
+                "crm": {
+                    "label": "CRM system"
+                },
+                "subscription_product": {
+                    "label": "Subscription-based product"
+                },
+                "internal_dashboard": {
+                    "label": "Internal business dashboard",
+                    "defaults_override": {
+                        "user_facing": false
+                    }
+                },
+                "hr_payroll": {
+                    "label": "HR / Payroll tool",
+                    "defaults_override": {
+                        "data_sensitivity": "high",
+                        "security_posture": "high"
+                    }
+                },
+                "support_ticket_system": {
+                    "label": "Support ticket system"
+                },
+                "form_builder": {
+                    "label": "Form builder"
+                },
+                "scheduling_system": {
+                    "label": "Scheduling system"
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "multi_tenancy",
+                    "priority": 100,
+                    "question": "Is it multi-tenant (multiple companies/orgs using the same app)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "user_authentication",
+                    "priority": 95,
+                    "question": "Do users need to sign in?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "authorization_complexity",
+                    "priority": 90,
+                    "question": "How complex are permissions (roles vs fine-grained policies)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "simple_roles",
+                            "rbac",
+                            "abac"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "primary_data_model",
+                    "priority": 85,
+                    "question": "Primary data model (SQL relational, document, etc.)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "relational",
+                            "document",
+                            "key_value",
+                            "graph",
+                            "none",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "billing_subscription",
+                    "priority": 80,
+                    "question": "Do you need subscriptions/usage-based billing?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "data_sensitivity",
+                    "priority": 70,
+                    "question": "What level of sensitive data is stored?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high"
+                        ]
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "file_storage": "unknown",
+                "search": "unknown",
+                "payments": false,
+                "realtime_updates": false,
+                "traffic_pattern": "steady",
+                "performance_sensitivity": "medium",
+                "backup_retention_days": 30,
+                "authentication_strength": "standard",
+                "security_posture": "standard"
+            },
+            "addons": [
+                {
+                    "id": "admin_dashboard",
+                    "label": "Admin dashboard / backoffice",
+                    "description": "Operations panel for support staff to manage users, plans, and data.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "admin_dashboard": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "admin_dashboard": true
+                    }
+                },
+                {
+                    "id": "in_app_search",
+                    "label": "In-app search",
+                    "description": "Search across records (customers, tickets, projects, etc.).",
+                    "priority": 70,
+                    "trigger_when": {
+                        "search": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "search": true
+                    }
+                },
+                {
+                    "id": "enterprise_sso",
+                    "label": "Enterprise SSO (SAML/OIDC)",
+                    "description": "Add stronger authentication posture for enterprise customers.",
+                    "priority": 60,
+                    "trigger_when": {
+                        "authentication_strength": [
+                            "basic",
+                            "standard"
+                        ],
+                        "multi_tenancy": [
+                            true
+                        ]
+                    },
+                    "apply_axes": {
+                        "authentication_strength": "strong",
+                        "security_posture": "high"
+                    }
+                }
+            ]
+        },
+        "ecommerce_marketplace": {
+            "label": "E-Commerce & Marketplaces",
+            "description": "Online stores, booking systems, multi-vendor platforms, ticketing.",
+            "pattern_hints": [
+                "ECOMMERCEBACKEND",
+                "CONTAINERIZEDWEBAPP",
+                "SERVERLESSWEBAPP"
+            ],
+            "subdomains": {
+                "online_store": {
+                    "label": "Online store"
+                },
+                "digital_products": {
+                    "label": "Digital product store",
+                    "defaults_override": {
+                        "file_storage": true
+                    }
+                },
+                "multi_vendor": {
+                    "label": "Multi-vendor marketplace",
+                    "defaults_override": {
+                        "multi_tenancy": true
+                    }
+                },
+                "booking_reservations": {
+                    "label": "Booking & reservation system",
+                    "defaults_override": {
+                        "scheduled_jobs": true,
+                        "traffic_pattern": "spiky"
+                    }
+                },
+                "food_delivery": {
+                    "label": "Food delivery platform",
+                    "defaults_override": {
+                        "realtime_updates": true,
+                        "traffic_pattern": "spiky"
+                    }
+                },
+                "event_ticketing": {
+                    "label": "Event ticketing",
+                    "defaults_override": {
+                        "traffic_pattern": "spiky"
+                    }
+                },
+                "subscription_commerce": {
+                    "label": "Subscription commerce",
+                    "defaults_override": {
+                        "billing_subscription": true
+                    }
+                },
+                "pos_integrated": {
+                    "label": "POS-integrated commerce",
+                    "defaults_override": {
+                        "third_party_integrations": true,
+                        "data_sensitivity": "medium"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "payments",
+                    "priority": 100,
+                    "question": "Do you need to accept payments?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "regulatory_compliance",
+                    "priority": 95,
+                    "question": "Any compliance requirements (PCI, GDPR, etc.)?",
+                    "ui": {
+                        "type": "multiselect",
+                        "options": [
+                            "none",
+                            "gdpr",
+                            "pci_dss",
+                            "soc2",
+                            "iso27001"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "search",
+                    "priority": 85,
+                    "question": "Do you need product search/filtering?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "traffic_pattern",
+                    "priority": 80,
+                    "question": "Is traffic spiky (sales/events) or steady?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "steady",
+                            "spiky",
+                            "seasonal",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "primary_data_model",
+                    "priority": 70,
+                    "question": "Primary database model (most commerce is relational/SQL).",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "relational",
+                            "document",
+                            "unknown"
+                        ]
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "user_authentication": true,
+                "primary_data_model": "relational",
+                "file_storage": true,
+                "search": true,
+                "performance_sensitivity": "high",
+                "backup_retention_days": 30,
+                "security_posture": "standard"
+            },
+            "addons": [
+                {
+                    "id": "pci_hardening",
+                    "label": "Payments hardening (PCI posture)",
+                    "description": "Stronger security posture for payment flows.",
+                    "priority": 90,
+                    "trigger_when": {
+                        "payments": [
+                            true
+                        ],
+                        "security_posture": [
+                            "basic",
+                            "standard"
+                        ]
+                    },
+                    "apply_axes": {
+                        "security_posture": "high",
+                        "authentication_strength": "strong",
+                        "regulatory_compliance": [
+                            "pci_dss"
+                        ]
+                    }
+                },
+                {
+                    "id": "order_notifications",
+                    "label": "Order notifications (email/SMS)",
+                    "description": "Transactional updates for orders, shipping, OTP, etc.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "third_party_integrations": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "third_party_integrations": true
+                    }
+                },
+                {
+                    "id": "background_jobs",
+                    "label": "Background processing (queues/workers)",
+                    "description": "For emails, invoices, webhooks, async processing.",
+                    "priority": 60,
+                    "trigger_when": {
+                        "messaging_queue": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "messaging_queue": true,
+                        "scheduled_jobs": true
+                    }
+                }
+            ]
+        },
+        "api_backend": {
+            "label": "API-Only & Backend Platforms",
+            "description": "Mobile app backends, public APIs, microservices, webhook services.",
+            "pattern_hints": [
+                "SERVERLESSAPI",
+                "EVENTDRIVENPLATFORM",
+                "CONTAINERIZEDWEBAPP"
+            ],
+            "subdomains": {
+                "mobile_backend": {
+                    "label": "Mobile app backend",
+                    "defaults_override": {
+                        "mobile_clients": true
+                    }
+                },
+                "public_developer_api": {
+                    "label": "Public developer API",
+                    "defaults_override": {
+                        "public_api": true,
+                        "security_posture": "standard"
+                    }
+                },
+                "partner_integration_api": {
+                    "label": "Partner integration API",
+                    "defaults_override": {
+                        "third_party_integrations": true
+                    }
+                },
+                "microservices_backend": {
+                    "label": "Microservice backend",
+                    "defaults_override": {
+                        "messaging_queue": "unknown",
+                        "third_party_integrations": "unknown"
+                    }
+                },
+                "bff": {
+                    "label": "Backend-for-Frontend (BFF)",
+                    "defaults_override": {
+                        "public_api": false
+                    }
+                },
+                "webhook_processor": {
+                    "label": "Webhook processing service",
+                    "defaults_override": {
+                        "messaging_queue": true,
+                        "scheduled_jobs": true,
+                        "traffic_pattern": "spiky"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "public_api",
+                    "priority": 95,
+                    "question": "Is this a public API exposed to third-party developers?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "user_authentication",
+                    "priority": 90,
+                    "question": "Do callers need authentication/authorization?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "peak_rps",
+                    "priority": 85,
+                    "question": "Expected peak request rate (RPS)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "messaging_queue",
+                    "priority": 80,
+                    "question": "Do you need queues/workers for async tasks?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "primary_data_model",
+                    "priority": 75,
+                    "question": "Primary data model?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "relational",
+                            "document",
+                            "key_value",
+                            "none",
+                            "unknown"
+                        ]
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": false,
+                "static_content": false,
+                "api_backend": true,
+                "realtime_updates": false,
+                "file_storage": false,
+                "search": false,
+                "payments": false,
+                "traffic_pattern": "spiky",
+                "performance_sensitivity": "medium",
+                "observability_level": "standard"
+            },
+            "addons": [
+                {
+                    "id": "rate_limit_security",
+                    "label": "API protection (rate limits + WAF posture)",
+                    "description": "Harden the public API against abuse and bots.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "public_api": [
+                            true
+                        ],
+                        "security_posture": [
+                            "basic",
+                            "standard"
+                        ]
+                    },
+                    "apply_axes": {
+                        "security_posture": "high"
+                    }
+                },
+                {
+                    "id": "webhook_delivery",
+                    "label": "Webhook delivery system",
+                    "description": "Retries + async delivery require queues/workers.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "third_party_integrations": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "third_party_integrations": true,
+                        "messaging_queue": true
+                    }
+                }
+            ]
+        },
+        "media_streaming": {
+            "label": "Media & Streaming Platforms",
+            "description": "Video platforms, audio/podcast hosting, file sharing, live streaming, LMS media delivery.",
+            "pattern_hints": [
+                "SERVERLESSWEBAPP",
+                "CONTAINERIZEDWEBAPP"
+            ],
+            "subdomains": {
+                "video_streaming": {
+                    "label": "Video streaming platform",
+                    "defaults_override": {
+                        "file_storage": true,
+                        "data_volume": "high",
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "audio_podcast": {
+                    "label": "Audio / podcast hosting",
+                    "defaults_override": {
+                        "file_storage": true,
+                        "data_volume": "medium",
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "image_hosting": {
+                    "label": "Image hosting",
+                    "defaults_override": {
+                        "file_storage": true,
+                        "data_volume": "high",
+                        "traffic_pattern": "spiky"
+                    }
+                },
+                "file_sharing": {
+                    "label": "File sharing",
+                    "defaults_override": {
+                        "file_storage": true,
+                        "user_authentication": true,
+                        "data_sensitivity": "medium"
+                    }
+                },
+                "live_streaming": {
+                    "label": "Live streaming",
+                    "defaults_override": {
+                        "realtime_updates": true,
+                        "performance_sensitivity": "high",
+                        "traffic_pattern": "spiky"
+                    }
+                },
+                "video_conferencing": {
+                    "label": "Video conferencing",
+                    "defaults_override": {
+                        "realtime_updates": true,
+                        "latency_tier": "high",
+                        "peak_concurrency": "high"
+                    }
+                },
+                "lms_media_delivery": {
+                    "label": "LMS video delivery",
+                    "defaults_override": {
+                        "file_storage": true,
+                        "user_authentication": true,
+                        "traffic_pattern": "seasonal"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "file_storage",
+                    "priority": 100,
+                    "question": "Do you need to store and serve media files (uploads)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "data_volume",
+                    "priority": 90,
+                    "question": "Expected media storage size?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "traffic_pattern",
+                    "priority": 85,
+                    "question": "Traffic pattern (steady vs spiky)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "steady",
+                            "spiky",
+                            "seasonal",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "performance_sensitivity",
+                    "priority": 80,
+                    "question": "How latency/performance-sensitive is media delivery?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "realtime_updates",
+                    "priority": 70,
+                    "question": "Do you need realtime/live features (live streaming, conferencing)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "file_storage": true,
+                "search": false,
+                "payments": false,
+                "performance_sensitivity": "high",
+                "observability_level": "standard"
+            },
+            "addons": [
+                {
+                    "id": "content_protection",
+                    "label": "Content protection (signed URLs / access control)",
+                    "description": "Restrict access to private media with auth-based delivery.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "user_authentication": [
+                            "unknown",
+                            false,
+                            null
+                        ],
+                        "file_storage": [
+                            true
+                        ]
+                    },
+                    "apply_axes": {
+                        "user_authentication": true,
+                        "security_posture": "standard"
+                    }
+                },
+                {
+                    "id": "transcoding_pipeline",
+                    "label": "Transcoding / processing pipeline",
+                    "description": "Async media processing (thumbnails, transcoding) requires queues/jobs.",
+                    "priority": 75,
+                    "trigger_when": {
+                        "messaging_queue": [
+                            "unknown",
+                            false,
+                            null
+                        ],
+                        "file_storage": [
+                            true
+                        ]
+                    },
+                    "apply_axes": {
+                        "messaging_queue": true,
+                        "scheduled_jobs": true
+                    }
+                },
+                {
+                    "id": "monetization",
+                    "label": "Monetization (subscriptions/payments)",
+                    "description": "Enable paid plans or pay-per-view access.",
+                    "priority": 60,
+                    "trigger_when": {
+                        "payments": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "payments": true,
+                        "billing_subscription": true
+                    }
+                }
+            ]
+        },
+        "realtime_collaboration": {
+            "label": "Realtime & Collaboration Products",
+            "description": "Chat apps, collaborative editors, multiplayer games, live dashboards (product experience depends on realtime interaction).",
+            "pattern_hints": [
+                "REALTIMEAPP",
+                "WEBSOCKETPLATFORM",
+                "EVENTDRIVENPLATFORM",
+                "LOWLATENCYBACKEND"
+            ],
+            "subdomains": {
+                "chat_app": {
+                    "label": "Chat application",
+                    "defaults_override": {
+                        "realtime_updates": true,
+                        "messaging_queue": "unknown",
+                        "user_authentication": true,
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "collaborative_editor": {
+                    "label": "Collaborative editor (docs/whiteboard)",
+                    "defaults_override": {
+                        "realtime_updates": true,
+                        "conflict_resolution": "unknown",
+                        "user_authentication": true,
+                        "file_storage": true,
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "multiplayer_game_backend": {
+                    "label": "Multiplayer game backend",
+                    "defaults_override": {
+                        "realtime_updates": true,
+                        "latency_tier": "high",
+                        "peak_concurrency": "unknown",
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "live_dashboard": {
+                    "label": "Live dashboard (realtime monitoring/ops)",
+                    "defaults_override": {
+                        "realtime_updates": true,
+                        "user_authentication": true,
+                        "observability_level": "standard",
+                        "traffic_pattern": "steady",
+                        "performance_sensitivity": "high"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "realtime_transport",
+                    "priority": 100,
+                    "question": "Which realtime transport do you need (websockets, sse, pubsub)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "websockets",
+                            "sse",
+                            "pubsub",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "peak_concurrency",
+                    "priority": 95,
+                    "question": "Expected peak concurrent connections?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "latency_tier",
+                    "priority": 90,
+                    "question": "How latency-sensitive is the product?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "message_ordering_required",
+                    "priority": 80,
+                    "question": "Do you need strict message ordering/delivery guarantees?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "user_authentication",
+                    "priority": 75,
+                    "question": "Do users need to sign in?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "realtime_updates": true,
+                "messaging_queue": "unknown",
+                "file_storage": false,
+                "search": false,
+                "payments": false,
+                "traffic_pattern": "spiky",
+                "performance_sensitivity": "high",
+                "observability_level": "standard",
+                "security_posture": "standard",
+                "backup_retention_days": 14
+            },
+            "addons": [
+                {
+                    "id": "presence_typing",
+                    "label": "Presence + typing indicators",
+                    "description": "User presence, typing events, online/offline state propagation.",
+                    "priority": 75,
+                    "trigger_when": {
+                        "realtime_presence": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "realtime_presence": true
+                    }
+                },
+                {
+                    "id": "realtime_delivery_guarantees",
+                    "label": "Delivery guarantees (retries + dead-lettering)",
+                    "description": "Add queueing/retry semantics for event delivery and fan-out.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "messaging_queue": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "messaging_queue": true,
+                        "scheduled_jobs": true
+                    }
+                },
+                {
+                    "id": "abuse_protection_realtime",
+                    "label": "Abuse protection (rate limits + WAF posture)",
+                    "description": "Mitigate connection floods, spam, and bot abuse.",
+                    "priority": 65,
+                    "trigger_when": {
+                        "security_posture": [
+                            "basic",
+                            "standard"
+                        ]
+                    },
+                    "apply_axes": {
+                        "security_posture": "high"
+                    }
+                }
+            ]
+        },
+        "mobile_first_platforms": {
+            "label": "Mobile-First Platforms",
+            "description": "Consumer apps, ride-sharing, fitness apps, social mobile apps (primary interface is mobile).",
+            "pattern_hints": [
+                "MOBILEBACKEND",
+                "SERVERLESSAPI",
+                "EVENTDRIVENPLATFORM",
+                "BFF"
+            ],
+            "subdomains": {
+                "consumer_social_app": {
+                    "label": "Consumer social app",
+                    "defaults_override": {
+                        "mobile_clients": true,
+                        "user_authentication": true,
+                        "realtime_updates": "unknown",
+                        "file_storage": true,
+                        "traffic_pattern": "spiky"
+                    }
+                },
+                "ride_sharing": {
+                    "label": "Ride-sharing / mobility",
+                    "defaults_override": {
+                        "mobile_clients": true,
+                        "realtime_updates": true,
+                        "geolocation_features": true,
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "fitness_health_app": {
+                    "label": "Fitness app",
+                    "defaults_override": {
+                        "mobile_clients": true,
+                        "scheduled_jobs": true,
+                        "third_party_integrations": "unknown",
+                        "data_sensitivity": "medium",
+                        "traffic_pattern": "steady"
+                    }
+                },
+                "mobile_commerce_app": {
+                    "label": "Mobile commerce companion",
+                    "defaults_override": {
+                        "mobile_clients": true,
+                        "user_authentication": true,
+                        "payments": "unknown",
+                        "file_storage": true,
+                        "performance_sensitivity": "high"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "mobile_clients",
+                    "priority": 100,
+                    "question": "Are mobile apps the primary clients (iOS/Android)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "push_notifications",
+                    "priority": 95,
+                    "question": "Do you need push notifications (FCM/APNs)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "offline_mode_required",
+                    "priority": 90,
+                    "question": "Do you need offline mode with sync/conflict handling?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "geolocation_features",
+                    "priority": 85,
+                    "question": "Do you need location tracking/geofencing features?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "user_authentication",
+                    "priority": 80,
+                    "question": "Do users need to sign in?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "mobile_clients": true,
+                "public_api": false,
+                "realtime_updates": false,
+                "messaging_queue": "unknown",
+                "file_storage": "unknown",
+                "search": "unknown",
+                "payments": false,
+                "traffic_pattern": "spiky",
+                "performance_sensitivity": "medium",
+                "observability_level": "standard",
+                "security_posture": "standard",
+                "backup_retention_days": 30
+            },
+            "addons": [
+                {
+                    "id": "push_notifications",
+                    "label": "Push notifications",
+                    "description": "Device tokens, segmentation, delivery retries, and notification templates.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "push_notifications": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "push_notifications": true,
+                        "third_party_integrations": true
+                    }
+                },
+                {
+                    "id": "offline_sync",
+                    "label": "Offline sync + conflict resolution",
+                    "description": "Sync engine for intermittent connectivity and conflict handling.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "offline_mode_required": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "offline_mode_required": true,
+                        "conflict_resolution": "unknown"
+                    }
+                },
+                {
+                    "id": "mobile_analytics",
+                    "label": "Mobile analytics + crash reporting",
+                    "description": "Event tracking, funnels, cohorts, and crash diagnostics.",
+                    "priority": 65,
+                    "trigger_when": {
+                        "third_party_integrations": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "third_party_integrations": true
+                    }
+                }
+            ]
+        },
+        "data_analytics_platforms": {
+            "label": "Data & Analytics Platforms",
+            "description": "BI dashboards, event tracking, data lakes, ETL, analytics SaaS.",
+            "pattern_hints": [
+                "DATAPIPELINE",
+                "DATALAKEPLATFORM",
+                "DATAWAREHOUSE",
+                "EVENTINGESTION"
+            ],
+            "subdomains": {
+                "bi_dashboard": {
+                    "label": "BI dashboards",
+                    "defaults_override": {
+                        "user_authentication": true,
+                        "query_latency_tier": "medium",
+                        "traffic_pattern": "steady",
+                        "performance_sensitivity": "medium"
+                    }
+                },
+                "event_tracking": {
+                    "label": "Event tracking (product analytics)",
+                    "defaults_override": {
+                        "event_ingestion": true,
+                        "traffic_pattern": "spiky",
+                        "data_volume": "high",
+                        "messaging_queue": true
+                    }
+                },
+                "data_lake": {
+                    "label": "Data lake / lakehouse",
+                    "defaults_override": {
+                        "file_storage": true,
+                        "data_volume": "high",
+                        "data_residency_required": "unknown",
+                        "observability_level": "standard"
+                    }
+                },
+                "etl_elt_platform": {
+                    "label": "ETL/ELT platform",
+                    "defaults_override": {
+                        "scheduled_jobs": true,
+                        "messaging_queue": "unknown",
+                        "third_party_integrations": true,
+                        "data_sensitivity": "medium"
+                    }
+                },
+                "analytics_saas": {
+                    "label": "Analytics SaaS",
+                    "defaults_override": {
+                        "multi_tenancy": true,
+                        "user_authentication": true,
+                        "authorization_complexity": "rbac",
+                        "backup_retention_days": 30
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "data_volume",
+                    "priority": 100,
+                    "question": "Expected data volume (storage size)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "batch_vs_streaming",
+                    "priority": 95,
+                    "question": "Is ingestion primarily batch or streaming?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "batch",
+                            "streaming",
+                            "hybrid",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "query_latency_tier",
+                    "priority": 90,
+                    "question": "Desired query latency tier?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "data_retention_days",
+                    "priority": 85,
+                    "question": "How long do you need to retain analytics data (days)?",
+                    "ui": {
+                        "type": "number",
+                        "min": 1,
+                        "max": 36500,
+                        "step": 1,
+                        "placeholder": "e.g., 365"
+                    }
+                },
+                {
+                    "axis_key": "multi_tenancy",
+                    "priority": 80,
+                    "question": "Is it multi-tenant (multiple orgs/customers)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "event_ingestion": "unknown",
+                "batch_vs_streaming": "hybrid",
+                "data_volume": "unknown",
+                "file_storage": true,
+                "messaging_queue": "unknown",
+                "scheduled_jobs": true,
+                "search": false,
+                "payments": false,
+                "traffic_pattern": "steady",
+                "performance_sensitivity": "medium",
+                "observability_level": "standard",
+                "security_posture": "standard",
+                "data_sensitivity": "medium",
+                "data_retention_days": 365
+            },
+            "addons": [
+                {
+                    "id": "streaming_ingestion",
+                    "label": "Streaming ingestion (pub/sub + stream processing)",
+                    "description": "Real-time ingestion and processing with durable buffers.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "batch_vs_streaming": [
+                            "streaming",
+                            "hybrid"
+                        ],
+                        "messaging_queue": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "messaging_queue": true
+                    }
+                },
+                {
+                    "id": "data_warehouse",
+                    "label": "Data warehouse / semantic layer",
+                    "description": "Curated models and faster BI query patterns.",
+                    "priority": 75,
+                    "trigger_when": {
+                        "data_warehouse_required": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "data_warehouse_required": true
+                    }
+                },
+                {
+                    "id": "governance_audit",
+                    "label": "Data governance + audit logging",
+                    "description": "Lineage, access auditing, and stronger governance posture.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "security_posture": [
+                            "basic",
+                            "standard"
+                        ]
+                    },
+                    "apply_axes": {
+                        "security_posture": "high"
+                    }
+                }
+            ]
+        },
+        "ai_ml_products": {
+            "label": "AI / ML Products",
+            "description": "AI chat apps, model inference APIs, recommendation systems, AI automation tools.",
+            "pattern_hints": [
+                "MODELINFERENCEAPI",
+                "MLOPSPLATFORM",
+                "EVENTDRIVENPLATFORM",
+                "VECTORSEARCH"
+            ],
+            "subdomains": {
+                "ai_chat_app": {
+                    "label": "AI chat application",
+                    "defaults_override": {
+                        "user_authentication": "unknown",
+                        "model_inference": true,
+                        "vector_search": true,
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "model_inference_api": {
+                    "label": "Model inference API",
+                    "defaults_override": {
+                        "public_api": true,
+                        "model_inference": true,
+                        "rate_limits_required": true,
+                        "security_posture": "standard",
+                        "traffic_pattern": "spiky"
+                    }
+                },
+                "recommendation_system": {
+                    "label": "Recommendation system",
+                    "defaults_override": {
+                        "model_inference": true,
+                        "batch_vs_streaming": "hybrid",
+                        "data_volume": "high",
+                        "messaging_queue": true
+                    }
+                },
+                "ai_automation_tool": {
+                    "label": "AI automation (agents/workflows)",
+                    "defaults_override": {
+                        "scheduled_jobs": true,
+                        "third_party_integrations": true,
+                        "messaging_queue": "unknown",
+                        "observability_level": "standard"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "model_inference",
+                    "priority": 100,
+                    "question": "Will this run model inference in production?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "gpu_required",
+                    "priority": 95,
+                    "question": "Do you require GPUs for serving/training?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "vector_search",
+                    "priority": 90,
+                    "question": "Do you need vector search/embeddings retrieval?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "data_privacy_level",
+                    "priority": 85,
+                    "question": "Data privacy level for prompts/documents?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "public_api",
+                    "priority": 80,
+                    "question": "Is this exposed as a public API to third parties?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "model_inference": true,
+                "gpu_required": "unknown",
+                "vector_search": "unknown",
+                "file_storage": "unknown",
+                "messaging_queue": "unknown",
+                "scheduled_jobs": "unknown",
+                "search": false,
+                "payments": false,
+                "traffic_pattern": "spiky",
+                "performance_sensitivity": "high",
+                "observability_level": "standard",
+                "security_posture": "standard",
+                "data_sensitivity": "medium",
+                "backup_retention_days": 30
+            },
+            "addons": [
+                {
+                    "id": "vector_database",
+                    "label": "Vector database / embeddings store",
+                    "description": "Enable retrieval-augmented generation and similarity search.",
+                    "priority": 85,
+                    "trigger_when": {
+                        "vector_search": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "vector_search": true,
+                        "file_storage": true
+                    }
+                },
+                {
+                    "id": "model_monitoring",
+                    "label": "Model monitoring + feedback loops",
+                    "description": "Track latency, token usage, quality metrics, and drift signals.",
+                    "priority": 75,
+                    "trigger_when": {
+                        "model_monitoring": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "model_monitoring": true,
+                        "observability_level": "high"
+                    }
+                },
+                {
+                    "id": "safety_guardrails",
+                    "label": "Safety guardrails (moderation + policy enforcement)",
+                    "description": "Prompt/response filtering and policy checks.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "security_posture": [
+                            "basic",
+                            "standard"
+                        ]
+                    },
+                    "apply_axes": {
+                        "security_posture": "high"
+                    }
+                }
+            ]
+        },
+        "iot_device_platforms": {
+            "label": "IoT & Device Platforms",
+            "description": "Smart home systems, fleet tracking, sensor ingestion, edge computing.",
+            "pattern_hints": [
+                "IOTINGESTION",
+                "DEVICEPLATFORM",
+                "EVENTDRIVENPLATFORM",
+                "EDGE_COMPUTE"
+            ],
+            "subdomains": {
+                "smart_home": {
+                    "label": "Smart home platform",
+                    "defaults_override": {
+                        "device_count": "unknown",
+                        "realtime_updates": true,
+                        "user_authentication": true,
+                        "traffic_pattern": "steady",
+                        "data_sensitivity": "medium"
+                    }
+                },
+                "fleet_tracking": {
+                    "label": "Fleet tracking",
+                    "defaults_override": {
+                        "device_count": "high",
+                        "geolocation_features": true,
+                        "realtime_updates": true,
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "sensor_ingestion": {
+                    "label": "Sensor ingestion pipeline",
+                    "defaults_override": {
+                        "public_api": false,
+                        "messaging_queue": true,
+                        "data_volume": "high",
+                        "traffic_pattern": "spiky"
+                    }
+                },
+                "edge_computing": {
+                    "label": "Edge computing / gateways",
+                    "defaults_override": {
+                        "edge_compute_required": true,
+                        "offline_mode_required": true,
+                        "scheduled_jobs": true,
+                        "security_posture": "high"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "device_count",
+                    "priority": 100,
+                    "question": "How many devices will connect (approximate scale)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "telemetry_ingestion_rate",
+                    "priority": 95,
+                    "question": "Telemetry ingestion rate (events per second tier)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "edge_compute_required",
+                    "priority": 90,
+                    "question": "Do you need edge compute/gateway processing?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "ota_updates_required",
+                    "priority": 85,
+                    "question": "Do you need OTA firmware/app updates?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "device_identity_required",
+                    "priority": 80,
+                    "question": "Do devices need strong identity (certs/keys) and provisioning?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "realtime_updates": "unknown",
+                "messaging_queue": "unknown",
+                "scheduled_jobs": "unknown",
+                "file_storage": true,
+                "search": false,
+                "payments": false,
+                "traffic_pattern": "steady",
+                "performance_sensitivity": "medium",
+                "observability_level": "standard",
+                "security_posture": "standard",
+                "data_sensitivity": "medium",
+                "backup_retention_days": 30
+            },
+            "addons": [
+                {
+                    "id": "device_provisioning_identity",
+                    "label": "Device provisioning + identity",
+                    "description": "Certificates/keys, device registry, secure onboarding workflows.",
+                    "priority": 85,
+                    "trigger_when": {
+                        "device_identity_required": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "device_identity_required": true,
+                        "security_posture": "high"
+                    }
+                },
+                {
+                    "id": "ota_firmware_updates",
+                    "label": "OTA firmware updates",
+                    "description": "Signed update artifacts, staged rollouts, and rollback safety.",
+                    "priority": 75,
+                    "trigger_when": {
+                        "ota_updates_required": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "ota_updates_required": true,
+                        "file_storage": true
+                    }
+                },
+                {
+                    "id": "telemetry_buffering",
+                    "label": "Telemetry buffering (durable queues)",
+                    "description": "Buffer bursts and intermittent connectivity with durable ingestion.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "messaging_queue": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "messaging_queue": true
+                    }
+                }
+            ]
+        },
+        "enterprise_internal_systems": {
+            "label": "Enterprise & Internal Business Systems",
+            "description": "ERP, finance systems, inventory systems, corporate portals.",
+            "pattern_hints": [
+                "ENTERPRISEAPP",
+                "STATEFULWEBPLATFORM",
+                "CONTAINERIZEDWEBAPP",
+                "INTEGRATIONHUB"
+            ],
+            "subdomains": {
+                "erp_system": {
+                    "label": "ERP system",
+                    "defaults_override": {
+                        "user_facing": false,
+                        "user_authentication": true,
+                        "authorization_complexity": "rbac",
+                        "primary_data_model": "relational",
+                        "third_party_integrations": true,
+                        "data_sensitivity": "medium",
+                        "security_posture": "standard",
+                        "traffic_pattern": "steady"
+                    }
+                },
+                "finance_accounting": {
+                    "label": "Finance / accounting system",
+                    "defaults_override": {
+                        "user_facing": false,
+                        "user_authentication": true,
+                        "authorization_complexity": "abac",
+                        "primary_data_model": "relational",
+                        "audit_logging_required": true,
+                        "data_sensitivity": "high",
+                        "security_posture": "high",
+                        "backup_retention_days": 90
+                    }
+                },
+                "inventory_supply_chain": {
+                    "label": "Inventory / supply chain",
+                    "defaults_override": {
+                        "user_facing": false,
+                        "user_authentication": true,
+                        "authorization_complexity": "rbac",
+                        "primary_data_model": "relational",
+                        "scheduled_jobs": true,
+                        "traffic_pattern": "steady",
+                        "performance_sensitivity": "medium"
+                    }
+                },
+                "corporate_portal": {
+                    "label": "Corporate portal (intranet)",
+                    "defaults_override": {
+                        "user_facing": false,
+                        "static_content": true,
+                        "api_backend": true,
+                        "user_authentication": true,
+                        "search": true,
+                        "file_storage": true,
+                        "traffic_pattern": "steady"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "user_authentication",
+                    "priority": 100,
+                    "question": "Do employees need to sign in?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "authorization_complexity",
+                    "priority": 95,
+                    "question": "How complex are permissions (roles vs fine-grained policies)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "simple_roles",
+                            "rbac",
+                            "abac"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "third_party_integrations",
+                    "priority": 90,
+                    "question": "Do you need integrations (HRIS, CRM, accounting, SSO, etc.)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "audit_logging_required",
+                    "priority": 85,
+                    "question": "Do you need audit logs (who changed what, when)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "data_sensitivity",
+                    "priority": 80,
+                    "question": "What level of sensitive data is stored?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high"
+                        ]
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": false,
+                "static_content": false,
+                "api_backend": true,
+                "user_authentication": true,
+                "authorization_complexity": "rbac",
+                "primary_data_model": "relational",
+                "search": "unknown",
+                "file_storage": "unknown",
+                "third_party_integrations": "unknown",
+                "scheduled_jobs": "unknown",
+                "messaging_queue": "unknown",
+                "traffic_pattern": "steady",
+                "performance_sensitivity": "medium",
+                "observability_level": "standard",
+                "security_posture": "standard",
+                "data_sensitivity": "medium",
+                "backup_retention_days": 30
+            },
+            "addons": [
+                {
+                    "id": "enterprise_sso_internal",
+                    "label": "Enterprise SSO (SAML/OIDC)",
+                    "description": "Integrate with corporate identity providers for centralized access control.",
+                    "priority": 85,
+                    "trigger_when": {
+                        "authentication_strength": [
+                            "basic",
+                            "standard"
+                        ],
+                        "user_authentication": [
+                            true
+                        ]
+                    },
+                    "apply_axes": {
+                        "authentication_strength": "strong",
+                        "security_posture": "high",
+                        "third_party_integrations": true
+                    }
+                },
+                {
+                    "id": "audit_logging",
+                    "label": "Audit logging + tamper-resistant trails",
+                    "description": "Track admin and data changes for compliance and investigations.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "audit_logging_required": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "audit_logging_required": true
+                    }
+                },
+                {
+                    "id": "integration_connectors",
+                    "label": "Integration connectors (ETL/iPaaS)",
+                    "description": "Prebuilt connectors for common enterprise systems and data sync.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "third_party_integrations": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "third_party_integrations": true,
+                        "scheduled_jobs": true,
+                        "messaging_queue": "unknown"
+                    }
+                }
+            ]
+        },
+        "fintech_regulated_financial": {
+            "label": "FinTech & Regulated Financial Systems",
+            "description": "Banking apps, payment gateways, trading systems, KYC/AML services.",
+            "pattern_hints": [
+                "FINTECHPLATFORM",
+                "COMPLIANCECRITICAL",
+                "LOWLATENCYBACKEND",
+                "EVENTDRIVENPLATFORM"
+            ],
+            "subdomains": {
+                "banking_app": {
+                    "label": "Banking application",
+                    "defaults_override": {
+                        "user_authentication": true,
+                        "authentication_strength": "strong",
+                        "authorization_complexity": "abac",
+                        "primary_data_model": "relational",
+                        "audit_logging_required": true,
+                        "data_sensitivity": "high",
+                        "security_posture": "high",
+                        "traffic_pattern": "steady"
+                    }
+                },
+                "payment_gateway": {
+                    "label": "Payment gateway / processor",
+                    "defaults_override": {
+                        "payments": true,
+                        "authentication_strength": "strong",
+                        "security_posture": "high",
+                        "regulatory_compliance": [
+                            "pci_dss"
+                        ],
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high",
+                        "audit_logging_required": true
+                    }
+                },
+                "trading_system": {
+                    "label": "Trading system",
+                    "defaults_override": {
+                        "user_facing": true,
+                        "realtime_updates": true,
+                        "latency_tier": "high",
+                        "performance_sensitivity": "high",
+                        "audit_logging_required": true,
+                        "data_sensitivity": "high",
+                        "security_posture": "high"
+                    }
+                },
+                "kyc_aml_service": {
+                    "label": "KYC/AML service",
+                    "defaults_override": {
+                        "user_facing": false,
+                        "public_api": true,
+                        "third_party_integrations": true,
+                        "file_storage": true,
+                        "data_sensitivity": "high",
+                        "security_posture": "high",
+                        "audit_logging_required": true
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "regulatory_compliance",
+                    "priority": 100,
+                    "question": "Any compliance requirements (PCI, SOC2, ISO27001, etc.)?",
+                    "ui": {
+                        "type": "multiselect",
+                        "options": [
+                            "none",
+                            "gdpr",
+                            "pci_dss",
+                            "soc2",
+                            "iso27001"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "payments",
+                    "priority": 95,
+                    "question": "Do you need to accept or process payments?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "audit_logging_required",
+                    "priority": 90,
+                    "question": "Do you need immutable audit trails (transactions, admin actions)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "authentication_strength",
+                    "priority": 85,
+                    "question": "Authentication strength needed?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "basic",
+                            "standard",
+                            "strong"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "latency_tier",
+                    "priority": 80,
+                    "question": "Is ultra-low latency required (e.g., trading)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high"
+                        ]
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "payments": "unknown",
+                "public_api": "unknown",
+                "realtime_updates": "unknown",
+                "primary_data_model": "relational",
+                "file_storage": "unknown",
+                "third_party_integrations": "unknown",
+                "messaging_queue": "unknown",
+                "scheduled_jobs": "unknown",
+                "traffic_pattern": "steady",
+                "performance_sensitivity": "high",
+                "observability_level": "standard",
+                "authentication_strength": "strong",
+                "security_posture": "high",
+                "data_sensitivity": "high",
+                "audit_logging_required": true,
+                "backup_retention_days": 90,
+                "regulatory_compliance": [
+                    "unknown"
+                ]
+            },
+            "addons": [
+                {
+                    "id": "pci_hardening",
+                    "label": "Payments hardening (PCI posture)",
+                    "description": "Additional controls for payment flows, tokenization, and strong auth.",
+                    "priority": 90,
+                    "trigger_when": {
+                        "payments": [
+                            true
+                        ],
+                        "regulatory_compliance": [
+                            "unknown",
+                            "none",
+                            null,
+                            false,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "security_posture": "high",
+                        "authentication_strength": "strong",
+                        "regulatory_compliance": [
+                            "pci_dss"
+                        ]
+                    }
+                },
+                {
+                    "id": "fraud_risk_engine",
+                    "label": "Fraud detection / risk scoring",
+                    "description": "Add real-time rules + ML scoring with investigation workflows.",
+                    "priority": 75,
+                    "trigger_when": {
+                        "fraud_detection": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "fraud_detection": true,
+                        "realtime_updates": true
+                    }
+                },
+                {
+                    "id": "key_management_hsm",
+                    "label": "Key management / HSM posture",
+                    "description": "Stronger crypto controls for signing, encryption, and tokenization.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "crypto_posture": [
+                            "unknown",
+                            "standard",
+                            null,
+                            false,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "crypto_posture": "high",
+                        "security_posture": "high"
+                    }
+                }
+            ]
+        },
+        "healthcare_life_sciences": {
+            "label": "Healthcare & Life Sciences Systems",
+            "description": "EHR, telemedicine, medical imaging, wearable health systems.",
+            "pattern_hints": [
+                "HEALTHPLATFORM",
+                "COMPLIANCECRITICAL",
+                "MEDIAWORKFLOW",
+                "STATEFULWEBPLATFORM"
+            ],
+            "subdomains": {
+                "ehr_system": {
+                    "label": "EHR / EMR system",
+                    "defaults_override": {
+                        "user_facing": false,
+                        "user_authentication": true,
+                        "authorization_complexity": "abac",
+                        "primary_data_model": "relational",
+                        "data_sensitivity": "high",
+                        "security_posture": "high",
+                        "audit_logging_required": true,
+                        "backup_retention_days": 365
+                    }
+                },
+                "telemedicine": {
+                    "label": "Telemedicine",
+                    "defaults_override": {
+                        "user_facing": true,
+                        "realtime_updates": true,
+                        "latency_tier": "high",
+                        "user_authentication": true,
+                        "data_sensitivity": "high",
+                        "security_posture": "high",
+                        "traffic_pattern": "spiky"
+                    }
+                },
+                "medical_imaging": {
+                    "label": "Medical imaging (PACS-like workflows)",
+                    "defaults_override": {
+                        "file_storage": true,
+                        "data_volume": "high",
+                        "user_authentication": true,
+                        "data_sensitivity": "high",
+                        "security_posture": "high",
+                        "scheduled_jobs": true
+                    }
+                },
+                "wearable_health": {
+                    "label": "Wearable health system",
+                    "defaults_override": {
+                        "device_count": "unknown",
+                        "telemetry_ingestion_rate": "unknown",
+                        "messaging_queue": true,
+                        "data_sensitivity": "high",
+                        "security_posture": "high",
+                        "mobile_clients": true
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "regulatory_compliance",
+                    "priority": 100,
+                    "question": "Any compliance requirements (HIPAA, GDPR, ISO27001, etc.)?",
+                    "ui": {
+                        "type": "multiselect",
+                        "options": [
+                            "none",
+                            "gdpr",
+                            "hipaa",
+                            "soc2",
+                            "iso27001"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "data_sensitivity",
+                    "priority": 95,
+                    "question": "What level of sensitive data is stored?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "file_storage",
+                    "priority": 85,
+                    "question": "Do you need to store large medical files (images, scans, reports)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "realtime_updates",
+                    "priority": 80,
+                    "question": "Do you need realtime/live features (telemedicine, monitoring)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "audit_logging_required",
+                    "priority": 75,
+                    "question": "Do you need audit logs for record access and edits?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "user_authentication": true,
+                "authorization_complexity": "abac",
+                "primary_data_model": "relational",
+                "file_storage": "unknown",
+                "data_volume": "unknown",
+                "realtime_updates": "unknown",
+                "messaging_queue": "unknown",
+                "scheduled_jobs": "unknown",
+                "traffic_pattern": "steady",
+                "performance_sensitivity": "high",
+                "observability_level": "standard",
+                "authentication_strength": "strong",
+                "security_posture": "high",
+                "data_sensitivity": "high",
+                "audit_logging_required": true,
+                "backup_retention_days": 365,
+                "regulatory_compliance": [
+                    "unknown"
+                ]
+            },
+            "addons": [
+                {
+                    "id": "hipaa_posture",
+                    "label": "HIPAA posture pack",
+                    "description": "Hardened logging, access controls, retention, and vendor agreements support.",
+                    "priority": 90,
+                    "trigger_when": {
+                        "regulatory_compliance": [
+                            "unknown",
+                            "none",
+                            null,
+                            false,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "regulatory_compliance": [
+                            "hipaa"
+                        ],
+                        "security_posture": "high",
+                        "authentication_strength": "strong"
+                    }
+                },
+                {
+                    "id": "consent_management",
+                    "label": "Patient consent management",
+                    "description": "Consent capture, revocation, and fine-grained access enforcement.",
+                    "priority": 75,
+                    "trigger_when": {
+                        "consent_management": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "consent_management": true,
+                        "authorization_complexity": "abac"
+                    }
+                },
+                {
+                    "id": "de_identification_pipeline",
+                    "label": "De-identification / redaction pipeline",
+                    "description": "Automated PHI redaction for sharing datasets safely.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "de_identification": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "de_identification": true,
+                        "scheduled_jobs": true,
+                        "messaging_queue": "unknown"
+                    }
+                }
+            ]
+        },
+        "education_learning_platforms": {
+            "label": "Education & Learning Platforms",
+            "description": "LMS, online courses, virtual classrooms, assessments.",
+            "pattern_hints": [
+                "LEARNINGPLATFORM",
+                "MEDIASTREAMING",
+                "SERVERLESSWEBAPP",
+                "STATEFULWEBPLATFORM"
+            ],
+            "subdomains": {
+                "lms": {
+                    "label": "Learning management system (LMS)",
+                    "defaults_override": {
+                        "user_authentication": true,
+                        "multi_tenancy": "unknown",
+                        "authorization_complexity": "rbac",
+                        "file_storage": true,
+                        "search": true,
+                        "traffic_pattern": "seasonal",
+                        "backup_retention_days": 90
+                    }
+                },
+                "online_courses": {
+                    "label": "Online courses / content platform",
+                    "defaults_override": {
+                        "file_storage": true,
+                        "data_volume": "medium",
+                        "user_authentication": "unknown",
+                        "payments": "unknown",
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "virtual_classroom": {
+                    "label": "Virtual classroom",
+                    "defaults_override": {
+                        "realtime_updates": true,
+                        "latency_tier": "high",
+                        "user_authentication": true,
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "assessments_exams": {
+                    "label": "Assessments / exams",
+                    "defaults_override": {
+                        "user_authentication": true,
+                        "scheduled_jobs": true,
+                        "security_posture": "high",
+                        "audit_logging_required": true,
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "user_authentication",
+                    "priority": 100,
+                    "question": "Do learners/teachers need to sign in?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "realtime_updates",
+                    "priority": 90,
+                    "question": "Do you need realtime/live features (virtual classrooms, chat)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "file_storage",
+                    "priority": 85,
+                    "question": "Do you host video/material uploads?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "traffic_pattern",
+                    "priority": 80,
+                    "question": "Is usage seasonal/spiky (exam weeks, enrollments)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "steady",
+                            "spiky",
+                            "seasonal",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "payments",
+                    "priority": 70,
+                    "question": "Do you need payments for courses/subscriptions?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "user_authentication": true,
+                "authorization_complexity": "rbac",
+                "multi_tenancy": "unknown",
+                "file_storage": true,
+                "search": true,
+                "realtime_updates": false,
+                "scheduled_jobs": true,
+                "messaging_queue": "unknown",
+                "payments": false,
+                "billing_subscription": "unknown",
+                "traffic_pattern": "seasonal",
+                "performance_sensitivity": "medium",
+                "observability_level": "standard",
+                "security_posture": "standard",
+                "data_sensitivity": "medium",
+                "backup_retention_days": 90
+            },
+            "addons": [
+                {
+                    "id": "proctoring_anticheat",
+                    "label": "Proctoring / anti-cheat controls",
+                    "description": "Harden exam integrity with device checks, audit trails, and anomaly detection hooks.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "exam_proctoring": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "exam_proctoring": true,
+                        "security_posture": "high",
+                        "audit_logging_required": true
+                    }
+                },
+                {
+                    "id": "certificates_badges",
+                    "label": "Certificates + badges",
+                    "description": "Issue certificates, track completions, and generate verifiable credentials.",
+                    "priority": 65,
+                    "trigger_when": {
+                        "certificates_badges": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "certificates_badges": true,
+                        "scheduled_jobs": true
+                    }
+                },
+                {
+                    "id": "classroom_realtime_suite",
+                    "label": "Realtime classroom suite",
+                    "description": "Chat, attendance, hand-raise, and live session coordination.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "realtime_updates": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "realtime_updates": true,
+                        "latency_tier": "high"
+                    }
+                }
+            ]
+        },
+        "government_public_sector": {
+            "label": "Government & Public Sector Systems",
+            "description": "Citizen portals, tax systems, digital ID, public data platforms.",
+            "pattern_hints": [
+                "GOVPLATFORM",
+                "COMPLIANCECRITICAL",
+                "IDENTITYPLATFORM",
+                "STATEFULWEBPLATFORM"
+            ],
+            "subdomains": {
+                "citizen_portal": {
+                    "label": "Citizen portal",
+                    "defaults_override": {
+                        "user_facing": true,
+                        "user_authentication": true,
+                        "authorization_complexity": "rbac",
+                        "traffic_pattern": "spiky",
+                        "data_sensitivity": "high",
+                        "security_posture": "high"
+                    }
+                },
+                "tax_revenue_system": {
+                    "label": "Tax / revenue system",
+                    "defaults_override": {
+                        "user_facing": true,
+                        "user_authentication": true,
+                        "authorization_complexity": "abac",
+                        "primary_data_model": "relational",
+                        "audit_logging_required": true,
+                        "data_sensitivity": "high",
+                        "security_posture": "high",
+                        "backup_retention_days": 3650
+                    }
+                },
+                "digital_id": {
+                    "label": "Digital ID / identity services",
+                    "defaults_override": {
+                        "user_facing": true,
+                        "public_api": true,
+                        "authentication_strength": "strong",
+                        "security_posture": "high",
+                        "audit_logging_required": true,
+                        "data_sensitivity": "high",
+                        "third_party_integrations": true
+                    }
+                },
+                "public_data_platform": {
+                    "label": "Public data platform (open data)",
+                    "defaults_override": {
+                        "user_facing": true,
+                        "static_content": true,
+                        "api_backend": true,
+                        "public_api": true,
+                        "data_sensitivity": "low",
+                        "traffic_pattern": "spiky",
+                        "search": true
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "data_residency_required",
+                    "priority": 100,
+                    "question": "Is data residency required (must stay in-country/region)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "user_authentication",
+                    "priority": 95,
+                    "question": "Do citizens/officials need to sign in?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "authentication_strength",
+                    "priority": 90,
+                    "question": "Authentication strength needed (MFA, strong identity proofing)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "basic",
+                            "standard",
+                            "strong"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "audit_logging_required",
+                    "priority": 85,
+                    "question": "Do you need audit logs for access and changes?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "public_api",
+                    "priority": 75,
+                    "question": "Is there a public API for third-party access?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "public_api": "unknown",
+                "user_authentication": true,
+                "authentication_strength": "strong",
+                "authorization_complexity": "rbac",
+                "primary_data_model": "relational",
+                "file_storage": "unknown",
+                "search": "unknown",
+                "third_party_integrations": "unknown",
+                "scheduled_jobs": "unknown",
+                "messaging_queue": "unknown",
+                "traffic_pattern": "spiky",
+                "performance_sensitivity": "high",
+                "observability_level": "standard",
+                "security_posture": "high",
+                "data_sensitivity": "high",
+                "audit_logging_required": true,
+                "data_residency_required": true,
+                "backup_retention_days": 365
+            },
+            "addons": [
+                {
+                    "id": "digital_identity_proofing",
+                    "label": "Identity proofing + verification",
+                    "description": "Support KYC-like identity proofing, document verification, and verification workflows.",
+                    "priority": 85,
+                    "trigger_when": {
+                        "identity_proofing": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "identity_proofing": true,
+                        "authentication_strength": "strong",
+                        "security_posture": "high"
+                    }
+                },
+                {
+                    "id": "accessibility_localization",
+                    "label": "Accessibility + localization pack",
+                    "description": "Add accessibility requirements and multilingual support for citizen-facing systems.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "accessibility_requirements": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "accessibility_requirements": true,
+                        "localization_required": true
+                    }
+                },
+                {
+                    "id": "public_api_protection",
+                    "label": "Public API protection (rate limits + WAF posture)",
+                    "description": "Protect citizen-facing/public APIs against abuse while maintaining uptime.",
+                    "priority": 75,
+                    "trigger_when": {
+                        "public_api": [
+                            true
+                        ],
+                        "security_posture": [
+                            "basic",
+                            "standard"
+                        ]
+                    },
+                    "apply_axes": {
+                        "security_posture": "high"
+                    }
+                }
+            ]
+        },
+        "devtools_developer_platforms": {
+            "label": "DevTools & Developer Platforms",
+            "description": "CI/CD products, cloud management tools, infrastructure automation SaaS.",
+            "pattern_hints": [
+                "DEVTOOLSSAAS",
+                "CONTROLPLANE",
+                "EVENTDRIVENPLATFORM",
+                "CONTAINERIZEDWEBAPP"
+            ],
+            "subdomains": {
+                "cicd_platform": {
+                    "label": "CI/CD platform",
+                    "defaults_override": {
+                        "user_facing": true,
+                        "multi_tenancy": true,
+                        "user_authentication": true,
+                        "authorization_complexity": "rbac",
+                        "scheduled_jobs": true,
+                        "messaging_queue": true,
+                        "third_party_integrations": true,
+                        "traffic_pattern": "spiky",
+                        "observability_level": "standard"
+                    }
+                },
+                "cloud_management_console": {
+                    "label": "Cloud management console",
+                    "defaults_override": {
+                        "user_facing": true,
+                        "multi_tenancy": true,
+                        "user_authentication": true,
+                        "authorization_complexity": "abac",
+                        "public_api": "unknown",
+                        "audit_logging_required": true,
+                        "security_posture": "high",
+                        "traffic_pattern": "steady"
+                    }
+                },
+                "infrastructure_automation_saas": {
+                    "label": "Infrastructure automation SaaS (IaC orchestration)",
+                    "defaults_override": {
+                        "user_facing": true,
+                        "multi_tenancy": true,
+                        "user_authentication": true,
+                        "authorization_complexity": "rbac",
+                        "scheduled_jobs": true,
+                        "messaging_queue": "unknown",
+                        "third_party_integrations": true,
+                        "security_posture": "standard"
+                    }
+                },
+                "artifact_registry": {
+                    "label": "Artifact registry (packages/images)",
+                    "defaults_override": {
+                        "file_storage": true,
+                        "data_volume": "medium",
+                        "user_authentication": true,
+                        "authorization_complexity": "rbac",
+                        "performance_sensitivity": "high",
+                        "security_posture": "high"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "multi_tenancy",
+                    "priority": 100,
+                    "question": "Is it multi-tenant (multiple teams/orgs)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "third_party_integrations",
+                    "priority": 95,
+                    "question": "Do you need integrations (Git providers, cloud accounts, ticketing, etc.)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "public_api",
+                    "priority": 90,
+                    "question": "Is there a public API (CLI/SDK) for developers?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "audit_logging_required",
+                    "priority": 85,
+                    "question": "Do you need audit logs for admin actions and configuration changes?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "supply_chain_security_required",
+                    "priority": 80,
+                    "question": "Do you need supply-chain security (signing/SBOM/attestations)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "multi_tenancy": true,
+                "user_authentication": true,
+                "authorization_complexity": "rbac",
+                "public_api": true,
+                "file_storage": "unknown",
+                "search": true,
+                "scheduled_jobs": true,
+                "messaging_queue": "unknown",
+                "third_party_integrations": true,
+                "traffic_pattern": "steady",
+                "performance_sensitivity": "medium",
+                "observability_level": "standard",
+                "security_posture": "standard",
+                "data_sensitivity": "medium",
+                "backup_retention_days": 30
+            },
+            "addons": [
+                {
+                    "id": "sso_scim",
+                    "label": "Enterprise SSO + SCIM provisioning",
+                    "description": "SSO, group sync, and automated user lifecycle management for enterprise customers.",
+                    "priority": 85,
+                    "trigger_when": {
+                        "authentication_strength": [
+                            "basic",
+                            "standard"
+                        ],
+                        "multi_tenancy": [
+                            true
+                        ]
+                    },
+                    "apply_axes": {
+                        "authentication_strength": "strong",
+                        "security_posture": "high"
+                    }
+                },
+                {
+                    "id": "audit_logging",
+                    "label": "Audit logging (control plane)",
+                    "description": "Immutable logs for admin actions, config changes, and sensitive operations.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "audit_logging_required": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "audit_logging_required": true
+                    }
+                },
+                {
+                    "id": "artifact_signing_attestations",
+                    "label": "Artifact signing + attestations (supply chain)",
+                    "description": "Provenance, SBOM, and signature verification support.",
+                    "priority": 75,
+                    "trigger_when": {
+                        "supply_chain_security_required": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "supply_chain_security_required": true,
+                        "security_posture": "high"
+                    }
+                }
+            ]
+        },
+        "gaming_platforms": {
+            "label": "Gaming Platforms",
+            "description": "Online game backends, matchmaking, leaderboards, game asset delivery.",
+            "pattern_hints": [
+                "GAMEBACKEND",
+                "LOWLATENCYBACKEND",
+                "REALTIMEAPP",
+                "EVENTDRIVENPLATFORM"
+            ],
+            "subdomains": {
+                "online_game_backend": {
+                    "label": "Online game backend",
+                    "defaults_override": {
+                        "realtime_updates": "unknown",
+                        "peak_concurrency": "unknown",
+                        "latency_tier": "high",
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high",
+                        "messaging_queue": true
+                    }
+                },
+                "matchmaking_service": {
+                    "label": "Matchmaking service",
+                    "defaults_override": {
+                        "realtime_updates": true,
+                        "latency_tier": "high",
+                        "peak_rps": "high",
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high",
+                        "security_posture": "standard"
+                    }
+                },
+                "leaderboards_profiles": {
+                    "label": "Leaderboards and player profiles",
+                    "defaults_override": {
+                        "primary_data_model": "key_value",
+                        "search": false,
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high",
+                        "backup_retention_days": 14
+                    }
+                },
+                "game_asset_delivery": {
+                    "label": "Game asset delivery (patches/DLC/CDN origin)",
+                    "defaults_override": {
+                        "file_storage": true,
+                        "data_volume": "high",
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high",
+                        "security_posture": "standard"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "peak_concurrency",
+                    "priority": 100,
+                    "question": "Expected peak concurrent players/connections?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "latency_tier",
+                    "priority": 95,
+                    "question": "Latency sensitivity (casual vs competitive)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "anti_cheat_required",
+                    "priority": 90,
+                    "question": "Do you need anti-cheat / abuse protection?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "realtime_updates",
+                    "priority": 85,
+                    "question": "Do you need realtime state sync (multiplayer sessions)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "data_volume",
+                    "priority": 75,
+                    "question": "How large are assets/logs (data volume)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high",
+                            "unknown"
+                        ]
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "realtime_updates": "unknown",
+                "messaging_queue": "unknown",
+                "file_storage": true,
+                "search": false,
+                "payments": false,
+                "traffic_pattern": "spiky",
+                "performance_sensitivity": "high",
+                "observability_level": "standard",
+                "security_posture": "standard",
+                "data_sensitivity": "medium",
+                "backup_retention_days": 14
+            },
+            "addons": [
+                {
+                    "id": "anti_cheat_abuse",
+                    "label": "Anti-cheat + abuse protection",
+                    "description": "Rate limits, bot detection hooks, and hardened network posture.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "anti_cheat_required": [
+                            "unknown",
+                            false,
+                            null
+                        ],
+                        "security_posture": [
+                            "basic",
+                            "standard"
+                        ]
+                    },
+                    "apply_axes": {
+                        "anti_cheat_required": true,
+                        "security_posture": "high"
+                    }
+                },
+                {
+                    "id": "player_communications",
+                    "label": "Player communications (chat/voice hooks)",
+                    "description": "Enable optional player comms integrations (chat/voice) with moderation controls.",
+                    "priority": 65,
+                    "trigger_when": {
+                        "player_comms": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "player_comms": true,
+                        "realtime_updates": true
+                    }
+                },
+                {
+                    "id": "tournaments_ranked",
+                    "label": "Ranked + tournaments",
+                    "description": "Seasonal ladders, tournaments, and scheduled events require job orchestration.",
+                    "priority": 60,
+                    "trigger_when": {
+                        "tournaments_ranked": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "tournaments_ranked": true,
+                        "scheduled_jobs": true
+                    }
+                }
+            ]
+        },
+        "logistics_supply_chain": {
+            "label": "Logistics & Supply Chain Systems",
+            "description": "Shipment tracking, warehouse systems, route optimization.",
+            "pattern_hints": [
+                "LOGISTICSPLATFORM",
+                "EVENTDRIVENPLATFORM",
+                "STATEFULWEBPLATFORM",
+                "MOBILEBACKEND"
+            ],
+            "subdomains": {
+                "shipment_tracking": {
+                    "label": "Shipment tracking",
+                    "defaults_override": {
+                        "realtime_updates": "unknown",
+                        "third_party_integrations": true,
+                        "geolocation_features": true,
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "medium"
+                    }
+                },
+                "warehouse_management": {
+                    "label": "Warehouse management system (WMS)",
+                    "defaults_override": {
+                        "user_facing": false,
+                        "user_authentication": true,
+                        "authorization_complexity": "rbac",
+                        "primary_data_model": "relational",
+                        "scheduled_jobs": true,
+                        "traffic_pattern": "steady"
+                    }
+                },
+                "route_optimization": {
+                    "label": "Route optimization",
+                    "defaults_override": {
+                        "scheduled_jobs": true,
+                        "compute_intensive": true,
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high",
+                        "data_sensitivity": "medium"
+                    }
+                },
+                "last_mile_delivery": {
+                    "label": "Last-mile delivery (driver app backend)",
+                    "defaults_override": {
+                        "mobile_clients": true,
+                        "push_notifications": "unknown",
+                        "realtime_updates": true,
+                        "geolocation_features": true,
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "third_party_integrations",
+                    "priority": 100,
+                    "question": "Do you integrate with carriers, ERP, marketplaces, or EDI?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "geolocation_features",
+                    "priority": 95,
+                    "question": "Do you need geolocation tracking (GPS, geofences)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "realtime_updates",
+                    "priority": 90,
+                    "question": "Do you need realtime status updates (tracking/live ETAs)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "compute_intensive",
+                    "priority": 80,
+                    "question": "Is optimization compute-heavy (routing/packing/forecasting)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "data_sensitivity",
+                    "priority": 70,
+                    "question": "Data sensitivity level (customer addresses, driver info, etc.)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high"
+                        ]
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "mobile_clients": "unknown",
+                "realtime_updates": "unknown",
+                "messaging_queue": "unknown",
+                "scheduled_jobs": true,
+                "third_party_integrations": true,
+                "file_storage": "unknown",
+                "search": false,
+                "payments": false,
+                "traffic_pattern": "spiky",
+                "performance_sensitivity": "medium",
+                "observability_level": "standard",
+                "security_posture": "standard",
+                "data_sensitivity": "medium",
+                "backup_retention_days": 30
+            },
+            "addons": [
+                {
+                    "id": "carrier_webhooks_retries",
+                    "label": "Carrier webhook ingestion + retries",
+                    "description": "Durable webhook processing and retry semantics for carrier events.",
+                    "priority": 75,
+                    "trigger_when": {
+                        "messaging_queue": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "messaging_queue": true,
+                        "scheduled_jobs": true
+                    }
+                },
+                {
+                    "id": "eta_notifications",
+                    "label": "ETA notifications (SMS/email/push)",
+                    "description": "Customer-facing notifications for shipment status and ETAs.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "third_party_integrations": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "third_party_integrations": true,
+                        "push_notifications": true
+                    }
+                },
+                {
+                    "id": "data_access_controls",
+                    "label": "Fine-grained access controls (ABAC)",
+                    "description": "Restrict data by region, customer, or role to support multiple business units.",
+                    "priority": 65,
+                    "trigger_when": {
+                        "authorization_complexity": [
+                            "unknown",
+                            "simple_roles",
+                            "rbac",
+                            null,
+                            false,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "authorization_complexity": "abac",
+                        "security_posture": "high"
+                    }
+                }
+            ]
+        },
+        "search_knowledge_systems": {
+            "label": "Search & Knowledge Systems",
+            "description": "Enterprise search, document indexing, semantic search, knowledge graphs.",
+            "pattern_hints": [
+                "SEARCHPLATFORM",
+                "INDEXINGPIPELINE",
+                "VECTORSEARCH",
+                "KNOWLEDGEGRAPH"
+            ],
+            "subdomains": {
+                "enterprise_search": {
+                    "label": "Enterprise search",
+                    "defaults_override": {
+                        "search": true,
+                        "file_storage": true,
+                        "third_party_integrations": true,
+                        "user_authentication": true,
+                        "authorization_complexity": "abac",
+                        "security_posture": "high"
+                    }
+                },
+                "document_indexing": {
+                    "label": "Document indexing pipeline",
+                    "defaults_override": {
+                        "search": true,
+                        "file_storage": true,
+                        "scheduled_jobs": true,
+                        "messaging_queue": true,
+                        "data_volume": "high"
+                    }
+                },
+                "semantic_search": {
+                    "label": "Semantic search (embeddings)",
+                    "defaults_override": {
+                        "search": true,
+                        "vector_search": true,
+                        "model_inference": "unknown",
+                        "data_sensitivity": "medium",
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "knowledge_graph": {
+                    "label": "Knowledge graph",
+                    "defaults_override": {
+                        "primary_data_model": "graph",
+                        "search": true,
+                        "scheduled_jobs": true,
+                        "data_volume": "medium",
+                        "traffic_pattern": "steady"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "search",
+                    "priority": 100,
+                    "question": "Do you need full-text search and indexing?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "vector_search",
+                    "priority": 95,
+                    "question": "Do you need semantic/vector search?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "document_count",
+                    "priority": 90,
+                    "question": "How many documents/records will be indexed?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "authorization_complexity",
+                    "priority": 85,
+                    "question": "How complex are permissions for search results filtering?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "simple_roles",
+                            "rbac",
+                            "abac"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "freshness_sla",
+                    "priority": 80,
+                    "question": "Index freshness SLA (how quickly changes must appear in search)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "minutes",
+                            "hours",
+                            "daily",
+                            "unknown"
+                        ]
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": true,
+                "static_content": false,
+                "api_backend": true,
+                "search": true,
+                "file_storage": true,
+                "document_count": "unknown",
+                "data_volume": "unknown",
+                "scheduled_jobs": true,
+                "messaging_queue": "unknown",
+                "third_party_integrations": "unknown",
+                "vector_search": "unknown",
+                "model_inference": "unknown",
+                "traffic_pattern": "steady",
+                "performance_sensitivity": "high",
+                "observability_level": "standard",
+                "security_posture": "standard",
+                "data_sensitivity": "medium",
+                "backup_retention_days": 30
+            },
+            "addons": [
+                {
+                    "id": "connectors_crawl",
+                    "label": "Connectors + crawling (SaaS sources)",
+                    "description": "Index content from Google Drive, Slack, Jira, Confluence, S3, etc.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "third_party_integrations": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "third_party_integrations": true,
+                        "scheduled_jobs": true
+                    }
+                },
+                {
+                    "id": "semantic_rag",
+                    "label": "Semantic retrieval (RAG-ready)",
+                    "description": "Embeddings pipelines, chunking, and retrieval patterns for AI assistants.",
+                    "priority": 75,
+                    "trigger_when": {
+                        "vector_search": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "vector_search": true,
+                        "model_inference": true
+                    }
+                },
+                {
+                    "id": "permission_aware_search",
+                    "label": "Permission-aware search filtering",
+                    "description": "Enforce document-level ACLs at query time.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "authorization_complexity": [
+                            "simple_roles",
+                            "rbac",
+                            "unknown",
+                            null,
+                            false,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "authorization_complexity": "abac",
+                        "security_posture": "high"
+                    }
+                }
+            ]
+        },
+        "communication_infrastructure_platforms": {
+            "label": "Communication Infrastructure Platforms",
+            "description": "Email delivery, SMS gateways, push notification systems, VoIP services (product is communication infrastructure itself).",
+            "pattern_hints": [
+                "COMMSPLATFORM",
+                "EVENTDRIVENPLATFORM",
+                "HIGHDELIVERY",
+                "LOWLATENCYBACKEND"
+            ],
+            "subdomains": {
+                "email_delivery": {
+                    "label": "Email delivery platform",
+                    "defaults_override": {
+                        "public_api": true,
+                        "third_party_integrations": true,
+                        "messaging_queue": true,
+                        "scheduled_jobs": true,
+                        "traffic_pattern": "spiky",
+                        "deliverability_controls": true,
+                        "security_posture": "standard"
+                    }
+                },
+                "sms_gateway": {
+                    "label": "SMS gateway",
+                    "defaults_override": {
+                        "public_api": true,
+                        "third_party_integrations": true,
+                        "messaging_queue": true,
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high",
+                        "data_sensitivity": "medium"
+                    }
+                },
+                "push_notification_service": {
+                    "label": "Push notification system",
+                    "defaults_override": {
+                        "public_api": true,
+                        "third_party_integrations": true,
+                        "push_notifications": true,
+                        "scheduled_jobs": true,
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high"
+                    }
+                },
+                "voip_platform": {
+                    "label": "VoIP / calling platform",
+                    "defaults_override": {
+                        "realtime_updates": true,
+                        "latency_tier": "high",
+                        "public_api": true,
+                        "traffic_pattern": "spiky",
+                        "performance_sensitivity": "high",
+                        "security_posture": "high"
+                    }
+                }
+            },
+            "critical_axes": [
+                {
+                    "axis_key": "public_api",
+                    "priority": 100,
+                    "question": "Is this offered as a public API to customers (CPaaS-style)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "delivery_guarantees",
+                    "priority": 95,
+                    "question": "Do you need delivery guarantees (retries, idempotency, DLQ)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                },
+                {
+                    "axis_key": "throughput_tier",
+                    "priority": 90,
+                    "question": "Throughput tier (messages per second)?",
+                    "ui": {
+                        "type": "select",
+                        "options": [
+                            "low",
+                            "medium",
+                            "high",
+                            "unknown"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "regulatory_compliance",
+                    "priority": 85,
+                    "question": "Any compliance requirements (SOC2, ISO27001, etc.)?",
+                    "ui": {
+                        "type": "multiselect",
+                        "options": [
+                            "none",
+                            "gdpr",
+                            "soc2",
+                            "iso27001",
+                            "pci_dss"
+                        ]
+                    }
+                },
+                {
+                    "axis_key": "fraud_abuse_protection",
+                    "priority": 80,
+                    "question": "Do you need anti-abuse protections (spam, A2P controls, rate limits)?",
+                    "ui": {
+                        "type": "boolean"
+                    }
+                }
+            ],
+            "defaults": {
+                "user_facing": false,
+                "static_content": false,
+                "api_backend": true,
+                "public_api": true,
+                "user_authentication": false,
+                "third_party_integrations": true,
+                "messaging_queue": true,
+                "scheduled_jobs": true,
+                "search": false,
+                "file_storage": false,
+                "traffic_pattern": "spiky",
+                "performance_sensitivity": "high",
+                "observability_level": "standard",
+                "security_posture": "standard",
+                "data_sensitivity": "medium",
+                "backup_retention_days": 14,
+                "delivery_guarantees": true
+            },
+            "addons": [
+                {
+                    "id": "abuse_rate_limits",
+                    "label": "Abuse protection (rate limits + fraud controls)",
+                    "description": "Prevent spam, OTP abuse, credential stuffing, and message flooding.",
+                    "priority": 85,
+                    "trigger_when": {
+                        "fraud_abuse_protection": [
+                            "unknown",
+                            false,
+                            null
+                        ],
+                        "security_posture": [
+                            "basic",
+                            "standard"
+                        ]
+                    },
+                    "apply_axes": {
+                        "fraud_abuse_protection": true,
+                        "security_posture": "high"
+                    }
+                },
+                {
+                    "id": "delivery_receipts_webhooks",
+                    "label": "Delivery receipts + webhooks",
+                    "description": "Webhook callbacks and delivery status ingestion require durable processing.",
+                    "priority": 75,
+                    "trigger_when": {
+                        "delivery_receipts": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "delivery_receipts": true,
+                        "messaging_queue": true
+                    }
+                },
+                {
+                    "id": "template_management",
+                    "label": "Template management (email/SMS/push)",
+                    "description": "Versioned templates, localization, and approval workflows.",
+                    "priority": 65,
+                    "trigger_when": {
+                        "template_management": [
+                            "unknown",
+                            false,
+                            null
+                        ]
+                    },
+                    "apply_axes": {
+                        "template_management": true,
+                        "scheduled_jobs": true
+                    }
+                }
+            ]
+        }
+    },
+    "facets": {
+        "security_cybersecurity": {
+            "label": "Security & Cybersecurity",
+            "description": "Cross-cutting security toggles (only becomes a domain if building a security product).",
+            "toggles": [
+                {
+                    "id": "iam_sso",
+                    "label": "IAM / SSO",
+                    "description": "Centralized identity, SSO, and stronger auth posture.",
+                    "priority": 95,
+                    "trigger_when": {
+                        "user_authentication": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "user_authentication": true,
+                        "authentication_strength": "strong",
+                        "security_posture": "high",
+                        "third_party_integrations": true,
+                        "sso_required": true
+                    }
+                },
+                {
+                    "id": "siem_threat_detection",
+                    "label": "SIEM / Threat detection",
+                    "description": "Security telemetry, detection rules, and incident workflows.",
+                    "priority": 85,
+                    "trigger_when": {
+                        "siem_enabled": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "siem_enabled": true,
+                        "security_posture": "high",
+                        "audit_logging_required": true,
+                        "observability_level": "high"
+                    }
+                },
+                {
+                    "id": "encryption_key_management",
+                    "label": "Encryption / Key management",
+                    "description": "KMS-managed encryption and rotation posture.",
+                    "priority": 90,
+                    "trigger_when": {
+                        "kms_required": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "kms_required": true,
+                        "encryption_at_rest": true,
+                        "encryption_in_transit": true,
+                        "key_rotation_required": true,
+                        "security_posture": "high"
+                    }
+                },
+                {
+                    "id": "zero_trust_access",
+                    "label": "Zero-trust access",
+                    "description": "Harden internal/admin access with least privilege and strong verification.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "zero_trust_access": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "zero_trust_access": true,
+                        "security_posture": "high",
+                        "authentication_strength": "strong"
+                    }
+                }
+            ]
+        },
+        "observability_monitoring": {
+            "label": "Observability & Monitoring",
+            "description": "Logging, metrics, tracing, and alerting (attachable to any domain).",
+            "toggles": [
+                {
+                    "id": "logging",
+                    "label": "Logging",
+                    "description": "Centralized structured logs with retention controls.",
+                    "priority": 90,
+                    "trigger_when": {
+                        "logging_enabled": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "logging_enabled": true,
+                        "observability_level": "standard"
+                    }
+                },
+                {
+                    "id": "metrics",
+                    "label": "Metrics",
+                    "description": "Service metrics, dashboards, and SLO foundations.",
+                    "priority": 85,
+                    "trigger_when": {
+                        "metrics_enabled": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "metrics_enabled": true,
+                        "observability_level": "standard"
+                    }
+                },
+                {
+                    "id": "tracing",
+                    "label": "Tracing",
+                    "description": "Distributed tracing for latency breakdown and dependency mapping.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "tracing_enabled": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "tracing_enabled": true,
+                        "observability_level": "high"
+                    }
+                },
+                {
+                    "id": "alerting",
+                    "label": "Alerting",
+                    "description": "Alert rules, on-call routing, and incident workflows.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "alerting_enabled": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "alerting_enabled": true,
+                        "observability_level": "high"
+                    }
+                }
+            ]
+        },
+        "compliance_governance": {
+            "label": "Compliance & Governance",
+            "description": "GDPR/HIPAA/PCI, audit logs, and data residency controls.",
+            "toggles": [
+                {
+                    "id": "gdpr_pack",
+                    "label": "GDPR controls",
+                    "description": "Privacy controls and governance posture for GDPR environments.",
+                    "priority": 95,
+                    "trigger_when": {
+                        "regulatory_compliance": [
+                            "unknown",
+                            "none",
+                            null,
+                            false,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "regulatory_compliance": [
+                            "gdpr"
+                        ],
+                        "data_sensitivity": "medium",
+                        "security_posture": "high"
+                    }
+                },
+                {
+                    "id": "hipaa_pack",
+                    "label": "HIPAA controls",
+                    "description": "Healthcare compliance posture and enhanced auditability.",
+                    "priority": 95,
+                    "trigger_when": {
+                        "regulatory_compliance": [
+                            "unknown",
+                            "none",
+                            null,
+                            false,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "regulatory_compliance": [
+                            "hipaa"
+                        ],
+                        "data_sensitivity": "high",
+                        "security_posture": "high"
+                    }
+                },
+                {
+                    "id": "pci_pack",
+                    "label": "PCI-DSS controls",
+                    "description": "Payments compliance posture with strong security controls.",
+                    "priority": 95,
+                    "trigger_when": {
+                        "regulatory_compliance": [
+                            "unknown",
+                            "none",
+                            null,
+                            false,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "regulatory_compliance": [
+                            "pci_dss"
+                        ],
+                        "security_posture": "high",
+                        "authentication_strength": "strong"
+                    }
+                },
+                {
+                    "id": "audit_logs",
+                    "label": "Audit logs",
+                    "description": "Who-did-what-when logging for sensitive operations.",
+                    "priority": 90,
+                    "trigger_when": {
+                        "audit_logging_required": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "audit_logging_required": true
+                    }
+                },
+                {
+                    "id": "data_residency",
+                    "label": "Data residency",
+                    "description": "Ensure data remains in a required geography/region.",
+                    "priority": 90,
+                    "trigger_when": {
+                        "data_residency_required": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "data_residency_required": true
+                    }
+                }
+            ]
+        },
+        "scalability_high_availability": {
+            "label": "Scalability & High Availability",
+            "description": "Auto-scaling, multi-region, and disaster recovery toggles.",
+            "toggles": [
+                {
+                    "id": "auto_scaling",
+                    "label": "Auto-scaling",
+                    "description": "Scale services based on demand with safe limits.",
+                    "priority": 85,
+                    "trigger_when": {
+                        "auto_scaling_enabled": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "auto_scaling_enabled": true
+                    }
+                },
+                {
+                    "id": "multi_region",
+                    "label": "Multi-region",
+                    "description": "Active-active or active-passive multi-region architecture.",
+                    "priority": 90,
+                    "trigger_when": {
+                        "multi_region_required": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "multi_region_required": true,
+                        "availability_target": "99.99"
+                    }
+                },
+                {
+                    "id": "disaster_recovery",
+                    "label": "Disaster recovery",
+                    "description": "Define DR posture and enforce backup/restore readiness.",
+                    "priority": 90,
+                    "trigger_when": {
+                        "disaster_recovery_required": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "disaster_recovery_required": true,
+                        "recovery_time_objective": "1_hour",
+                        "recovery_point_objective": "4_hours"
+                    }
+                }
+            ]
+        },
+        "performance_caching": {
+            "label": "Performance & Caching",
+            "description": "CDN, caching layers, and query optimization.",
+            "toggles": [
+                {
+                    "id": "cdn",
+                    "label": "CDN",
+                    "description": "Edge caching and acceleration for global performance.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "cdn_enabled": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "cdn_enabled": true,
+                        "performance_sensitivity": "high"
+                    }
+                },
+                {
+                    "id": "redis_memcache",
+                    "label": "Redis / Memcache",
+                    "description": "Caching/session storage for lower latency and reduced DB load.",
+                    "priority": 85,
+                    "trigger_when": {
+                        "cache_layer": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "cache_layer": "redis",
+                        "performance_sensitivity": "high"
+                    }
+                },
+                {
+                    "id": "query_optimization",
+                    "label": "Query optimization",
+                    "description": "Indexes, read models, and query performance posture.",
+                    "priority": 70,
+                    "trigger_when": {
+                        "query_optimization_required": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "query_optimization_required": true
+                    }
+                }
+            ]
+        },
+        "billing_subscription": {
+            "label": "Billing & Subscription",
+            "description": "Payment integration, usage tracking, and invoicing.",
+            "toggles": [
+                {
+                    "id": "payment_integration",
+                    "label": "Payment integration",
+                    "description": "Collect payments and manage payment flows.",
+                    "priority": 95,
+                    "trigger_when": {
+                        "payments": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "payments": true
+                    }
+                },
+                {
+                    "id": "usage_tracking",
+                    "label": "Usage tracking",
+                    "description": "Meter usage for quotas, overages, and analytics.",
+                    "priority": 85,
+                    "trigger_when": {
+                        "usage_tracking": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "usage_tracking": true,
+                        "scheduled_jobs": true,
+                        "messaging_queue": "unknown"
+                    }
+                },
+                {
+                    "id": "invoicing",
+                    "label": "Invoicing",
+                    "description": "Generate invoices, receipts, and billing artifacts.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "invoicing": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "invoicing": true,
+                        "scheduled_jobs": true
+                    }
+                },
+                {
+                    "id": "subscriptions",
+                    "label": "Subscriptions",
+                    "description": "Plans, renewals, proration, trials, and cancellation flows.",
+                    "priority": 90,
+                    "trigger_when": {
+                        "billing_subscription": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "billing_subscription": true
+                    }
+                }
+            ]
+        },
+        "notifications": {
+            "label": "Notifications",
+            "description": "Email, SMS, and push notification capabilities.",
+            "toggles": [
+                {
+                    "id": "email_notifications",
+                    "label": "Email notifications",
+                    "description": "Transactional and marketing email delivery hooks.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "email_notifications": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "email_notifications": true,
+                        "third_party_integrations": true
+                    }
+                },
+                {
+                    "id": "sms_notifications",
+                    "label": "SMS notifications",
+                    "description": "OTP and transactional SMS delivery hooks.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "sms_notifications": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "sms_notifications": true,
+                        "third_party_integrations": true
+                    }
+                },
+                {
+                    "id": "push_notifications",
+                    "label": "Push notifications",
+                    "description": "Mobile/web push notifications with token management.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "push_notifications": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "push_notifications": true,
+                        "third_party_integrations": true
+                    }
+                }
+            ]
+        },
+        "background_processing": {
+            "label": "Background Processing",
+            "description": "Queues, worker systems, and cron/scheduled jobs.",
+            "toggles": [
+                {
+                    "id": "queues",
+                    "label": "Queues",
+                    "description": "Async buffering and decoupling for workloads.",
+                    "priority": 85,
+                    "trigger_when": {
+                        "messaging_queue": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "messaging_queue": true
+                    }
+                },
+                {
+                    "id": "worker_systems",
+                    "label": "Worker systems",
+                    "description": "Background workers for asynchronous processing.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "worker_systems": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "worker_systems": true,
+                        "messaging_queue": true
+                    }
+                },
+                {
+                    "id": "cron_jobs",
+                    "label": "Cron jobs / scheduled jobs",
+                    "description": "Recurring jobs for billing runs, cleanups, and reports.",
+                    "priority": 80,
+                    "trigger_when": {
+                        "scheduled_jobs": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "scheduled_jobs": true
+                    }
+                }
+            ]
+        },
+        "search": {
+            "label": "Search",
+            "description": "Full-text search, semantic search, and indexing pipelines.",
+            "toggles": [
+                {
+                    "id": "full_text_search",
+                    "label": "Full-text search",
+                    "description": "Indexing + keyword search over documents/records.",
+                    "priority": 90,
+                    "trigger_when": {
+                        "search": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "search": true,
+                        "search_type": "full_text"
+                    }
+                },
+                {
+                    "id": "semantic_search",
+                    "label": "Semantic search",
+                    "description": "Embeddings-based similarity search and retrieval flows.",
+                    "priority": 85,
+                    "trigger_when": {
+                        "vector_search": [
+                            "unknown",
+                            false,
+                            null,
+                            ""
+                        ]
+                    },
+                    "apply_axes": {
+                        "vector_search": true,
+                        "search": true,
+                        "search_type": "semantic"
+                    }
+                }
+            ]
+        }
+    }
+}

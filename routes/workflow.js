@@ -764,14 +764,235 @@ function getCategoryForService(serviceClass) {
     return CATEGORY_MAP[serviceClass] || 'other';
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// DOMAIN-DRIVEN WORKFLOW ENDPOINTS
+// ═══════════════════════════════════════════════════════════════════
+
+// Load domain configuration files
+const domainsConfig = require('../catalog/domains/domains.json');
+const domainStrategies = require('../catalog/domains/domainStrategies.json');
+
+/**
+ * @route GET /api/workflow/domains
+ * @desc Get all domains and facets for UI dropdowns
+ */
+router.get('/domains', (req, res) => {
+    try {
+        const { domains, facets } = domainsConfig;
+        res.json({
+            success: true,
+            domains: Object.entries(domains).map(([id, data]) => ({
+                id,
+                name: data.name,
+                description: data.description,
+                icon: data.icon,
+                subdomains: Object.entries(data.subdomains || {}).map(([subId, subData]) => ({
+                    id: subId,
+                    label: subData.label,
+                    strategy: domainStrategies.strategies[id]?.subdomains?.[subId]?.defaults_override || {}
+                }))
+            })),
+            facets: Object.entries(facets).filter(([id]) => id !== '_description').map(([id, data]) => ({
+                id,
+                name: data.name,
+                description: data.description,
+                toggles: data.toggles
+            }))
+        });
+    } catch (error) {
+        console.error('[GET /domains] Error:', error);
+        res.status(500).json({ success: false, msg: 'Failed to load domains' });
+    }
+});
+
+/**
+ * @route GET /api/workflow/domain-strategy/:domainId
+ * @desc Get strategy for a specific domain (critical axes, defaults, addons)
+ */
+router.get('/domain-strategy/:domainId', (req, res) => {
+    try {
+        const { domainId } = req.params;
+        const { subdomain } = req.query;
+
+        const strategy = domainStrategies.strategies[domainId];
+        if (!strategy) {
+            return res.status(404).json({ success: false, msg: `Domain '${domainId}' not found` });
+        }
+
+        // Merge global critical axes with domain-specific ones
+        const globalAxes = domainStrategies.shared?.global_critical_axes || [];
+        const domainAxes = strategy.critical_axes || [];
+
+        // Domain axes take priority (by axis_key)
+        const domainAxisKeys = new Set(domainAxes.map(a => a.axis_key));
+        const mergedCriticalAxes = [
+            ...domainAxes,
+            ...globalAxes.filter(a => !domainAxisKeys.has(a.axis_key))
+        ].sort((a, b) => b.priority - a.priority);
+
+        // Get defaults (merge subdomain overrides if applicable)
+        let defaults = { ...strategy.defaults };
+        if (subdomain && strategy.subdomains?.[subdomain]?.defaults_override) {
+            defaults = { ...defaults, ...strategy.subdomains[subdomain].defaults_override };
+        }
+
+        res.json({
+            success: true,
+            domain: {
+                id: domainId,
+                label: strategy.label,
+                description: strategy.description,
+                pattern_hints: strategy.pattern_hints || [],
+                subdomains: Object.entries(strategy.subdomains || {}).map(([id, data]) => ({
+                    id,
+                    label: data.label
+                }))
+            },
+            critical_axes: mergedCriticalAxes,
+            defaults,
+            addons: strategy.addons || [],
+            baseline_defaults: domainStrategies.shared?.default_baseline_axes || {}
+        });
+    } catch (error) {
+        console.error('[GET /domain-strategy] Error:', error);
+        res.status(500).json({ success: false, msg: 'Failed to load domain strategy' });
+    }
+});
+
+/**
+ * @route POST /api/workflow/applicable-addons
+ * @desc Get add-ons that match current project state (for upselling)
+ */
+router.post('/applicable-addons', authMiddleware, (req, res) => {
+    try {
+        const { domain, currentAxes, selectedFacets } = req.body;
+
+        if (!domain) {
+            return res.status(400).json({ success: false, msg: 'Domain is required' });
+        }
+
+        const strategy = domainStrategies.strategies[domain];
+        if (!strategy) {
+            return res.status(404).json({ success: false, msg: `Domain '${domain}' not found` });
+        }
+
+        const axes = currentAxes || {};
+        const missingValues = domainStrategies.shared?.addon_trigger_rules?.missing_values || ['unknown', null, false, ''];
+
+        // Filter addons based on trigger conditions
+        const applicableAddons = (strategy.addons || []).filter(addon => {
+            if (!addon.trigger_when) return false;
+
+            // ALL conditions must match
+            return Object.entries(addon.trigger_when).every(([axisKey, triggerValues]) => {
+                const currentValue = axes[axisKey];
+                // Trigger if current value is in the trigger values list
+                return Array.isArray(triggerValues) && triggerValues.some(tv => {
+                    if (tv === null) return currentValue === null || currentValue === undefined;
+                    if (tv === false) return currentValue === false;
+                    if (tv === 'unknown') return currentValue === 'unknown' || currentValue === undefined;
+                    return currentValue === tv;
+                });
+            });
+        }).map(addon => ({
+            id: addon.id,
+            label: addon.label,
+            description: addon.description,
+            priority: addon.priority,
+            apply_axes: addon.apply_axes
+        })).sort((a, b) => b.priority - a.priority);
+
+        // Also include applicable facet toggles
+        const applicableFacetToggles = [];
+        if (selectedFacets && Array.isArray(selectedFacets)) {
+            selectedFacets.forEach(facetId => {
+                const facet = domainStrategies.facets?.[facetId];
+                if (facet?.toggles) {
+                    facet.toggles.forEach(toggle => {
+                        if (!toggle.trigger_when) return;
+
+                        const matches = Object.entries(toggle.trigger_when).every(([axisKey, triggerValues]) => {
+                            const currentValue = axes[axisKey];
+                            return Array.isArray(triggerValues) && triggerValues.includes(currentValue);
+                        });
+
+                        if (matches) {
+                            applicableFacetToggles.push({
+                                facet_id: facetId,
+                                toggle_id: toggle.id,
+                                label: toggle.label,
+                                description: toggle.description,
+                                priority: toggle.priority,
+                                apply_axes: toggle.apply_axes
+                            });
+                        }
+                    });
+                }
+            });
+        }
+
+        res.json({
+            success: true,
+            domain_addons: applicableAddons,
+            facet_toggles: applicableFacetToggles.sort((a, b) => b.priority - a.priority)
+        });
+    } catch (error) {
+        console.error('[POST /applicable-addons] Error:', error);
+        res.status(500).json({ success: false, msg: 'Failed to get applicable add-ons' });
+    }
+});
+
+/**
+ * Helper: Apply domain defaults to workspace axes
+ * @param {string} domainId - The domain ID
+ * @param {string} subdomainId - Optional subdomain ID
+ * @returns {Object} - Merged defaults to apply
+ */
+function getDomainDefaults(domainId, subdomainId = null) {
+    const baselineDefaults = domainStrategies.shared?.default_baseline_axes || {};
+    const strategy = domainStrategies.strategies[domainId];
+
+    if (!strategy) return baselineDefaults;
+
+    let merged = { ...baselineDefaults, ...strategy.defaults };
+
+    if (subdomainId && strategy.subdomains?.[subdomainId]?.defaults_override) {
+        merged = { ...merged, ...strategy.subdomains[subdomainId].defaults_override };
+    }
+
+    return merged;
+}
+
+/**
+ * Helper: Get critical axes for a domain (for AI context injection)
+ * @param {string} domainId - The domain ID
+ * @returns {Array} - Critical axes with questions
+ */
+function getDomainCriticalAxes(domainId) {
+    const globalAxes = domainStrategies.shared?.global_critical_axes || [];
+    const strategy = domainStrategies.strategies[domainId];
+
+    if (!strategy) return globalAxes;
+
+    const domainAxes = strategy.critical_axes || [];
+    const domainAxisKeys = new Set(domainAxes.map(a => a.axis_key));
+
+    return [
+        ...domainAxes,
+        ...globalAxes.filter(a => !domainAxisKeys.has(a.axis_key))
+    ].sort((a, b) => b.priority - a.priority);
+}
+
 /**
  * @route POST /api/workflow/analyze
  * @desc Monopoly-Grade Architecture Workload Pipeline (15 Layers)
  *       STRICT 2-STEP EXECUTION CONTRACT
+ *       NOW WITH DOMAIN-DRIVEN DEFAULTS AND CONTEXT
  */
+
 router.post('/analyze', authMiddleware, async (req, res) => {
     try {
-        const { userInput, conversationHistory, input_type, ai_snapshot } = req.body;
+        const { userInput, conversationHistory, input_type, ai_snapshot, domain, subdomain } = req.body;
 
         // Validation based on input_type
         if (!input_type) {
@@ -782,8 +1003,44 @@ router.post('/analyze', authMiddleware, async (req, res) => {
         console.log("--- WORKFLOW START ---");
         console.log(`Input Type: ${input_type || 'DESCRIPTION (default)'}`);
 
+        // ═══════════════════════════════════════════════════════════════════
+        // NEW: DOMAIN-DRIVEN CONTEXT
+        // If domain is provided, load defaults and critical axes for context-aware analysis
+        // ═══════════════════════════════════════════════════════════════════
+        let domainContext = null;
+        let domainDefaults = {};
+
+        if (domain) {
+            console.log(`[DOMAIN-DRIVEN] Domain: ${domain}, Subdomain: ${subdomain || 'none'}`);
+
+            const strategy = domainStrategies.strategies[domain];
+            if (strategy) {
+                // Get merged defaults (baseline + domain + subdomain)
+                domainDefaults = getDomainDefaults(domain, subdomain);
+
+                // Get critical axes for this domain (for AI context)
+                const criticalAxes = getDomainCriticalAxes(domain);
+
+                domainContext = {
+                    domain_id: domain,
+                    subdomain_id: subdomain,
+                    label: strategy.label,
+                    description: strategy.description,
+                    pattern_hints: strategy.pattern_hints || [],
+                    critical_axes: criticalAxes,
+                    defaults_applied: Object.keys(domainDefaults)
+                };
+
+                console.log(`[DOMAIN-DRIVEN] Domain defaults applied: ${Object.keys(domainDefaults).length} axes`);
+                console.log(`[DOMAIN-DRIVEN] Critical axes to consider: ${criticalAxes.map(a => a.axis_key).join(', ')}`);
+            } else {
+                console.warn(`[DOMAIN-DRIVEN] Unknown domain: ${domain}`);
+            }
+        }
+
         // === STEP 1: INTENT ANALYSIS ===
         let step1Result;
+
 
         if (req.body.approvedIntent) {
             // User confirmed intent, proceed to Step 2
@@ -1011,8 +1268,12 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             // ═════════════════════════════════════════════════════════════════
             // TERMINAL EXCLUSIONS: Once excluded, NEVER reappear
             // ═════════════════════════════════════════════════════════════════
-            const terminalExclusions = Object.keys(resolvedCapabilities)
-                .filter(cap => resolvedCapabilities[cap] === false);
+            // 🔒 FIX: Terminal exclusions must originate from EXPLICIT user intent, 
+            // not just inferred "false" values.
+            const terminalExclusions = TRACKED_CAPABILITIES.filter(cap => {
+                const baseCap = cap.split('_')[0];
+                return explicitExclusions.includes(cap) || explicitExclusions.includes(baseCap);
+            });
 
             step1Result = {
                 ...rawStep1,
@@ -1026,6 +1287,54 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             console.log("AI Snapshot Created & Resolved");
             console.log("Resolved Capabilities:", JSON.stringify(resolvedCapabilities));
             console.log("Terminal Exclusions:", JSON.stringify(terminalExclusions));
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // NEW: APPLY DOMAIN DEFAULTS TO STEP1 RESULT
+        // Domain defaults are lower priority than AI inference but fill gaps
+        // ═══════════════════════════════════════════════════════════════════
+        if (domainContext && Object.keys(domainDefaults).length > 0) {
+            console.log('[DOMAIN-DRIVEN] Applying domain defaults to step1Result...');
+
+            // Initialize axes if not present
+            if (!step1Result.axes) step1Result.axes = {};
+
+            // Apply domain defaults ONLY if axis is missing or unknown
+            Object.entries(domainDefaults).forEach(([axisKey, defaultValue]) => {
+                const existingAxis = step1Result.axes[axisKey];
+
+                // Apply default only if:
+                // 1. Axis doesn't exist, OR
+                // 2. Axis value is 'unknown' or null/undefined, OR
+                // 3. Axis confidence is very low (< 0.4)
+                const shouldApplyDefault =
+                    !existingAxis ||
+                    existingAxis.value === 'unknown' ||
+                    existingAxis.value === null ||
+                    existingAxis.value === undefined ||
+                    (existingAxis.confidence !== undefined && existingAxis.confidence < 0.4);
+
+                if (shouldApplyDefault) {
+                    step1Result.axes[axisKey] = {
+                        value: defaultValue,
+                        confidence: 0.7, // Domain default = moderate confidence (can be overridden)
+                        source: 'domain_default'
+                    };
+                    console.log(`[DOMAIN-DRIVEN] Applied default: ${axisKey} = ${JSON.stringify(defaultValue)}`);
+                }
+            });
+
+            // Attach domain context to result for downstream use
+            step1Result.domain_context = domainContext;
+
+            // Add pattern hints from domain strategy
+            if (domainContext.pattern_hints && domainContext.pattern_hints.length > 0) {
+                step1Result.pattern_hints = [
+                    ...(step1Result.pattern_hints || []),
+                    ...domainContext.pattern_hints
+                ];
+                console.log(`[DOMAIN-DRIVEN] Added pattern hints: ${domainContext.pattern_hints.join(', ')}`);
+            }
         }
 
 
@@ -1147,15 +1456,34 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             locked: true  // 🔒 Mark as immutable
         };
 
-        // === STEP 2: INFRA SPEC GENERATION (PATTERN-BASED CONSTRUCTION) ===
-        console.log("--- STEP 2: Starting Pattern-Based InfraSpec Construction ---");
+        // === STEP 2: INFRA SPEC GENERATION (AI-FIRST COMPILER) ===
+        console.log("--- STEP 2: AI-First Architecture Generation ---");
 
-        // 🔒 PATTERN RESOLUTION: Deterministic selection based on intent signals
-        // AI is NOT used for pattern/service selection - this is rule-based
+        // 1. AI PROPOSAL (The Planner)
+        // AI reviews intent and proposes services + rationale
+        let step2Result = await aiService.generateConstrainedProposal(step1Result);
+        console.log(`[AI PLANNER] Proposed ${step2Result.ai_services?.length || 0} services`);
+
+        // 2. BACKEND COMPILER (The Verifier)
+        // Verifies AI proposal, enforces constraints, selects pattern
         let patternResolution;
         try {
-            const resolvedArchitecture = patternResolver.resolveArchitecture(step1Result);
-            patternResolution = resolvedArchitecture.canonicalArchitecture;
+            const resolvedArchitecture = patternResolver.resolveArchitecture(
+                step1Result,
+                step2Result.ai_services,
+                step2Result.ai_removals
+            );
+
+            // Map to expected structure for downstream compatibility
+            patternResolution = {
+                ...resolvedArchitecture.pattern_resolution,
+                pattern: resolvedArchitecture.pattern_resolution.selected_pattern, // Alias for legacy code
+                pattern_name: resolvedArchitecture.pattern_resolution.selected_pattern,
+                services: resolvedArchitecture.pattern_resolution.services
+            };
+
+            console.log(`[STEP 2] ✓ Architecture Verified & Compiled: ${patternResolution.pattern}`);
+
         } catch (patternError) {
             console.error("Pattern Resolution Error:", patternError);
             return res.status(500).json({
@@ -1173,45 +1501,11 @@ router.post('/analyze', authMiddleware, async (req, res) => {
         }
 
         const fixedPattern = patternResolution.pattern;
-        console.log(`Pattern Resolved: ${fixedPattern} (${patternResolution.pattern_name})`);
+        console.log(`Pattern Resolved: ${fixedPattern}`);
         console.log(`Services Selected: ${patternResolution.services.map(s => s.name).join(', ')}`);
 
-        // 🔒 FIX 3: AI MODE BASED ON PATTERN
-        // For STATIC_WEB_HOSTING: Skip AI architecture analysis entirely
-        // For other patterns: AI explains but CANNOT change pattern
-        let step2Result;
-        const patternConfig = ARCHITECTURE_PATTERNS[fixedPattern] || {};
-
-        if (fixedPattern === 'STATIC_WEB_HOSTING' || patternConfig.ai_mode === 'EXPLAIN_ONLY') {
-            // 🔒 STATIC: DO NOT ask AI for architecture
-            console.log('[FIX 3] STATIC_WEB_HOSTING detected - SKIPPING AI architecture analysis');
-            step2Result = {
-                architecture_pattern: 'STATIC_WEB_HOSTING',
-                project_name: "Static Website",
-                project_summary: "Simple static website with CDN delivery",
-                component_roles: {
-                    networking: { isolation_required: false },
-                    compute: null,  // No compute for static
-                    data: null,     // No database for static
-                    cache: null,    // No cache for static
-                    observability: { importance: "low" }
-                },
-                risk_review: { security: [], availability: [], cost: [] },
-                review_scores: { architecture_soundness: 100, security_posture: 100, operational_readiness: 95 },
-                explanations: { key_decision: "Static hosting with CDN for optimal performance and minimal cost" }
-            };
-        } else {
-            // Non-static: AI can explain but NOT override pattern
-            step2Result = await aiService.generateConstrainedProposal(step1Result);
-
-            // 🔒 FIX 3: DISCARD any AI output that tries to override pattern
-            if (step2Result.architecture_pattern && step2Result.architecture_pattern !== fixedPattern) {
-                console.log(`[FIX 3] AI tried to change pattern from ${fixedPattern} to ${step2Result.architecture_pattern} - DISCARDED`);
-                step2Result.architecture_pattern = fixedPattern;
-                step2Result.pattern_override_blocked = true;
-            }
-        }
-        console.log("AI Architecture Analysis Complete (scoring/explanation only)");
+        // Pass 3: AI Explanations are already in step2Result, we keep them.
+        console.log("AI Architecture Analysis Complete.");
 
         // === PATTERN-BASED INFRASPEC CONSTRUCTION ===
 
@@ -1235,24 +1529,53 @@ router.post('/analyze', authMiddleware, async (req, res) => {
         // Map canonical service names to expected service class names
         const canonicalToServiceClassMap = {
             'relational_db': 'relational_database',
-            'message_queue': 'message_queue',  // 🔥 FIXED: Keep as message_queue (not messaging_queue)
-            'messaging_queue': 'message_queue',  // 🔥 ALIAS: Normalize to message_queue
+            'message_queue': 'messaging_queue',  // 🔥 FIXED: Map to canonical messaging_queue
+            'messaging_queue': 'messaging_queue',  // 🔥 ALIAS: Map to canonical messaging_queue
             'websocket_gateway': 'event_bus',
             'payment_gateway': 'payment_gateway',  // 🔥 FIXED: Keep as payment_gateway
             'ml_inference': 'compute_serverless', // Closest match
             'object_storage': 'object_storage',
+            'objectstorage': 'object_storage', // Canonical
             'cache': 'cache',
             'api_gateway': 'api_gateway',
+            'apigateway': 'api_gateway', // Canonical
             'authentication': 'identity_auth',
-            'identity_auth': 'identity_auth',  // 🔥 ADDED: Direct mapping
-            'compute': 'compute_vm', // Default compute mapping
-            'app_compute': 'app_compute',  // 🔥 ADDED: Direct mapping
-            'serverless_compute': 'compute_serverless',  // 🔥 ADDED: Map to compute_serverless
+            'identity_auth': 'identity_auth',
+            'identityauth': 'identity_auth', // Canonical
+            'compute': 'compute_vm',
+            'computevm': 'compute_vm', // Canonical
+            'app_compute': 'app_compute',
+            'serverless_compute': 'compute_serverless',
+            'computeserverless': 'compute_serverless', // Canonical
             'load_balancer': 'load_balancer',
+            'loadbalancer': 'load_balancer', // Canonical
             'monitoring': 'monitoring',
             'logging': 'logging',
-            'cdn': 'cdn'  // 🔥 ADDED: Direct mapping
+            'cdn': 'cdn',
+            'block_storage': 'block_storage',
+            'blockstorage': 'block_storage', // Canonical
+            'filestorage': 'file_storage', // Canonical
+            'file_storage': 'file_storage',
+            'relationaldatabase': 'relational_database', // Canonical
+            'nosqldatabase': 'nosql_database', // Canonical
+            'messagingqueue': 'messaging_queue' // Canonical
         };
+
+        // 🔒 FIX: Normalize and Dedup patternResolution.services immediately
+        // This ensures canonical_architecture (Step 2 output) is clean and consistent
+        const seenServices = new Set();
+        patternResolution.services = patternResolution.services.reduce((acc, s) => {
+            // Normalize name using the map (e.g., identityauth -> identity_auth)
+            const normalizedName = canonicalToServiceClassMap[s.name] || s.name;
+
+            // Only add if not already present (dedup)
+            if (!seenServices.has(normalizedName)) {
+                seenServices.add(normalizedName);
+                // Create new object with normalized name to avoid mutating original if ref shared
+                acc.push({ ...s, name: normalizedName });
+            }
+            return acc;
+        }, []);
 
         const selectedServiceClasses = new Set(patternResolution.services.map(s => {
             // Map canonical name to expected service class name
@@ -1592,6 +1915,71 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             );
         }
 
+        // Region Resolution (Dynamic based on intent)
+        // Region Resolution (Dynamic based on intent)
+        const regionIntent = (step1Result.intent_classification?.region ||
+            step1Result.axes?.region?.value ||
+            step1Result.axes?.primary_region_hint?.value ||
+            "US").toUpperCase();
+
+        // Define region map with provider-specific values
+        const REGION_MAP = {
+            "US": {
+                logical: "US_PRIMARY",
+                resolved_aws: "us-east-1",
+                resolved_gcp: "us-central1",
+                resolved_azure: "eastus"
+            },
+            "EU": {
+                logical: "EU_PRIMARY",
+                resolved_aws: "eu-west-1",
+                resolved_gcp: "europe-west1",
+                resolved_azure: "westeurope"
+            },
+            "IN": {
+                logical: "IN_PRIMARY",
+                resolved_aws: "ap-south-1",
+                resolved_gcp: "asia-south1",
+                resolved_azure: "centralindia" /* User requested centralindia */
+            },
+            "ASIA": {
+                logical: "ASIA_PRIMARY",
+                resolved_aws: "ap-southeast-1",
+                resolved_gcp: "asia-southeast1",
+                resolved_azure: "southeastasia"
+            },
+            "AU": {
+                logical: "AU_PRIMARY",
+                resolved_aws: "ap-southeast-2",
+                resolved_gcp: "australia-southeast1",
+                resolved_azure: "australiaeast"
+            }
+        };
+
+        // Handle "India" vs "IN"
+        let normalizedRegionKey = "US";
+        if (regionIntent.includes("INDIA") || regionIntent === "IN") normalizedRegionKey = "IN";
+        else if (regionIntent.includes("EUROPE") || regionIntent === "EU") normalizedRegionKey = "EU";
+        else if (regionIntent.includes("ASIA")) normalizedRegionKey = "ASIA";
+        else if (regionIntent.includes("AUSTRALIA") || regionIntent === "AU") normalizedRegionKey = "AU";
+        else normalizedRegionKey = "US";
+
+        const selectedRegion = REGION_MAP[normalizedRegionKey];
+
+        const finalRegion = {
+            logical_region: selectedRegion.logical,
+            // Provide a primary resolved region (AWS as default reference)
+            resolved_region: selectedRegion.resolved_aws,
+            // Provide specific mapping for generators
+            provider_regions: {
+                aws: selectedRegion.resolved_aws,
+                gcp: selectedRegion.resolved_gcp,
+                azure: selectedRegion.resolved_azure
+            },
+            provider: null,                 // Will be set in Step 3 after provider selection
+            intent: regionIntent
+        };
+
         // === CONSTRUCT FINAL INFRASPEC ===
         const infraSpec = {
             // Tier 1 Data (Default View)
@@ -1610,12 +1998,7 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             canonical_architecture: patternResolution,
 
             // Region information (FIX 2: Ensure region is set in Step 2)
-            region: {
-                logical_region: "IN_PRIMARY", // Default to US_PRIMARY
-                resolved_region: "ap-south-1",   // Default to ap-south-1 for AWS
-                provider: null,                 // Will be set in Step 3 after provider selection
-                intent: "AUTO"                  // Auto-select based on provider
-            },
+            region: finalRegion,
 
             // Tier 2 Data (Engineering View)
             components: activeComponents,
@@ -1819,17 +2202,83 @@ router.post('/predict-usage', authMiddleware, async (req, res) => {
 router.post('/cost-analysis', authMiddleware, async (req, res) => {
     try {
         const { workspace_id, infraSpec, intent, cost_profile, usage_profile } = req.body;
-
         console.log("--- STEP 3: Cost Analysis Started ---");
-        console.log(`Workspace ID: ${workspace_id || 'unknown'}`);
-        console.log(`Cost Profile: ${cost_profile || 'COST_EFFECTIVE'}`);
 
-        // 🔒 INVARIANT CHECK: Step 2 must complete before Step 3
-        if (!infraSpec?.canonical_architecture?.deployable_services ||
+        // Basic input validation
+        if (!infraSpec || !intent) {
+            return res.status(400).json({ error: 'Missing required fields: infraSpec, intent' });
+        }
+
+        // 🔒 FIX: Auto-compute deployable_services if missing (Resilience against frontend payload issues)
+        if (!infraSpec.canonical_architecture?.deployable_services || infraSpec.canonical_architecture.deployable_services.length === 0) {
+            console.log('[STEP 3 INFO] deployable_services missing from payload, attempting to derive from service_classes...');
+
+            // Try to find a source list of services
+            const sourceServices = infraSpec.canonical_architecture?.services ||
+                infraSpec.services ||
+                infraSpec.service_classes;
+
+            if (sourceServices && Array.isArray(sourceServices) && sourceServices.length > 0) {
+                // Load catalog for validation
+                const servicesCatalog = require('../catalog/terraform/services');
+
+                // Derive and Filter
+                const derivedServices = sourceServices
+                    .map(s => {
+                        // Handle object or string
+                        const rawId = (typeof s === 'object') ? (s.service_class || s.service || s.name || s.id) : s;
+                        if (!rawId) return null;
+
+                        // Normalize ID
+                        let normalizedId = rawId.toLowerCase().replace(/[^a-z0-9_]/g, '');
+
+                        // Map specific common variations
+                        const map = {
+                            'apigateway': 'apigateway',
+                            'api_gateway': 'apigateway',
+                            'auditlogging': 'logging',
+                            'object_storage': 'objectstorage',
+                            'relational_database': 'relationaldatabase',
+                            'identity_auth': 'identityauth',
+                            'secrets_management': 'secretsmanagement',
+                            'key_management': 'keymanagement'
+                        };
+                        if (map[normalizedId]) normalizedId = map[normalizedId];
+
+                        // Lookup in catalog
+                        const catalogEntry = servicesCatalog[normalizedId];
+
+                        // Only include if terraform supported
+                        if (catalogEntry && catalogEntry.terraform_supported) {
+                            return {
+                                service: normalizedId,
+                                service_class: normalizedId,
+                                category: catalogEntry.category,
+                                terraform_module: catalogEntry.terraform_module || normalizedId
+                            };
+                        }
+                        return null;
+                    })
+                    .filter(Boolean);
+
+                if (derivedServices.length > 0) {
+                    if (!infraSpec.canonical_architecture) infraSpec.canonical_architecture = {};
+                    infraSpec.canonical_architecture.deployable_services = derivedServices;
+                    console.log(`[STEP 3 RECOVERY] Successfully derived ${derivedServices.length} deployable services.`);
+                }
+            }
+        }
+
+        // 🔒 INVARIANT CHECK: Step 2 must complete before Step 3 (Retry validation after polyfill)
+        if (!infraSpec.canonical_architecture?.deployable_services ||
             infraSpec.canonical_architecture.deployable_services.length === 0) {
+
+            console.error('[STEP 3 VALIDATION FAIL] Missing deployable_services (Recovery Failed)');
+            console.log('Request Body Keys:', Object.keys(req.body));
+
             return res.status(400).json({
                 error: 'Step-to-Step Invariant Violation',
-                message: 'Step 3 requires Step 2 to complete first. infraSpec.canonical_architecture.deployable_services must exist.',
+                message: 'Step 3 requires Step 2 to complete first. infraSpec.canonical_architecture.deployable_services could not be found or derived.',
                 step_required: 'Step 2 (Infrastructure Specification)',
                 current_step: 'Step 3 (Cost Analysis)'
             });
@@ -1852,6 +2301,18 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
 
         const costProfile = cost_profile || 'cost_effective';
         const selected_provider = req.body.selected_provider || 'AWS'; // Need to extract provider from request
+
+        // 🔒 FIX: Create CostAnalysisRun Context
+        const crypto = require('crypto');
+        const runId = crypto.randomUUID();
+        const runContext = {
+            runId: runId,
+            workspaceId: workspace_id,
+            timestamp: new Date().toISOString(),
+            platform: 'win32' // hardcoded or detected
+        };
+        console.log(`[STEP 3] Starting Cost Analysis Run: ${runId} for Workspace: ${workspace_id}`);
+
         let costAnalysis;
         let scenarios = null;
 
@@ -1991,10 +2452,53 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
             let scenarioResults;
             let scenarioSuccess = false;
             try {
+                // 🔥 CRITICAL FIX: Enforce Allowed Providers Constraint
+                let providerCandidates = ['AWS', 'GCP', 'AZURE'];
+
+                if (infraSpec.constraints?.allowed_providers && infraSpec.constraints.allowed_providers.length > 0) {
+                    const allowed = infraSpec.constraints.allowed_providers.map(p => p.toUpperCase());
+                    providerCandidates = providerCandidates.filter(p => allowed.includes(p));
+                    console.log(`[STEP 3] Constraining analysis to allowed providers: ${providerCandidates.join(', ')}`);
+                } else if (req.body.constraints?.allowed_providers) {
+                    // Fallback if not in infraSpec
+                    const allowed = req.body.constraints.allowed_providers.map(p => p.toUpperCase());
+                    providerCandidates = providerCandidates.filter(p => allowed.includes(p));
+                    console.log(`[STEP 3] Constraining analysis to requested providers: ${providerCandidates.join(', ')}`);
+                }
+
+                if (providerCandidates.length === 0) {
+                    throw new Error("No allowed providers match supported providers (AWS, GCP, AZURE)");
+                }
+
+                // ✅ FIX: Resolve Region EARLY for all potential providers
+                const regionResolver = require('../services/infrastructure/regionResolver');
+                if (infraSpec.region) {
+                    const logical = infraSpec.region.logical_region || 'US_PRIMARY';
+
+                    // We must resolve for ALL providers because we're about to run scenarios for all of them
+                    // Creating a "resolved_regions" map avoids the race condition of a single "resolved_region" string
+                    infraSpec.region.resolved_regions = {
+                        aws: regionResolver.resolveRegion(logical, 'aws'),
+                        gcp: regionResolver.resolveRegion(logical, 'gcp'),
+                        azure: regionResolver.resolveRegion(logical, 'azure')
+                    };
+
+                    // Set a sensible default for the "main" resolved_region (e.g. AWS) just in case
+                    if (!infraSpec.region.resolved_region) {
+                        infraSpec.region.resolved_region = infraSpec.region.resolved_regions.aws;
+                    }
+
+                    console.log(`[STEP 3] Pre-resolved regions for analysis:`, infraSpec.region.resolved_regions);
+                }
+
+                // Calculate detailed cost scenarios for allowed providers
+                // 🔥 FIX: Correct signature is (infraSpec, intent, usageProfile)
+                // Provider candidates are handled via infraSpec constraints if needed, or we accept all 3
                 scenarioResults = await infracostService.calculateScenarios(
                     infraSpec,
                     intent,
-                    profileScenarios
+                    usage_profile,
+                    runContext // 🔒 FIX: Pass runContext for isolation
                 );
                 scenarioSuccess = true;
             } catch (scenarioError) {
@@ -2027,7 +2531,16 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                 };
 
                 // Override the recommended cost range with our calculated scenarios
-                costAnalysis.recommended_cost_range = scenarioResults.cost_range;
+                costAnalysis.recommended_cost_range = scenarioResults.cost_range || {
+                    min: 0,
+                    max: 0,
+                    formatted: 'Cost Range Undefined'
+                };
+
+                // Ensure recommended object also has it
+                if (costAnalysis.recommended) {
+                    costAnalysis.recommended.cost_range = costAnalysis.recommended_cost_range;
+                }
             } else {
                 // Fallback to legacy single-point estimation if scenario calculation fails
                 try {
@@ -3110,7 +3623,10 @@ router.post('/terraform', authMiddleware, async (req, res) => {
             const result = await terraformGenerator.generateTerraform(
                 infraSpec.canonical_architecture,
                 provider,
-                infraSpec.region?.resolved_region || 'ap-south-1',
+                // 🔥 CRITICAL FIX: Use provider-specific resolved region, NOT generic fallback
+                infraSpec.region?.resolved_region ||
+                regionResolver.resolveRegion(infraSpec.region?.logical_region || 'US_PRIMARY', provider.toLowerCase()) ||
+                (provider.toLowerCase() === 'gcp' ? 'asia-south1' : 'ap-south-1'),
                 project_name || 'cloudiverse-project'
             );
 

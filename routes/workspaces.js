@@ -233,14 +233,15 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
 
     // Send Notification Email (Feature Requested)
+    // Send Notification Email (Feature Requested) - Non-blocking
     try {
       const userRes = await pool.query("SELECT email, name FROM users WHERE id = $1", [req.user.id]);
       if (userRes.rows.length > 0) {
-        await emailService.sendWorkspaceDeletionEmail(userRes.rows[0], workspaceName);
+        emailService.sendWorkspaceDeletionEmail(userRes.rows[0], workspaceName)
+          .catch(emailErr => console.error("Failed to send deletion email:", emailErr));
       }
-    } catch (emailErr) {
-      console.error("Failed to send deletion email:", emailErr);
-      // Don't block the response
+    } catch (dbErr) {
+      console.error("Failed to fetch user for email:", dbErr);
     }
 
     res.json({ msg: "Workspace and Project deleted" });
@@ -316,7 +317,7 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
       console.log(`[DEPLOYMENT] Workspace ${id} marked as ACTIVE DEPLOYMENT - ${deployment_method} to ${provider}`);
       console.log(`[DEPLOYMENT] Project ${projectId} active_deployments incremented to ${newCount}`);
 
-      // Send Deployment Ready Email
+      // Send Deployment Ready Email (Non-blocking)
       try {
         const userRes = await pool.query("SELECT email, name FROM users WHERE id = $1", [req.user.id]);
         if (userRes.rows.length > 0) {
@@ -324,7 +325,8 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
           const costEstimation = stateJson?.costEstimation || {};
           const selectedProvider = provider || infraSpec?.resolved_region?.provider || 'unknown';
 
-          await emailService.sendDeploymentReadyEmail(userRes.rows[0], {
+          // Fire and forget
+          emailService.sendDeploymentReadyEmail(userRes.rows[0], {
             workspaceName: workspaceName || 'Untitled Project',
             provider: selectedProvider,
             estimatedCost: costEstimation?.rankings?.find(r => r.provider?.toLowerCase() === selectedProvider?.toLowerCase())?.formatted_cost
@@ -333,11 +335,12 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
             pattern: infraSpec?.canonical_architecture?.pattern_name || infraSpec?.pattern_key || 'Custom',
             services: infraSpec?.canonical_architecture?.deployable_services || [],
             region: infraSpec?.resolved_region?.resolved || infraSpec?.resolved_region?.logical || 'Default'
-          });
-          console.log(`[DEPLOYMENT] First-time deployment: Sent email to ${userRes.rows[0].email}`);
+          }).catch(emailErr => console.error("Failed to send deployment email:", emailErr));
+
+          console.log(`[DEPLOYMENT] Email dispatch initiated for ${userRes.rows[0].email}`);
         }
-      } catch (emailErr) {
-        console.error("Failed to send deployment email:", emailErr);
+      } catch (dbErr) {
+        console.error("Failed to fetch user for deployment email:", dbErr);
       }
     } else {
       console.log(`[DEPLOYMENT] Workspace ${id} already deployed - skipping increment/email`);

@@ -138,6 +138,8 @@ function getTerraformResourceType(service, provider) {
             relationaldatabase: 'aws_db_instance',
             cache: 'aws_elasticache_cluster',
             messagequeue: 'aws_sqs_queue',
+            messagingqueue: 'aws_sqs_queue',
+            messaging_queue: 'aws_sqs_queue',
             loadbalancer: 'aws_lb'
         },
         gcp: {
@@ -149,6 +151,8 @@ function getTerraformResourceType(service, provider) {
             relationaldatabase: 'google_sql_database_instance',
             cache: 'google_redis_instance',
             messagequeue: 'google_pubsub_topic',
+            messagingqueue: 'google_pubsub_topic',
+            messaging_queue: 'google_pubsub_topic',
             loadbalancer: 'google_compute_url_map'
         },
         azure: {
@@ -160,6 +164,8 @@ function getTerraformResourceType(service, provider) {
             relationaldatabase: 'azurerm_postgresql_server',
             cache: 'azurerm_redis_cache',
             messagequeue: 'azurerm_servicebus_queue',
+            messagingqueue: 'azurerm_servicebus_queue',
+            messaging_queue: 'azurerm_servicebus_queue',
             loadbalancer: 'azurerm_lb'
         }
     };
@@ -380,6 +386,7 @@ function getModuleFolderName(serviceType) {
         pushnotificationservice: 'push_notification',
         globalloadbalancer: 'global_lb',
         messagequeue: 'mq',
+        messaging_queue: 'mq',
         secretsmanagement: 'secrets',
         auditlogging: 'audit_log',
         appcompute: 'app_compute',

@@ -297,9 +297,9 @@
             ],
             "forbidden_capabilities": [],
             "services": [
-                "iotcore",
-                "timeseriesdatabase",
-                "eventstreaming",
+                "iot_core",
+                "time_series_database",
+                "event_stream",
                 "apigateway",
                 "objectstorage",
                 "logging",
@@ -329,7 +329,7 @@
                 "paymentgateway",
                 "identityauth",
                 "secretsmanagement",
-                "auditlogging",
+                "logging",
                 "loadbalancer",
                 "logging",
                 "monitoring"
@@ -357,18 +357,51 @@
                 "relationaldatabase",
                 "identityauth",
                 "secretsmanagement",
-                "auditlogging",
+                "logging",
                 "objectstorage",
                 "logging",
                 "monitoring"
             ],
             "score_weights": {
-                "domain_healthcare": 1.1,
+                "domain_healthcare": 2.0,
                 "data_persistence": 0.9,
                 "identity_access": 0.8
             },
             "complexity": "complex",
             "name": "Healthcare Platform",
+            "cost_engine": "hybrid"
+        },
+        "GOVERNMENT_PLATFORM": {
+            "description": "Secure, compliant platform for public sector services",
+            "required_capabilities": [
+                "audit_logging",
+                "key_management",
+                "data_persistence"
+            ],
+            "forbidden_capabilities": [
+                "domain_healthcare"
+            ],
+            "services": [
+                "loadbalancer",
+                "waf",
+                "apigateway",
+                "computecontainer",
+                "relationaldatabase",
+                "identityauth",
+                "secretsmanagement",
+                "key_management",
+                "audit_logging",
+                "objectstorage",
+                "logging",
+                "monitoring"
+            ],
+            "score_weights": {
+                "audit_logging": 1.5,
+                "key_management": 1.2,
+                "domain_healthcare": -2.0
+            },
+            "complexity": "complex",
+            "name": "Government Platform",
             "cost_engine": "hybrid"
         },
         "GAMING_BACKEND": {
@@ -482,6 +515,16 @@
             },
             "complexity": "complex",
             "name": "Containerized Web App",
+            "cost_engine": "hybrid"
+        },
+        "CUSTOM": {
+            "description": "AI-generated custom architecture",
+            "required_capabilities": [],
+            "forbidden_capabilities": [],
+            "services": [],
+            "score_weights": {},
+            "complexity": "complex",
+            "name": "Custom Architecture",
             "cost_engine": "hybrid"
         }
     },

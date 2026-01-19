@@ -46,6 +46,61 @@ output "function_arn"  { value = aws_lambda_function.main.arn }
     };
   }
 
+  if (p === 'azure') {
+    return {
+      mainTf: `
+resource "random_id" "func_suffix" {
+  byte_length = 4
+}
+
+resource "azurerm_storage_account" "func_store" {
+  name                     = "stfunc\${var.project_name}\${random_id.func_suffix.hex}"
+  resource_group_name      = var.resource_group_name
+  location                 = var.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_service_plan" "func_plan" {
+  name                = "plan-\${var.project_name}-func"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  os_type             = "Linux"
+  sku_name            = "Y1" # Consumption plan (pay-as-you-go)
+}
+
+resource "azurerm_linux_function_app" "main" {
+  name                = "func-\${var.project_name}-\${random_id.func_suffix.hex}"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+
+  storage_account_name       = azurerm_storage_account.func_store.name
+  storage_account_access_key = azurerm_storage_account.func_store.primary_access_key
+  service_plan_id            = azurerm_service_plan.func_plan.id
+
+  site_config {
+    application_stack {
+      node_version = "18" // Standard node version
+    }
+  }
+
+  tags = {
+    Project = var.project_name
+  }
+}
+`.trim(),
+      variablesTf: renderStandardVariables('azure'),
+      outputsTf: `
+output "function_app_name" {
+  value = azurerm_linux_function_app.main.name
+}
+output "function_app_default_hostname" {
+  value = azurerm_linux_function_app.main.default_hostname
+}
+`.trim()
+    };
+  }
+
   return generateMinimalModule(p, 'computeserverless');
 }
 

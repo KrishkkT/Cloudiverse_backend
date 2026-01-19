@@ -325,18 +325,47 @@ function generateEdgesForPattern(pattern, nodes) {
     } else {
         // Option B: Generic Fallback (V1 Legacy Support)
 
-        // Connect frontend -> ingress
+        // Connect frontend -> ingress chain
+        // Logic: Client -> DNS -> WAF -> LoadBalancer/Gateway -> CDN -> App
         if (hasNode('client')) {
-            if (hasNode('cdn')) addEdge('client', 'cdn', 'requests');
-            else if (hasNode('apigateway')) addEdge('client', 'apigateway', 'requests');
-            else if (hasNode('loadbalancer')) addEdge('client', 'loadbalancer', 'requests');
-            else if (hasNode('websocketgateway')) addEdge('client', 'websocketgateway', 'connects');
+            let userConnectsTo = 'loadbalancer'; // default
+
+            // Determine entry point
+            if (hasNode('dns')) {
+                addEdge('client', 'dns', 'resolves');
+                // DNS points to CDN or WAF or LB
+                if (hasNode('cdn')) addEdge('dns', 'cdn', 'routes');
+                else if (hasNode('waf')) addEdge('dns', 'waf', 'routes');
+                else if (hasNode('apigateway')) addEdge('dns', 'apigateway', 'alias');
+                else if (hasNode('loadbalancer')) addEdge('dns', 'loadbalancer', 'alias');
+                else if (hasNode('websocketgateway')) addEdge('dns', 'websocketgateway', 'alias');
+            } else {
+                // No DNS node, user connects directly to...
+                if (hasNode('cdn')) addEdge('client', 'cdn', 'requests');
+                else if (hasNode('waf')) addEdge('client', 'waf', 'requests');
+                else if (hasNode('apigateway')) addEdge('client', 'apigateway', 'requests');
+                else if (hasNode('loadbalancer')) addEdge('client', 'loadbalancer', 'requests');
+                else if (hasNode('websocketgateway')) addEdge('client', 'websocketgateway', 'connects');
+            }
+        }
+
+        // Chaining: CDN -> WAF -> Ingress
+        if (hasNode('cdn')) {
+            if (hasNode('waf')) addEdge('cdn', 'waf', 'forwards');
+            else if (hasNode('apigateway')) addEdge('cdn', 'apigateway', 'forwards');
+            else if (hasNode('loadbalancer')) addEdge('cdn', 'loadbalancer', 'forwards');
+        }
+
+        if (hasNode('waf')) {
+            if (hasNode('apigateway')) addEdge('waf', 'apigateway', 'filters');
+            else if (hasNode('loadbalancer')) addEdge('waf', 'loadbalancer', 'filters');
         }
 
         // Connect ingress -> compute
         ['apigateway', 'loadbalancer', 'websocketgateway'].forEach(ingress => {
             if (hasNode(ingress)) {
-                ['computeserverless', 'computecontainer', 'computevm', 'kubernetescluster'].forEach(comp => {
+                // Avoid self-loops if multiple ingresses exist (rare but possible in generic logic)
+                ['computeserverless', 'computecontainer', 'computevm', 'kubernetescluster', 'mlinference'].forEach(comp => {
                     addEdge(ingress, comp, 'routes to');
                 });
             }
@@ -345,21 +374,26 @@ function generateEdgesForPattern(pattern, nodes) {
         // Connect compute -> downstream
         ['computeserverless', 'computecontainer', 'computevm', 'kubernetescluster'].forEach(comp => {
             if (hasNode(comp)) {
-                ['relationaldatabase', 'nosqldatabase', 'cache', 'objectstorage', 'messagequeue', 'eventbus'].forEach(data => {
-                    addEdge(comp, data, 'persists/reads');
+                ['relationaldatabase', 'nosqldatabase', 'cache', 'objectstorage', 'blockstorage', 'messagequeue', 'eventbus'].forEach(data => {
+                    addEdge(comp, data, 'uses');
                 });
             }
         });
 
+        // Compute -> Block Storage (Explicit)
+        ['computevm'].forEach(comp => {
+            if (hasNode(comp) && hasNode('blockstorage')) addEdge(comp, 'blockstorage', 'mounts');
+        });
+
         // Logging/Monitoring (Universal)
         nodeIds.forEach(id => {
-            if (id !== 'logging' && id !== 'monitoring' && id !== 'client') {
+            if (id !== 'logging' && id !== 'monitoring' && id !== 'client' && id !== 'dns') {
                 if (hasNode('logging')) addEdge(id, 'logging', 'logs');
                 if (hasNode('monitoring')) addEdge(id, 'monitoring', 'metrics');
             }
         });
 
-        console.warn(`[EDGES] Generated generic edges for ${pattern} (Upgrade catalog to include explicit edges)`);
+        console.warn(`[EDGES] Generated generic edges for ${pattern} (Enhanced Fallback)`);
     }
 
 
@@ -409,7 +443,7 @@ function getGenericServiceName(serviceType, provider) {
         'computecontainer': {
             'AWS': 'ECS Container',
             'GCP': 'Cloud Run',
-            'AZURE': 'Azure Container Instances'
+            'AZURE': 'Azure Container Apps'
         },
         'computevm': {
             'AWS': 'EC2 Instance',
@@ -485,6 +519,21 @@ function getGenericServiceName(serviceType, provider) {
             'AWS': 'Redshift',
             'GCP': 'BigQuery',
             'AZURE': 'Synapse Analytics'
+        },
+        'dns': {
+            'AWS': 'Route 53',
+            'GCP': 'Cloud DNS',
+            'AZURE': 'Azure DNS'
+        },
+        'waf': {
+            'AWS': 'AWS WAF',
+            'GCP': 'Cloud Armor',
+            'AZURE': 'Web Application Firewall'
+        },
+        'blockstorage': {
+            'AWS': 'EBS Volume',
+            'GCP': 'Persistent Disk',
+            'AZURE': 'Managed Disks'
         }
     };
 
