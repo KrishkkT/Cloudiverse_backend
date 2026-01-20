@@ -253,95 +253,33 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
 
     console.log(`[TERRAFORM V2] Using resolved region: ${resolvedRegion}`);
 
-    const projectFolder = {};
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DELEGATE TO V2 GENERATOR - SOURCE OF TRUTH
+    // ═══════════════════════════════════════════════════════════════════════════
+    // We construct a proxy architecture object to force the generator to use 
+    // our strict 'normalizedServices' list (which came from deployable_services).
+    // This ensures that the Export uses exactly what we validated above.
+    const proxyArchitecture = {
+        ...infraSpec.canonical_architecture,
+        services: normalizedServices, // Override 'services' with verified deployable list
+        pattern: pattern
+    };
 
-    // Generate root files
-    projectFolder['versions.tf'] = terraformGeneratorV2.generateVersionsTf(providerLower);
-    projectFolder['providers.tf'] = terraformGeneratorV2.generateProvidersTf(providerLower, resolvedRegion);
-    projectFolder['variables.tf'] = terraformGeneratorV2.generateVariablesTf(providerLower, pattern, normalizedServices);
-    projectFolder['terraform.tfvars'] = terraformGeneratorV2.generateTfvars(providerLower, projectName, requirements);
-    projectFolder['main.tf'] = terraformGeneratorV2.generateMainTf(providerLower, pattern, normalizedServices);
-    projectFolder['outputs.tf'] = terraformGeneratorV2.generateOutputsTf(providerLower, pattern, normalizedServices);
-    projectFolder['README.md'] = terraformGeneratorV2.generateReadme(projectName, providerLower, pattern, normalizedServices);
+    console.log(`[TERRAFORM SERVICE] Delegating generation to V2 Generator for ${projectName}...`);
 
-    // Generate modules
-    projectFolder['modules'] = {};
+    const result = await terraformGeneratorV2.generateTerraform(
+        proxyArchitecture,
+        provider,
+        resolvedRegion,
+        projectName
+    );
 
-    // Add networking module if needed
-    if (needsNetworking(pattern, normalizedServices)) {
-        const networkingModule = terraformModules.getModule('networking', providerLower);
-        if (networkingModule) {
-            projectFolder['modules']['networking'] = networkingModule;
-        }
-    }
+    // V2 generator returns { files, modules } - we map 'files' to 'projectFolder'
+    // to match the expected return signature of this service.
+    const projectFolder = result.files;
 
-    // Add service modules
-    const missingModules = [];
 
-    normalizedServices.forEach(service => {
-        // Services are already normalized and valid against catalog
-        const module = terraformModules.getModule(service, providerLower);
-        const folderName = getModuleFolderName(service);
-
-        if (module) {
-            projectFolder['modules'][folderName] = module;
-            console.log(`[TERRAFORM V2] ✓ Module added: ${service} → ${folderName}`);
-        } else {
-            // Check if this service is a blocking service (must have Terraform module)
-            const blockingServices = ['objectstorage', 'apigateway']; // Normalized IDs
-            const isBlocking = blockingServices.includes(service);
-
-            // ✅ FIX 4: Classify module failure for better error messaging
-            missingModules.push({
-                service,
-                provider: providerLower,
-                reason: 'MODULE_NOT_IMPLEMENTED',
-                is_blocking: isBlocking
-            });
-            console.error(`[TERRAFORM V2] ✗ Missing Terraform module for service: ${service} on ${provider} (blocking: ${isBlocking})`);
-        }
-    });
-
-    // 🔥 TERRAFORM-SAFE MODE: Check for blocking services before continuing
-    const blockingMissingModules = missingModules.filter(m => m.is_blocking);
-
-    if (blockingMissingModules.length > 0) {
-        // FAIL if blocking services are missing modules
-        const blockingServiceNames = blockingMissingModules.map(m => m.service).join(', ');
-        throw new Error(
-            `Terraform generation failed: Missing modules for blocking services: ${blockingServiceNames}.\n` +
-            `Blocking services must have Terraform modules implemented for the selected provider.`
-        );
-    } else if (missingModules.length > 0) {
-        // Only warn for non-blocking services
-        const serviceNames = missingModules.map(m => m.service).join(', ');
-        console.warn(`[TERRAFORM-SAFE] Missing modules for non-blocking services: ${serviceNames}. These will be excluded for Terraform generation.`);
-
-        // Log the missing modules but continue
-        missingModules.forEach(m => {
-            console.warn(`[TERRAFORM-SAFE] Service excluded: ${m.service} (normalized: ${m.normalized}) on ${m.provider} - ${m.reason} (blocking: ${m.is_blocking})`);
-        });
-
-        // Remove missing services from the main.tf to avoid broken references
-        // We'll need to rebuild main.tf without the missing services
-        const availableServices = normalizedServices.filter(service => {
-            const normalizedService = getModuleFolderName(service);
-            const lookupName = normalizedService === 'relational_db' ? 'relational_database' :
-                normalizedService === 'auth' ? 'identity_auth' :
-                    normalizedService === 'ml_inference' ? 'ml_inference_service' :
-                        normalizedService === 'websocket' ? 'websocket_gateway' :
-                            normalizedService === 'serverless_compute' ? 'serverless_compute' :
-                                normalizedService === 'analytical_db' ? 'analytical_database' :
-                                    normalizedService === 'push_notification' ? 'push_notification_service' :
-                                        normalizedService;
-            return terraformModules.getModule(lookupName, providerLower) !== undefined;
-        });
-
-        // Regenerate main.tf with only available services
-        projectFolder['main.tf'] = terraformGeneratorV2.generateMainTf(providerLower, pattern, availableServices);
-
-        console.log(`[TERRAFORM-SAFE] Proceeding with ${availableServices.length}/${normalizedServices.length} services (missing non-blocking services excluded)`);
-    }
+    // Hash and Manifest logic follows...
 
     // ✅ TIGHTENING 2: Generate hash for drift detection and caching
     const terraformHash = crypto
