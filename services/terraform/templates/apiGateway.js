@@ -55,67 +55,7 @@ output "api_id" { value = aws_apigatewayv2_api.main.id }
     };
   }
 
-  if (p === 'gcp') {
-    return {
-      mainTf: `
-resource "google_api_gateway_api" "main" {
-  provider = google-beta
-  api_id   = "\${var.project_name}-api"
-}
-
-resource "google_api_gateway_api_config" "main" {
-  provider      = google-beta
-  api           = google_api_gateway_api.main.api_id
-  api_config_id = "\${var.project_name}-config"
-
-  openapi_documents {
-    document {
-      path     = "spec.yaml"
-      contents = filebase64("spec.yaml") # Placeholder - user needs to provide this
-    }
-  }
-}
-
-resource "google_api_gateway_gateway" "main" {
-  provider   = google-beta
-  api_config = google_api_gateway_api_config.main.id
-  gateway_id = "\${var.project_name}-gateway"
-  region     = var.region
-}
-`.trim(),
-      variablesTf: renderStandardVariables('gcp'),
-      outputsTf: `
-output "gateway_url" {
-  value = google_api_gateway_gateway.main.default_hostname
-}
-`.trim()
-    };
-  }
-
-  // Azure API Management
-  return {
-    mainTf: `
-resource "azurerm_api_management" "main" {
-  name                = "apim-\${var.project_name}"
-  location            = var.location
-  resource_group_name = var.resource_group_name
-  publisher_name      = "Cloudiverse"
-  publisher_email     = "admin@cloudiverse.io"
-
-  sku_name = "Consumption_0"
-
-  tags = {
-    Environment = "production"
-  }
-}
-`.trim(),
-    variablesTf: renderStandardVariables('azure'),
-    outputsTf: `
-output "apim_ur" {
-  value = azurerm_api_management.main.gateway_url
-}
-`.trim()
-  };
+  return generateMinimalModule(p, 'apigateway');
 }
 
 module.exports = { apiGatewayModule };

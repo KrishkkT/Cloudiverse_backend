@@ -30,7 +30,7 @@ variable "resource_group_name" { type = string }
 
 /**
  * Minimal module generator factory
- * 🔥 FIX 3: Uses realistic resource types instead of EIP placeholders
+ * Uses realistic resource types instead of EIP placeholders
  */
 function generateMinimalModule(provider, moduleId) {
   const p = provider.toLowerCase();

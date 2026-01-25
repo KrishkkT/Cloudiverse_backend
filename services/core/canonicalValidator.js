@@ -84,7 +84,7 @@ function deduplicateServices(services) {
 /**
  * Validate canonical architecture against pattern requirements
  */
-function validateCanonicalArchitecture(canonicalArchitecture, intent = {}, excludedServicesInput = []) {
+function validateCanonicalArchitecture(canonicalArchitecture, intent = {}) {
     const errors = [];
     const warnings = [];
 
@@ -106,12 +106,6 @@ function validateCanonicalArchitecture(canonicalArchitecture, intent = {}, exclu
     // 1. Check required services
     for (const required of requirements.required) {
         if (!serviceNames.includes(required)) {
-            // 🔥 FIX: Skip validation if service was strictly excluded by user/logic
-            const isExcluded = (excludedServicesInput || []).includes(required);
-            if (isExcluded) {
-                console.log(`[VALIDATION] Skipping missing required service ${required} (it was explicitly excluded)`);
-                continue;
-            }
             errors.push(`Missing required service for ${pattern}: ${required}`);
         }
     }
@@ -257,12 +251,6 @@ function filterTerraformSafeServices(services) {
 function validateAndFixCanonicalArchitecture(canonicalArchitecture, intent = {}) {
     console.log('[VALIDATOR] Starting validation...');
 
-    // Extract exclusions from the architecture contract if available
-    const excludedServices = canonicalArchitecture.services_contract?.excluded || canonicalArchitecture.excluded || [];
-    if (excludedServices.length > 0) {
-        console.log(`[VALIDATOR] Respecting excluded services: ${excludedServices.join(', ')}`);
-    }
-
     // Step 0: Normalize service names (handles messaging_queue → messagequeue, etc.)
     canonicalArchitecture.services = normalizeServiceNames(canonicalArchitecture.services);
     console.log('[VALIDATOR] Service names normalized');
@@ -291,7 +279,7 @@ function validateAndFixCanonicalArchitecture(canonicalArchitecture, intent = {})
     }
 
     // Step 4: Validate
-    const validation = validateCanonicalArchitecture(canonicalArchitecture, intent, excludedServices);
+    const validation = validateCanonicalArchitecture(canonicalArchitecture, intent);
 
     if (!validation.valid) {
         console.error('[VALIDATOR] Validation failed:', validation.errors);

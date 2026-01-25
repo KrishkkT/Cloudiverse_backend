@@ -93,7 +93,12 @@ router.post('/save', authMiddleware, async (req, res) => {
 
   } catch (err) {
     console.error("Save Draft Error:", err);
-    res.status(500).send("Server Error");
+    console.error("Payload size approx:", JSON.stringify(req.body).length);
+    res.status(500).json({
+      msg: "Server Error during save",
+      error: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 });
 
@@ -233,15 +238,14 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
 
     // Send Notification Email (Feature Requested)
-    // Send Notification Email (Feature Requested) - Non-blocking
     try {
       const userRes = await pool.query("SELECT email, name FROM users WHERE id = $1", [req.user.id]);
       if (userRes.rows.length > 0) {
-        emailService.sendWorkspaceDeletionEmail(userRes.rows[0], workspaceName)
-          .catch(emailErr => console.error("Failed to send deletion email:", emailErr));
+        await emailService.sendWorkspaceDeletionEmail(userRes.rows[0], workspaceName);
       }
-    } catch (dbErr) {
-      console.error("Failed to fetch user for email:", dbErr);
+    } catch (emailErr) {
+      console.error("Failed to send deletion email:", emailErr);
+      // Don't block the response
     }
 
     res.json({ msg: "Workspace and Project deleted" });
@@ -317,16 +321,20 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
       console.log(`[DEPLOYMENT] Workspace ${id} marked as ACTIVE DEPLOYMENT - ${deployment_method} to ${provider}`);
       console.log(`[DEPLOYMENT] Project ${projectId} active_deployments incremented to ${newCount}`);
 
-      // Send Deployment Ready Email (Non-blocking)
+      // Send Deployment Ready Email
       try {
         const userRes = await pool.query("SELECT email, name FROM users WHERE id = $1", [req.user.id]);
-        if (userRes.rows.length > 0) {
+
+        // 🔥 FIX: Prevent duplicate emails
+        const alreadySent = stateJson?.deployment_email_sent_at;
+
+        if (userRes.rows.length > 0 && !alreadySent) {
           const infraSpec = stateJson?.infraSpec || {};
           const costEstimation = stateJson?.costEstimation || {};
           const selectedProvider = provider || infraSpec?.resolved_region?.provider || 'unknown';
 
-          // Fire and forget
-          emailService.sendDeploymentReadyEmail(userRes.rows[0], {
+          await emailService.sendDeploymentReadyEmail(userRes.rows[0], {
+            workspaceId: id, // Pass ID for report link
             workspaceName: workspaceName || 'Untitled Project',
             provider: selectedProvider,
             estimatedCost: costEstimation?.rankings?.find(r => r.provider?.toLowerCase() === selectedProvider?.toLowerCase())?.formatted_cost
@@ -335,12 +343,21 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
             pattern: infraSpec?.canonical_architecture?.pattern_name || infraSpec?.pattern_key || 'Custom',
             services: infraSpec?.canonical_architecture?.deployable_services || [],
             region: infraSpec?.resolved_region?.resolved || infraSpec?.resolved_region?.logical || 'Default'
-          }).catch(emailErr => console.error("Failed to send deployment email:", emailErr));
+          });
+          console.log(`[DEPLOYMENT] First-time deployment: Sent email to ${userRes.rows[0].email}`);
 
-          console.log(`[DEPLOYMENT] Email dispatch initiated for ${userRes.rows[0].email}`);
+          // Update state to record email sent
+          await pool.query(
+            `UPDATE workspaces 
+             SET state_json = jsonb_set(state_json, '{deployment_email_sent_at}', $1)
+             WHERE id = $2`,
+            [JSON.stringify(new Date().toISOString()), id]
+          );
+        } else if (alreadySent) {
+          console.log(`[DEPLOYMENT] Skipping email - already sent at ${alreadySent}`);
         }
-      } catch (dbErr) {
-        console.error("Failed to fetch user for deployment email:", dbErr);
+      } catch (emailErr) {
+        console.error("Failed to send deployment email:", emailErr);
       }
     } else {
       console.log(`[DEPLOYMENT] Workspace ${id} already deployed - skipping increment/email`);

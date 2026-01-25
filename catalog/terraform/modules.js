@@ -22,7 +22,7 @@
 
 const path = require('path');
 
-const catalog = require('./services');
+const catalog = require('../services');
 
 const SUPPORTED_PROVIDERS = ['aws', 'gcp', 'azure'];
 
@@ -502,152 +502,6 @@ output "db_secret_arn" { value = aws_secretsmanager_secret.db_password.arn }
   return generateMinimalModule(p, 'relational_database');
 }
 
-function module_waf(provider) {
-  const p = assertProvider(provider);
-
-  if (p === 'aws') {
-    return {
-      mainTf: `
-resource "aws_wafv2_web_acl" "main" {
-  name        = "\${var.project_name}-waf"
-  description = "WAF for \${var.project_name}"
-  scope       = "REGIONAL"
-
-  default_action {
-    allow {}
-  }
-
-  visibility_config {
-    cloudwatch_metrics_enabled = true
-    metric_name                = "\${var.project_name}-waf"
-    sampled_requests_enabled   = true
-  }
-
-  rule {
-    name     = "AWS-AWSManagedRulesCommonRuleSet"
-    priority = 1
-
-    override_action {
-      none {}
-    }
-
-    statement {
-      managed_rule_group_statement {
-        name        = "AWSManagedRulesCommonRuleSet"
-        vendor_name = "AWS"
-      }
-    }
-
-    visibility_config {
-      cloudwatch_metrics_enabled = true
-      metric_name                = "AWS-AWSManagedRulesCommonRuleSet"
-      sampled_requests_enabled   = true
-    }
-  }
-
-  tags = { Name = "\${var.project_name}-waf" }
-}
-`.trim(),
-      variablesTf: renderStandardVariables('aws'),
-      outputsTf: `
-output "waf_arn" { value = aws_wafv2_web_acl.main.arn }
-output "waf_id"  { value = aws_wafv2_web_acl.main.id }
-`.trim()
-    };
-  }
-  return generateMinimalModule(p, 'waf');
-}
-
-function module_key_management(provider) {
-  const p = assertProvider(provider);
-
-  if (p === 'aws') {
-    return {
-      mainTf: `
-resource "aws_kms_key" "main" {
-  description             = "KMS key for \${var.project_name}"
-  deletion_window_in_days = 10
-  enable_key_rotation     = true
-  tags = { Name = "\${var.project_name}-kms" }
-}
-
-resource "aws_kms_alias" "main" {
-  name          = "alias/\${var.project_name}-key"
-  target_key_id = aws_kms_key.main.key_id
-}
-`.trim(),
-      variablesTf: renderStandardVariables('aws'),
-      outputsTf: `
-output "kms_key_arn" { value = aws_kms_key.main.arn }
-output "kms_key_id"  { value = aws_kms_key.main.key_id }
-`.trim()
-    };
-  }
-  return generateMinimalModule(p, 'key_management');
-}
-
-function module_audit_logging(provider) {
-  const p = assertProvider(provider);
-
-  if (p === 'aws') {
-    return {
-      mainTf: `
-resource "aws_cloudtrail" "main" {
-  name                          = "\${var.project_name}-audit-trail"
-  s3_bucket_name                = aws_s3_bucket.audit_logs.id
-  include_global_service_events = true
-  is_multi_region_trail         = true
-  enable_logging                = true
-  enable_log_file_validation    = true
-
-  tags = { Name = "\${var.project_name}-audit-trail" }
-  depends_on = [aws_s3_bucket_policy.audit_logs]
-}
-
-resource "aws_s3_bucket" "audit_logs" {
-  bucket        = "\${var.project_name}-audit-logs"
-  force_destroy = true
-  tags = { Name = "\${var.project_name}-audit-logs" }
-}
-
-resource "aws_s3_bucket_policy" "audit_logs" {
-  bucket = aws_s3_bucket.audit_logs.id
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-        {
-            Sid    = "AWSCloudTrailAclCheck",
-            Effect = "Allow",
-            Principal = { Service = "cloudtrail.amazonaws.com" },
-            Action   = "s3:GetBucketAcl",
-            Resource = "arn:aws:s3:::\${var.project_name}-audit-logs"
-        },
-        {
-            Sid    = "AWSCloudTrailWrite",
-            Effect = "Allow",
-            Principal = { Service = "cloudtrail.amazonaws.com" },
-            Action   = "s3:PutObject",
-            Resource = "arn:aws:s3:::\${var.project_name}-audit-logs/AWSLogs/*",
-            Condition = {
-                StringEquals = {
-                    "s3:x-amz-acl" = "bucket-owner-full-control"
-                }
-            }
-        }
-    ]
-  })
-}
-`.trim(),
-      variablesTf: renderStandardVariables('aws'),
-      outputsTf: `
-output "cloudtrail_arn" { value = aws_cloudtrail.main.arn }
-output "audit_bucket_name" { value = aws_s3_bucket.audit_logs.id }
-`.trim()
-    };
-  }
-  return generateMinimalModule(p, 'audit_logging');
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Module registry keyed by moduleId from catalog service definitions.
 // Add more module families here over time.
@@ -678,14 +532,11 @@ const MODULE_FAMILIES = {
 
   // Security extended
   secretsmanagement: (p) => generateMinimalModule(p, 'secretsmanagement'),
-  keymanagement: module_key_management,
-  key_management: module_key_management,
+  keymanagement: (p) => generateMinimalModule(p, 'keymanagement'),
   certificatemanagement: (p) => generateMinimalModule(p, 'certificatemanagement'),
-  waf: module_waf,
+  waf: (p) => generateMinimalModule(p, 'waf'),
   ddosprotection: (p) => generateMinimalModule(p, 'ddosprotection'),
   policygovernance: (p) => generateMinimalModule(p, 'policygovernance'),
-  auditlogging: module_audit_logging,
-  audit_logging: module_audit_logging,
 
   // DevOps
   containerregistry: (p) => generateMinimalModule(p, 'containerregistry'),

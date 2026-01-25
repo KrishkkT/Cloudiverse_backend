@@ -306,6 +306,7 @@ const SIZING_MODEL = {
     blockstorage: { ...DATA_SIZING.block_storage },
     loadbalancer: { ...TRAFFIC_SIZING.load_balancer },
     apigateway: { ...TRAFFIC_SIZING.api_gateway },
+    websocketgateway: { ...TRAFFIC_SIZING.api_gateway }, // Map WebSocket to API Gateway sizing
     messagequeue: { ...TRAFFIC_SIZING.messaging_queue },
     eventbus: { ...TRAFFIC_SIZING.event_bus },
     searchengine: { ...TRAFFIC_SIZING.search_engine },
@@ -316,9 +317,8 @@ const SIZING_MODEL = {
     computevm: { ...COMPUTE_SIZING.compute_vm },
     relationaldatabase: { ...DATA_SIZING.relational_database },
     nosqldatabase: { ...DATA_SIZING.nosql_database },
-
-    // 🔥 FIX: Alias keymanagement to secrets_management (common issue)
-    keymanagement: { ...OPERATIONS_SIZING.secrets_management },
+    logging: { ...OPERATIONS_SIZING.logging },
+    monitoring: { ...OPERATIONS_SIZING.monitoring },
 
     // 🔥 FIX: Missing service sizing (caused $0 Infracost estimates)
     paymentgateway: {
@@ -379,92 +379,6 @@ const SIZING_MODEL = {
             SMALL: { messages_per_month: 10000, description: "10K notifications/mo" },
             MEDIUM: { messages_per_month: 100000, description: "100K notifications/mo" },
             LARGE: { messages_per_month: 1000000, description: "1M notifications/mo" }
-        }
-    },
-
-    // 🔥 FIX: IoT Service Sizing (was causing "No sizing defined" errors)
-    iot_core: {
-        cost_effective: {
-            SMALL: { connected_devices: 100, messages_per_device_per_day: 100, kb_per_message: 1, description: "100 devices, 10K msgs/day" },
-            MEDIUM: { connected_devices: 1000, messages_per_device_per_day: 200, kb_per_message: 2, description: "1K devices, 200K msgs/day" },
-            LARGE: { connected_devices: 10000, messages_per_device_per_day: 500, kb_per_message: 4, description: "10K devices, 5M msgs/day" }
-        },
-        high_performance: {
-            SMALL: { connected_devices: 500, messages_per_device_per_day: 500, kb_per_message: 2, description: "500 devices, 250K msgs/day" },
-            MEDIUM: { connected_devices: 5000, messages_per_device_per_day: 1000, kb_per_message: 4, description: "5K devices, 5M msgs/day" },
-            LARGE: { connected_devices: 50000, messages_per_device_per_day: 2000, kb_per_message: 8, description: "50K devices, 100M msgs/day" }
-        }
-    },
-    iotcore: { // Alias without underscore
-        cost_effective: {
-            SMALL: { connected_devices: 100, messages_per_device_per_day: 100, kb_per_message: 1, description: "100 devices, 10K msgs/day" },
-            MEDIUM: { connected_devices: 1000, messages_per_device_per_day: 200, kb_per_message: 2, description: "1K devices, 200K msgs/day" },
-            LARGE: { connected_devices: 10000, messages_per_device_per_day: 500, kb_per_message: 4, description: "10K devices, 5M msgs/day" }
-        },
-        high_performance: {
-            SMALL: { connected_devices: 500, messages_per_device_per_day: 500, kb_per_message: 2, description: "500 devices, 250K msgs/day" },
-            MEDIUM: { connected_devices: 5000, messages_per_device_per_day: 1000, kb_per_message: 4, description: "5K devices, 5M msgs/day" },
-            LARGE: { connected_devices: 50000, messages_per_device_per_day: 2000, kb_per_message: 8, description: "50K devices, 100M msgs/day" }
-        }
-    },
-    event_stream: {
-        cost_effective: {
-            SMALL: { throughput_units: 1, partitions: 2, retention_hours: 24, description: "1 TU, 2 partitions, 24h retention" },
-            MEDIUM: { throughput_units: 4, partitions: 8, retention_hours: 72, description: "4 TU, 8 partitions, 72h retention" },
-            LARGE: { throughput_units: 16, partitions: 32, retention_hours: 168, description: "16 TU, 32 partitions, 7 day retention" }
-        },
-        high_performance: {
-            SMALL: { throughput_units: 4, partitions: 8, retention_hours: 72, description: "4 TU, 8 partitions, 72h retention" },
-            MEDIUM: { throughput_units: 16, partitions: 32, retention_hours: 168, description: "16 TU, 32 partitions, 7 day retention" },
-            LARGE: { throughput_units: 64, partitions: 128, retention_hours: 720, description: "64 TU, 128 partitions, 30 day retention" }
-        }
-    },
-    eventstream: { // Alias without underscore
-        cost_effective: {
-            SMALL: { throughput_units: 1, partitions: 2, retention_hours: 24, description: "1 TU, 2 partitions, 24h retention" },
-            MEDIUM: { throughput_units: 4, partitions: 8, retention_hours: 72, description: "4 TU, 8 partitions, 72h retention" },
-            LARGE: { throughput_units: 16, partitions: 32, retention_hours: 168, description: "16 TU, 32 partitions, 7 day retention" }
-        },
-        high_performance: {
-            SMALL: { throughput_units: 4, partitions: 8, retention_hours: 72, description: "4 TU, 8 partitions, 72h retention" },
-            MEDIUM: { throughput_units: 16, partitions: 32, retention_hours: 168, description: "16 TU, 32 partitions, 7 day retention" },
-            LARGE: { throughput_units: 64, partitions: 128, retention_hours: 720, description: "64 TU, 128 partitions, 30 day retention" }
-        }
-    },
-    time_series_database: {
-        cost_effective: {
-            SMALL: { ingest_rows_per_sec: 100, retention_days: 30, query_frequency_per_hour: 10, description: "100 rows/sec, 30 day retention" },
-            MEDIUM: { ingest_rows_per_sec: 1000, retention_days: 90, query_frequency_per_hour: 100, description: "1K rows/sec, 90 day retention" },
-            LARGE: { ingest_rows_per_sec: 10000, retention_days: 365, query_frequency_per_hour: 1000, description: "10K rows/sec, 1 year retention" }
-        },
-        high_performance: {
-            SMALL: { ingest_rows_per_sec: 1000, retention_days: 90, query_frequency_per_hour: 100, description: "1K rows/sec, 90 day retention" },
-            MEDIUM: { ingest_rows_per_sec: 10000, retention_days: 365, query_frequency_per_hour: 1000, description: "10K rows/sec, 1 year retention" },
-            LARGE: { ingest_rows_per_sec: 100000, retention_days: 730, query_frequency_per_hour: 10000, description: "100K rows/sec, 2 year retention" }
-        }
-    },
-    timeseriesdatabase: { // Alias without underscore
-        cost_effective: {
-            SMALL: { ingest_rows_per_sec: 100, retention_days: 30, query_frequency_per_hour: 10, description: "100 rows/sec, 30 day retention" },
-            MEDIUM: { ingest_rows_per_sec: 1000, retention_days: 90, query_frequency_per_hour: 100, description: "1K rows/sec, 90 day retention" },
-            LARGE: { ingest_rows_per_sec: 10000, retention_days: 365, query_frequency_per_hour: 1000, description: "10K rows/sec, 1 year retention" }
-        },
-        high_performance: {
-            SMALL: { ingest_rows_per_sec: 1000, retention_days: 90, query_frequency_per_hour: 100, description: "1K rows/sec, 90 day retention" },
-            MEDIUM: { ingest_rows_per_sec: 10000, retention_days: 365, query_frequency_per_hour: 1000, description: "10K rows/sec, 1 year retention" },
-            LARGE: { ingest_rows_per_sec: 100000, retention_days: 730, query_frequency_per_hour: 10000, description: "100K rows/sec, 2 year retention" }
-        }
-    },
-    payments_processor: {
-        cost_effective: {
-            SMALL: { api_calls_per_month: 1000, description: "1K API calls/mo (Stripe/Adyen)" },
-            MEDIUM: { api_calls_per_month: 10000, description: "10K API calls/mo" },
-            LARGE: { api_calls_per_month: 100000, description: "100K API calls/mo" }
-        },
-        high_performance: {
-            SMALL: { api_calls_per_month: 10000, description: "10K API calls/mo" },
-            MEDIUM: { api_calls_per_month: 100000, description: "100K API calls/mo" },
-            LARGE: { api_calls_per_month: 1000000, description: "1M API calls/mo" }
         }
     }
 };
@@ -529,9 +443,33 @@ function getSizingForInfraSpec(infraSpec, intent, costProfile = 'cost_effective'
     const sizing = {};
 
     for (const service of requiredServices) {
-        sizing[service.service_class] = {
+        // Normalize: handle both string and object formats
+        const serviceClass = typeof service === 'string' ? service : (service?.service_class || service?.id);
+        if (!serviceClass) {
+            // FAIL-FAST: Invalid service entry means costs will be wrong
+            throw new Error(`[SIZING] Invalid service entry - missing service_class: ${JSON.stringify(service)}`);
+        }
+
+        const serviceSizing = getSizing(serviceClass, tier, costProfile);
+        if (!serviceSizing || serviceSizing.description === 'Default sizing') {
+            // FAIL-FAST: No sizing definition means this service won't be properly costed
+            // WARN only (don't crash the whole pipeline for one missing sizing)
+            console.warn(`[SIZING] No sizing definition for service: ${serviceClass}. Defaulting to SMALL/Medium.`);
+            // Mock a default to prevent downstream crashes
+            sizing[serviceClass] = {
+                tier,
+                description: "Fallback sizing (External/Unknown)",
+                instances: 1,
+                // Add minimal cost fields to prevent null pointers
+                price_per_hour: 0.0,
+                cost_monthly: 0.0
+            };
+            continue;
+        }
+
+        sizing[serviceClass] = {
             tier,
-            ...getSizing(service.service_class, tier, costProfile)
+            ...serviceSizing
         };
     }
 

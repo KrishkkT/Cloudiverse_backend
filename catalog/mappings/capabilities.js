@@ -4,9 +4,10 @@
  *
  * Rules:
  * - Capabilities are intent-level signals from Step 1 (from axes.js).
- * - Services are canonical IDs that exist in your infra catalog (used by cloud.js).
+ * - Services are canonical IDs that exist in your catalog packs.
  * - Values from axes.js are tri-state: 'required' | 'none' | 'unknown'
  */
+
 'use strict';
 
 // Each capability maps to:
@@ -15,102 +16,70 @@
 const CAPABILITY_TO_SERVICE = {
   // Data
   data_persistence: {
-    required: ['relational_database'],
-    optional: ['nosql_database', 'backup']
+    required: ['relationaldatabase'],
+    optional: ['nosqldatabase', 'backup']
   },
 
   document_storage: {
-    required: ['object_storage'],
+    required: ['objectstorage'],
     optional: ['cdn']
   },
 
   static_content: {
-    required: ['object_storage', 'cdn', 'dns'],
-    optional: ['waf', 'certificate_management']
+    required: ['objectstorage', 'cdn', 'dns'],
+    optional: ['waf', 'certificatemanagement']
   },
 
   // Identity & roles
   identity_access: {
-    required: ['identity_auth'],
-    optional: ['secrets_management', 'key_management']
+    required: ['identityauth'],
+    optional: ['secretsmanagement', 'keymanagement']
   },
 
   multi_user_roles: {
-    required: ['identity_auth'],
-    optional: ['policy_governance']
+    required: ['identityauth'],
+    optional: ['policygovernance']
   },
 
   // API & compute
   api_backend: {
-    required: ['api_gateway', 'compute_serverless'],
+    required: ['apigateway', 'computeserverless'],
     optional: ['logging', 'monitoring', 'tracing', 'waf']
   },
 
   realtime: {
-    // generic realtime: events + compute; websocket_gateway can be added later if catalog supports it
-    required: ['event_bus', 'compute_serverless'],
-    optional: ['messaging_queue', 'cache']
+    // Keep it generic: realtime is usually eventing + compute.
+    // If you later add websocket_gateway to catalog, add it here.
+    required: ['eventbus', 'computeserverless'],
+    optional: ['messagequeue', 'cache']
   },
 
   scheduled_jobs: {
-    required: ['workflow_orchestration', 'compute_serverless'],
-    optional: ['messaging_queue', 'compute_container']
+    required: ['workfloworchestration', 'computeserverless'],
+    optional: ['messagequeue']
   },
 
   // Messaging/events
   messaging: {
-    required: ['messaging_queue'],
-    optional: ['event_bus']
+    required: ['messagequeue'],
+    optional: ['eventbus']
   },
 
   eventing: {
-    required: ['event_bus'],
-    optional: ['messaging_queue']
+    required: ['eventbus'],
+    optional: ['messagequeue']
   },
 
   // Search
   search: {
-    required: ['search_engine'],
+    required: ['searchengine'],
     optional: ['cache']
   },
 
-  // Delivery/perf
-  content_delivery: {
-    required: ['cdn'],
-    optional: ['dns']
-  },
-
-  caching: {
-    required: ['cache'],
-    optional: []
-  },
-
-  // Notifications
-  notifications: {
-    required: ['notification'],
-    optional: ['messaging_queue']
-  },
-
-  // Billing / subscription (infra posture)
-  billing_subscription: {
-    required: ['workflow_orchestration', 'logging'],
-    optional: ['messaging_queue', 'notification']
-  },
-
-  usage_tracking: {
-    required: ['logging'],
-    optional: ['event_stream', 'data_warehouse', 'stream_processor']
-  },
-
-  invoicing: {
-    required: ['workflow_orchestration', 'object_storage', 'notification'],
-    optional: ['logging']
-  },
-
-  // Payments (treat as “security posture for payment flows”, not as a cloud payment product)
+  // Payments
   payments: {
-    required: ['payments_processor', 'secrets_management', 'key_management'],
-    optional: ['siem', 'policy_governance', 'waf', 'messaging_queue']
+    required: ['paymentgateway'],
+    optional: ['logging', 'monitoring']
   },
 
   // Ops
@@ -120,60 +89,62 @@ const CAPABILITY_TO_SERVICE = {
   },
 
   devops_automation: {
-    required: ['ci_cd'],
-    optional: ['container_registry', 'artifact_repository']
+    required: ['cicd'],
+    optional: ['containerregistry', 'artifactrepository']
   },
 
   // Compliance / security hardening
   pci_compliant: {
-    required: ['waf', 'key_management', 'logging', 'policy_governance'],
-    optional: ['siem']
+    required: ['waf', 'keymanagement', 'logging'],
+    optional: ['siem', 'policygovernance']
   },
 
   hipaa_compliant: {
-    required: ['key_management', 'logging', 'policy_governance'],
-    optional: ['siem']
-  },
-
-  gdpr_compliant: {
-    required: ['key_management', 'logging', 'policy_governance'],
-    optional: ['siem']
-  },
-
-  audit_logging: {
-    required: ['logging'],
-    optional: ['policy_governance']
-  },
-
-  key_management: {
-    required: ['key_management'],
-    optional: ['secrets_management', 'certificate_management']
-  },
-
-  siem: {
-    required: ['siem'],
-    optional: ['logging', 'monitoring']
+    required: ['keymanagement', 'logging'],
+    optional: ['siem', 'policygovernance']
   },
 
   private_networking: {
-    required: ['vpc_networking', 'private_link'],
-    optional: ['vpn', 'nat_gateway']
+    required: ['vpcnetworking', 'privatelink'],
+    optional: ['vpn', 'natgateway']
   },
 
-  // Domains (service “bundles”)
+  // Domains
   domain_iot: {
-    required: ['iot_core', 'event_stream', 'time_series_database'],
-    optional: ['stream_processor', 'object_storage']
+    required: ['iotcore', 'eventstream', 'timeseriesdatabase'],
+    optional: ['streamprocessor', 'objectstorage']
   },
 
   domain_ml_heavy: {
-    required: ['ml_inference'],
-    optional: ['ml_training', 'feature_store', 'data_warehouse', 'object_storage', 'cache']
+    required: ['mlinference'],  // 🔥 FIX: Only inference required, training is optional for LLM API apps
+    optional: ['mltraining', 'featurestore', 'datawarehouse', 'objectstorage', 'vectordatabase', 'cache']
   },
 
   domain_analytics: {
-    required: ['data_warehouse', 'stream_processor'],
-    optional: ['object_storage']
+    required: ['datawarehouse', 'streamprocessor'],
+    optional: ['objectstorage']
+  },
+
+  // 🔥 FIX 1: Capability shims for complete axes → capabilities → services chain
+  workflow_orchestration: {
+    required: ['computecontainer'],  // Jobs → Containers (Step Functions alternative)
+    optional: ['messagequeue', 'computeserverless']
+  },
+
+  cicd: {
+    required: ['containerregistry'],  // DevOps → Registry
+    optional: ['computecontainer', 'objectstorage']
+  },
+
+  siem: {
+    required: ['logging'],  // Already covered, explicit mapping
+    optional: ['monitoring', 'auditlogging']
+  },
+
+  // 🔥 FIX: Direct cache capability mapping
+  cache: {
+    required: ['cache'],
+    optional: []
   }
 };
 
@@ -187,7 +158,6 @@ function isCapabilityEnabled(value) {
 function getServicesForCapability(capability, opts = {}) {
   const row = CAPABILITY_TO_SERVICE[capability];
   if (!row) return [];
-
   const out = [...(row.required || [])];
   if (opts.includeOptional) out.push(...(row.optional || []));
   return out;
@@ -205,7 +175,6 @@ function resolveServicesFromCapabilities(capabilities, opts = {}) {
 
   for (const [capability, value] of Object.entries(capabilities || {})) {
     if (!isCapabilityEnabled(value)) continue;
-
     const list = getServicesForCapability(capability, opts);
     list.forEach(svc => services.add(svc));
   }
@@ -214,14 +183,13 @@ function resolveServicesFromCapabilities(capabilities, opts = {}) {
 }
 
 /**
- * Terminal exclusions: if a capability is explicitly 'none', treat its services as blocked.
+ * Terminal exclusions: if a capability is explicitly 'none', you can treat its services as blocked.
  */
 function getBlockedServices(capabilities, opts = {}) {
   const blocked = new Set();
 
   for (const [capability, value] of Object.entries(capabilities || {})) {
     if (value !== 'none' && value !== false) continue;
-
     const list = getServicesForCapability(capability, opts);
     list.forEach(svc => blocked.add(svc));
   }

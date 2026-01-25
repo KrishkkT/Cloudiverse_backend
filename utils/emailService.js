@@ -242,6 +242,11 @@ const sendDeploymentReadyEmail = async (user, deploymentDetails) => {
     <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin-top: 30px; color: #92400e;">
       <strong>Next Steps:</strong> You will need to install Terraform and authenticate with your cloud provider to deploy.
     </div>
+    
+    <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px dashed #e2e8f0;">
+       <p style="margin-bottom: 10px; color: #64748b; font-size: 14px;">Need a PDF documentation for your team?</p>
+       <a href="${process.env.VITE_FRONTEND_URL || 'https://cloudiverse.vercel.app'}/report-download/${deploymentDetails.workspaceId}" class="btn" style="background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 10px 20px; font-size: 14px;">📄 Download Project Report</a>
+    </div>
   `;
   await sendEmail(user.email, subject, getHtmlTemplate('Infrastructure Ready', body));
 };

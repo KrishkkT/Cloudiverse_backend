@@ -20,43 +20,44 @@ const { getServiceDefinition } = require('../../catalog/terraform/utils');
  * @returns {Object} - Infracost usage file structure
  */
 function normalizeUsageForInfracost(usage_profile, deployableServices, provider) {
-    // 🔒 FIX: Robust Input Validation
-    if (!usage_profile || typeof usage_profile !== 'object') {
-        console.warn('[USAGE NORMALIZER] Invalid usage profile provided, using defaults');
-        usage_profile = {};
+    if (!usage_profile) {
+        console.warn('[USAGE NORMALIZER] No usage profile provided, using defaults');
+        usage_profile = {
+            monthly_users: 5000,
+            requests_per_user: 30,
+            data_transfer_gb: 50,
+            data_storage_gb: 20,
+            peak_concurrency: 100
+        };
     }
 
-    // Helper to ensure finite number
-    const ensureFinite = (val, defaultVal) => {
-        if (typeof val === 'number' && Number.isFinite(val)) return val;
-        // Handle "object Object" or similar junk
-        const parsed = parseFloat(val);
-        if (Number.isFinite(parsed)) return parsed;
-        return defaultVal;
-    };
-
-    // Extract and validate base metrics with safe defaults
-    const monthlyUsers = ensureFinite(usage_profile.monthly_users, 5000);
-    const requestsPerUser = ensureFinite(usage_profile.requests_per_user, 30);
-    const storageGB = ensureFinite(usage_profile.data_storage_gb, 20);
-    const transferGB = ensureFinite(usage_profile.data_transfer_gb, 50);
-    const peakConcurrency = ensureFinite(usage_profile.peak_concurrency, 100);
-
-    // 🔥 FIX: Initialize the usage object (was causing "usage is not defined" error)
     const usage = {};
 
-    // Calculate derived metrics (guaranteed finite)
-    const monthlyRequests = monthlyUsers * requestsPerUser;
+    // Calculate derived metrics
+    const monthlyRequests = (usage_profile.monthly_users || 5000) *
+        (usage_profile.requests_per_user || 30);
+    const storageGB = usage_profile.data_storage_gb || 20;
+    const transferGB = usage_profile.data_transfer_gb || 50;
 
     console.log(`[USAGE NORMALIZER] ${provider} - Normalizing for ${deployableServices.length} deployable services`);
-    console.log(`[USAGE NORMALIZER] Validated: ${monthlyUsers} users, ${monthlyRequests} requests/mo, ${storageGB}GB storage, ${transferGB}GB transfer`);
+    console.log(`[USAGE NORMALIZER] Derived: ${monthlyRequests} requests/mo, ${storageGB}GB storage, ${transferGB}GB transfer`);
 
     // ═══════════════════════════════════════════════════════════════════
     // COMPUTE SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (deployableServices.includes('compute_serverless') ||
-        deployableServices.includes('app_compute')) {
+    // 🔥 FIX: Normalize service names to lowercase for comparison
+    const normalizedServices = deployableServices.map(s => {
+        if (typeof s === 'string') return s.toLowerCase();
+        const name = s.service_id || s.service || s.canonical_type || s.name || s.service_class;
+        return name ? name.toLowerCase() : null;
+    }).filter(Boolean);
+
+    // Helper to check for service presence (handles both formats)
+    const hasService = (id) => normalizedServices.includes(id.toLowerCase());
+
+    if (hasService('computeserverless') || hasService('compute_serverless') ||
+        hasService('app_compute')) {
 
         switch (provider) {
             case 'AWS':
@@ -64,7 +65,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
                     monthly_requests: monthlyRequests,
                     request_duration_ms: 250
                 };
-                usage['aws_apigatewayv2_api.main'] = {
+                usage['aws_apigatewayv2_api.api'] = {
                     monthly_requests: monthlyRequests
                 };
                 break;
@@ -88,21 +89,33 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         }
     }
 
-    if (deployableServices.includes('compute_container')) {
+    if (hasService('computecontainer') || hasService('compute_container')) {
         const instances = Math.max(2, Math.ceil((usage_profile.peak_concurrency || 100) / 50));
 
         switch (provider) {
             case 'AWS':
+                // 🔥 FIX: Map Fargate usage to the Task Definition resource, not the Service
+                // Infracost v0.10+ charges Fargate at task level
+                usage['aws_ecs_task_definition.pricing-task'] = {
+                    monthly_cpu_credit_hours: instances * 730, // vCPU hours
+                    monthly_memory_gb_hours: instances * 2 * 730 // 2GB * hours
+                };
+
+                // Keep service for orchestration overhead if any
                 usage['aws_ecs_service.app'] = {
-                    monthly_cpu_hours: instances * 730, // 730 hours/month
-                    monthly_memory_gb_hours: instances * 2 * 730 // 2GB per instance
+                    monthly_cpu_hours: instances * 730,
+                    monthly_memory_gb_hours: instances * 2 * 730
                 };
                 break;
 
             case 'GCP':
+                // 🔥 FIX: Cloud Run charging model often requires billed duration
+                // For REALTIME/Web platforms, we assume at least one instance is always warm (provisioned concurrency)
                 usage['google_cloud_run_service.app'] = {
                     request_count: monthlyRequests,
-                    average_request_duration: 250
+                    average_request_duration_ms: 500,
+                    // Force 24/7 billing: instances * 3600 sec/hr * 730 hr/mo
+                    monthly_billable_instance_seconds: instances * 3600 * 730
                 };
                 break;
 
@@ -118,7 +131,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // DATABASE SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (deployableServices.includes('relational_database')) {
+    if (hasService('relationaldatabase') || hasService('relational_database')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_db_instance.db'] = {
@@ -142,10 +155,10 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         }
     }
 
-    if (deployableServices.includes('nosql_database')) {
+    if (hasService('nosqldatabase') || hasService('nosql_database')) {
         switch (provider) {
             case 'AWS':
-                usage['aws_dynamodb_table.db'] = {
+                usage['aws_dynamodb_table.main'] = {
                     monthly_write_request_units: monthlyRequests * 0.3,
                     monthly_read_request_units: monthlyRequests * 0.7,
                     storage_gb: storageGB
@@ -173,7 +186,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // ═══════════════════════════════════════════════════════════════════
 
     // 🔥 FIX: Check for both 'object_storage' and 'objectstorage' (catalog uses no underscore)
-    if (deployableServices.includes('object_storage') || deployableServices.includes('objectstorage')) {
+    if (hasService('objectstorage') || hasService('object_storage')) {
         switch (provider) {
             case 'AWS':
                 // Resource name must match objectStorage.js template: aws_s3_bucket.main
@@ -209,7 +222,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // CACHE SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (deployableServices.includes('cache')) {
+    if (hasService('cache')) {
         // Cache typically runs 24/7, not usage-based
         // Usage keys are minimal (mostly sizing-based in Terraform)
         switch (provider) {
@@ -237,10 +250,10 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // NETWORKING SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (deployableServices.includes('load_balancer')) {
+    if (hasService('loadbalancer') || hasService('load_balancer')) {
         switch (provider) {
             case 'AWS':
-                usage['aws_lb.main'] = {
+                usage['aws_lb.alb'] = {
                     new_connections: monthlyRequests,
                     active_connections: Math.round(monthlyRequests / 30 / 24 / 60),
                     processed_bytes: transferGB * 1024 * 1024 * 1024
@@ -248,23 +261,23 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
                 break;
 
             case 'GCP':
-                usage['google_compute_url_map.main'] = {
+                usage['google_compute_forwarding_rule.lb'] = {
                     monthly_data_processed_gb: transferGB
                 };
                 break;
 
             case 'AZURE':
-                usage['azurerm_application_gateway.lb'] = {
+                usage['azurerm_application_gateway.gateway'] = {
                     monthly_data_processed_gb: transferGB
                 };
                 break;
         }
     }
 
-    if (deployableServices.includes('cdn')) {
+    if (hasService('cdn')) {
         switch (provider) {
             case 'AWS':
-                usage['aws_cloudfront_distribution.main'] = {
+                usage['aws_cloudfront_distribution.cdn'] = {
                     monthly_data_transfer_to_internet_gb: {
                         us_canada_europe: transferGB
                     },
@@ -278,7 +291,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
                 break;
 
             case 'GCP':
-                usage['google_compute_backend_bucket.main'] = {
+                usage['google_compute_backend_bucket.cdn'] = {
                     monthly_egress_data_transfer_gb: {
                         worldwide: transferGB
                     }
@@ -286,7 +299,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
                 break;
 
             case 'AZURE':
-                usage['azurerm_cdn_profile.cdn'] = {
+                usage['azurerm_cdn_endpoint.cdn'] = {
                     zone_1_data_transfer_gb: transferGB
                 };
                 break;
@@ -297,24 +310,24 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // MESSAGING SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (deployableServices.includes('message_queue')) {
+    if (hasService('messagequeue') || hasService('message_queue')) {
         const queueMessages = monthlyRequests * 0.2; // 20% async messages
 
         switch (provider) {
             case 'AWS':
-                usage['aws_sqs_queue.main'] = {
+                usage['aws_sqs_queue.queue'] = {
                     monthly_requests: queueMessages
                 };
                 break;
 
             case 'GCP':
-                usage['google_pubsub_topic.main'] = {
+                usage['google_pubsub_topic.topic'] = {
                     monthly_message_data_gb: Math.ceil(queueMessages / 1000000) // 1KB avg message
                 };
                 break;
 
             case 'AZURE':
-                usage['azurerm_servicebus_namespace.queue'] = {
+                usage['azurerm_servicebus_namespace.bus'] = {
                     monthly_messages: queueMessages
                 };
                 break;
@@ -325,27 +338,26 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // IDENTITY & AUTH SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (deployableServices.includes('identity_auth')) {
+    if (hasService('identityauth') || hasService('identity_auth')) {
         const authRequests = monthlyRequests * 0.5; // 50% require auth
 
         switch (provider) {
             case 'AWS':
-                usage['aws_cognito_user_pool.main'] = {
+                usage['aws_cognito_user_pool.auth'] = {
                     monthly_active_users: usage_profile.monthly_users || 5000
                 };
                 break;
 
             case 'GCP':
                 // Firebase Auth is usage-based but often free tier
-                usage['google_identity_platform_config.main'] = {
+                usage['google_identity_platform_config.auth'] = {
                     monthly_active_users: usage_profile.monthly_users || 5000
                 };
                 break;
 
             case 'AZURE':
-                // HCL uses APIM for auth representation
-                usage['azurerm_api_management.main'] = {
-                    monthly_calls: monthlyRequests * 0.5
+                usage['azurerm_active_directory_b2c_directory.auth'] = {
+                    monthly_active_users: usage_profile.monthly_users || 5000
                 };
                 break;
         }
@@ -355,7 +367,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // HIGH-AVAILABILITY / MULTI-REGION SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (deployableServices.includes('global_load_balancer')) {
+    if (hasService('globalloadbalancer') || hasService('global_load_balancer')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_lb.global_alb'] = {
@@ -371,32 +383,32 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // API GATEWAY SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (deployableServices.includes('api_gateway')) {
+    if (hasService('apigateway') || hasService('api_gateway')) {
         switch (provider) {
             case 'AWS':
-                usage['aws_apigatewayv2_api.main'] = {
+                usage['aws_apigatewayv2_api.api'] = {
                     monthly_requests: monthlyRequests
                 };
                 break;
 
             case 'GCP':
-                usage['google_api_gateway_api.main'] = {
+                usage['google_api_gateway_api.api'] = {
                     monthly_requests: monthlyRequests
                 };
                 break;
 
             case 'AZURE':
-                usage['azurerm_api_management.main'] = {
+                usage['azurerm_api_management.api'] = {
                     monthly_calls: monthlyRequests
                 };
                 break;
         }
     }
 
-    if (deployableServices.includes('websocket_gateway')) {
+    if (hasService('websocketgateway') || hasService('websocket_gateway')) {
         switch (provider) {
             case 'AWS':
-                usage['aws_apigatewayv2_api.main'] = {
+                usage['aws_apigatewayv2_api.websocket'] = {
                     monthly_connection_minutes: monthlyRequests * 5, // 5 mins avg per connection
                     monthly_messages: monthlyRequests * 10 // 10 messages per connection
                 };
@@ -408,7 +420,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // MONITORING & LOGGING SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (deployableServices.includes('monitoring')) {
+    if (hasService('monitoring')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_cloudwatch_metric_alarm.monitoring'] = {
@@ -418,7 +430,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         }
     }
 
-    if (deployableServices.includes('logging')) {
+    if (hasService('logging')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_cloudwatch_log_group.logs'] = {
@@ -426,37 +438,13 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
                     monthly_data_archived_gb: storageGB * 0.3
                 };
                 break;
-
-            case 'AZURE':
-                usage['azurerm_log_analytics_workspace.logs'] = {
-                    monthly_data_ingestion_gb: Math.max(10, storageGB * 0.5),
-                    monthly_data_retention_gb: storageGB * 0.3
-                };
-                break;
         }
     }
 
-    if (deployableServices.includes('monitoring')) {
+    if (hasService('auditlogging') || hasService('audit_logging')) {
         switch (provider) {
             case 'AWS':
-                usage['aws_cloudwatch_metric_alarm.monitoring'] = {
-                    metrics: 50 // number of custom metrics
-                };
-                break;
-
-            case 'AZURE':
-                usage['azurerm_monitor_action_group.health'] = {
-                    // Action groups are usually cheap/free for low volume, 
-                    // maybe add metric alerts if supported
-                };
-                break;
-        }
-    }
-
-    if (deployableServices.includes('audit_logging')) {
-        switch (provider) {
-            case 'AWS':
-                usage['aws_cloudwatch_log_group.main'] = {
+                usage['aws_cloudwatch_log_group.audit'] = {
                     monthly_data_ingested_gb: Math.max(5, storageGB * 0.2),
                     monthly_data_archived_gb: storageGB * 0.5
                 };
@@ -468,11 +456,11 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // SECRETS & SECURITY SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (deployableServices.includes('secrets_management') ||
-        deployableServices.includes('secrets_manager')) {
+    if (hasService('secretsmanagement') || hasService('secrets_management') ||
+        hasService('secrets_manager')) {
         switch (provider) {
             case 'AWS':
-                usage['aws_secretsmanager_secret.main'] = {
+                usage['aws_secretsmanager_secret.vault'] = {
                     monthly_api_calls: 10000 // typical secret retrieval
                 };
                 break;
@@ -483,7 +471,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // IOT SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (deployableServices.includes('iot_core')) {
+    if (hasService('iotcore') || hasService('iot_core')) {
         const deviceMessages = (usage_profile.device_count || 1000) * 30 * 24 * 60; // 1 msg/min
         switch (provider) {
             case 'AWS':
@@ -494,7 +482,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         }
     }
 
-    if (deployableServices.includes('time_series_db')) {
+    if (hasService('timeseriesdatabase') || hasService('time_series_db')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_timestreamwrite_database.tsdb'] = {
@@ -504,7 +492,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         }
     }
 
-    if (deployableServices.includes('event_streaming')) {
+    if (hasService('eventstreaming') || hasService('event_streaming')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_kinesis_stream.events'] = {
@@ -518,9 +506,9 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // ML / AI SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (deployableServices.includes('mlinference') ||
-        deployableServices.includes('ml_inference_gpu') ||
-        deployableServices.includes('ml_inference_service')) {
+    if (hasService('mlinference') ||
+        hasService('ml_inference_gpu') ||
+        hasService('ml_inference_service')) {
 
         // Calculate ML inference usage from user inputs
         const mlInferences = monthlyRequests * 0.5; // Assume 50% of requests are ML inferences
@@ -572,13 +560,12 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         }
     }
 
-
-    // Key Management Support
-    if (deployableServices.includes('key_management')) {
+    if (deployableServices.includes('app_compute')) {
         switch (provider) {
             case 'AWS':
-                usage['aws_kms_key.main'] = {
-                    monthly_requests: monthlyRequests * 0.1 // 10% of requests need crypto ops
+                usage['aws_ecs_service.app'] = {
+                    monthly_cpu_hours: 2 * 730, // 2 instances 24/7
+                    monthly_memory_gb_hours: 4 * 730 // 2GB each
                 };
                 break;
         }
@@ -614,7 +601,34 @@ function toInfracostYAML(normalizedUsage) {
     return yaml;
 }
 
+/**
+ * Convenience wrapper: Normalize + Convert to YAML
+ */
+function generateInfracostUsageFile(deployableServices, usageProfile, provider = 'AWS') {
+    // Note: Provider defaults to AWS for structure if not specified, 
+    // but ideally should be passed. InfracostService passes it implicitly?
+    // Actually infracostService loop calls this, but previously passed (billableServices, usageProfile).
+    // The signature in usageNormalizer.normalizeUsageForInfracost is (usage_profile, deployableServices, provider).
+    // We need to match the call site: usageNormalizer.generateInfracostUsageFile(billableServices, usageProfile)
+
+    // We'll map the params correctly.
+    // Provider is missing in the call site in infracostService.js!
+    // We need to fix the call site in infracostService.js to pass provider, OR infer it.
+    // However, since usage keys are provider-specific (aws_ vs google_), we MUST know the provider.
+
+    // For now, let's look at the call site in infracostService.js:
+    // usageNormalizer.generateInfracostUsageFile(billableServices, usageProfile) 
+    // It's inside generateCostEstimate(provider, ...)
+
+    // So I should also update infracostService.js to pass 'provider'.
+
+    // But first, let's define this function to accept (deployableServices, usageProfile, provider).
+    const usage = normalizeUsageForInfracost(usageProfile, deployableServices, provider || 'AWS');
+    return toInfracostYAML(usage);
+}
+
 module.exports = {
     normalizeUsageForInfracost,
-    toInfracostYAML
+    toInfracostYAML,
+    generateInfracostUsageFile
 };

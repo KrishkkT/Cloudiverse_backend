@@ -18,14 +18,13 @@ const pool = new Pool({
 
 
 // Test the connection
-// Test the connection (MOVED TO SERVER.JS)
-// pool.query('SELECT NOW()', (err, res) => {
-//   if (err) {
-//     console.error('Database connection error:', err.stack);
-//   } else {
-//     console.log('Database connected successfully');
-//   }
-// });
+pool.query('SELECT NOW()', (err, res) => {
+  if (err) {
+    console.error('Database connection error:', err.stack);
+  } else {
+    console.log('Database connected successfully');
+  }
+});
 
 // FIX: Prevent crash on idle client errors
 pool.on('error', (err, client) => {

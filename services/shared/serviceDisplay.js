@@ -12,6 +12,7 @@ const SERVICE_DISPLAY = {
     "globalloadbalancer": { name: "Global Load Balancer", category: "traffic", icon: "globe", description: "Multi-region routing" },
     "websockets": { name: "WebSockets", category: "traffic", icon: "link", description: "Real-time connections" },
     "dns": { name: "DNS", category: "traffic", icon: "globe", description: "Domain Name System" },
+    "websocketgateway": { name: "WebSocket Gateway", category: "traffic", icon: "radio-tower", description: "Real-time socket management" },
 
     // Compute
     "appcompute": { name: "App Compute", category: "compute", icon: "server", description: "Application servers" },
@@ -48,7 +49,6 @@ const SERVICE_DISPLAY = {
 
     // Payments
     "paymentgateway": { name: "Payment Gateway", category: "payments", icon: "dollar-sign", description: "Payment processing" },
-    "payments_processor": { name: "Payments Processor", category: "payments", icon: "credit-card", description: "Payment gateway integration (Stripe/Adyen)" },
 
     // Messaging
     "messagequeue": { name: "Message Queue", category: "messaging", icon: "mail", description: "Async messaging" },
@@ -80,38 +80,25 @@ function generateServiceDisplay(services) {
         return [];
     }
 
-    // DEDUPLICATION: Use Map to ensure unique canonical_type
-    const seenTypes = new Map();
+    return services.map(svc => {
+        const canonical_type = (svc.canonical_type || svc).toLowerCase().trim(); // Ensure lowercase and trim
+        console.log(`[DISPLAY DEBUG] Looking up service: '${canonical_type}'`);
+        const display = SERVICE_DISPLAY[canonical_type] || {
+            name: canonical_type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+            category: "other",
+            icon: "cloud",
+            description: canonical_type
+        };
 
-    return services
-        .map(svc => {
-            const canonical_type = (svc.canonical_type || svc.service_class || svc.name || svc).toString().toLowerCase().trim();
-            console.log(`[DISPLAY DEBUG] Looking up service: '${canonical_type}'`);
-            const display = SERVICE_DISPLAY[canonical_type] || {
-                name: canonical_type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-                category: "other",
-                icon: "cloud",
-                description: canonical_type
-            };
-
-            return {
-                id: svc.id || canonical_type,
-                icon: display.icon,
-                name: display.name,
-                category: display.category,
-                description: display.description,
-                canonical_type: canonical_type
-            };
-        })
-        .filter(svc => {
-            // Dedupe: keep only the first occurrence of each canonical_type
-            if (seenTypes.has(svc.canonical_type)) {
-                console.log(`[DISPLAY DEDUPE] Removing duplicate: ${svc.canonical_type}`);
-                return false;
-            }
-            seenTypes.set(svc.canonical_type, true);
-            return true;
-        });
+        return {
+            id: svc.id || canonical_type,
+            icon: display.icon,
+            name: display.name,
+            category: display.category,
+            description: display.description,
+            canonical_type: canonical_type
+        };
+    });
 }
 
 /**

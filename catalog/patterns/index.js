@@ -1,6 +1,4 @@
 /**
- * backend/catalog/patterns/index.js
- *
  * PATTERN REGISTRY (CONFIG ONLY)
  * Patterns define:
  * - which canonical services are allowed/forbidden
@@ -8,12 +6,12 @@
  * - diagram edges (as data, not code)
  *
  * IMPORTANT:
- * - Service IDs MUST match backend/catalog/services (master registry).
+ * - Service IDs MUST match backend/catalog/services (master registry). [file:54]
  */
+
 'use strict';
 
-// CHANGED: point to terraform/services.js (SSOT for service definitions)
-const services = require('../terraform/services');
+const services = require('../terraform/services'); // Master registry (merged domain packs)
 
 // verify() helps catch typos early. In production, keep warnings (do not crash).
 function verify(serviceId) {
@@ -26,9 +24,6 @@ function verify(serviceId) {
 function v(list) {
     return (list || []).map(verify);
 }
-
-// NOTE: keep your existing exported pattern objects exactly as you have them today.
-// (Only the import above changes.)
 
 module.exports = {
     // ───────────────────────────────────────────────────────────────────

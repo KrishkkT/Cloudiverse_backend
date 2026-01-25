@@ -1,194 +1,101 @@
 /**
  * backend/config/aliases.js
  *
- * Centralized service/capability ID normalization.
- * Maps legacy/drifted IDs to the canonical (snake_case) IDs used across:
- * - backend/catalog/mappings/cloud.js (SERVICE_CATALOG ids)
- * - backend/config/terraform-modules.json
+ * Centralized service ID alias normalization.
+ * Maps legacy/drifted IDs to canonical catalog IDs.
  *
- * Use `resolveServiceId(id)` before any lookup.
+ * Use `resolveServiceId(id)` before any catalog lookup.
  */
+
 'use strict';
 
-// Canonical IDs are snake_case (right side).
+/**
+ * Mapping of any possible drift/legacy name to the new "catalog style" (non-snake_case) ID.
+ * The right side MUST match an ID in backend/catalog/domains/*.
+ */
 const SERVICE_ALIASES = {
-    // --- Compute ---
-    computeserverless: 'computeserverless',
+    // -- Compute --
     compute_serverless: 'computeserverless',
-    serverless_compute: 'compute_serverless',
-    lambda: 'compute_serverless',
-
-    computecontainer: 'computecontainer',
+    serverless_compute: 'computeserverless',
     compute_container: 'computecontainer',
-    appcompute: 'computecontainer',
     app_compute: 'computecontainer',
+    compute_vm: 'computevm',
+    compute_batch: 'computebatch',
+    compute_edge: 'computeedge',
+    compute: 'computecontainer', // default alias
 
-    computevm: 'compute_vm',
-    compute_vm: 'compute_vm',
+    // -- Database --
+    relational_database: 'relationaldatabase',
+    relational_db: 'relationaldatabase',
+    nosql_database: 'nosqldatabase',
+    time_series_database: 'timeseriesdatabase',
+    time_series_db: 'timeseriesdatabase',
+    vector_database: 'vectordatabase',
+    search_engine: 'searchengine',
+    cache: 'cache', // core.js
 
-    computebatch: 'compute_batch',
-    compute_batch: 'compute_batch',
-
-    computeedge: 'compute_edge',
-    compute_edge: 'compute_edge',
-
-    // --- Database ---
-    relationaldatabase: 'relational_database',
-    relational_database: 'relational_database',
-    relational_db: 'relational_database',
-
-    nosqldatabase: 'nosql_database',
-    nosql_database: 'nosql_database',
-
-    cache: 'cache',
-
-    searchengine: 'search_engine',
-    search_engine: 'search_engine',
-
-    multiregiondb: 'multi_region_database',
-    multi_region_db: 'multi_region_database',
-    multi_region_database: 'multi_region_database',
-
-    // --- Storage ---
-    objectstorage: 'object_storage',
-    object_storage: 'object_storage',
-
-    blockstorage: 'block_storage',
-    block_storage: 'block_storage',
-
-    filestorage: 'file_storage',
-    file_storage: 'file_storage',
-
-    blockstorage: 'blockstorage',
+    // -- Storage --
+    object_storage: 'objectstorage',
     block_storage: 'blockstorage',
+    file_storage: 'filestorage',
 
-    backup: 'backup',
-
-    // --- Networking ---
-    apigateway: 'apigateway',
+    // -- Network --
     api_gateway: 'apigateway',
-
-    loadbalancer: 'loadbalancer',
     load_balancer: 'loadbalancer',
+    global_load_balancer: 'loadbalancer',
+    vpc_networking: 'vpcnetworking',
+    nat_gateway: 'natgateway',
+    private_link: 'privatelink',
+    service_discovery: 'servicediscovery',
+    service_mesh: 'servicemesh',
+    vpn_gateway: 'vpngateway',
+    internet_gateway: 'internetgateway',
+    transit_gateway: 'transitgateway',
 
-    cdn: 'cdn',
-    dns: 'dns',
-
-    vpcnetworking: 'vpc_networking',
-    vpc_networking: 'vpc_networking',
-
-    natgateway: 'nat_gateway',
-    nat_gateway: 'nat_gateway',
-
-    vpn: 'vpn',
-    vpn_gateway: 'vpn',
-
-    privatelink: 'private_link',
-    private_link: 'private_link',
-
-    servicediscovery: 'service_discovery',
-    service_discovery: 'service_discovery',
-
-    servicemesh: 'service_mesh',
-    service_mesh: 'service_mesh',
-
-    websocketgateway: 'websocket_gateway',
-    websocket_gateway: 'websocket_gateway',
-
-    globalloadbalancer: 'global_load_balancer',
-    global_load_balancer: 'global_load_balancer',
-
-    // --- Integration / Messaging ---
-    messagequeue: 'messaging_queue',
-    messaging_queue: 'messaging_queue',
-    message_queue: 'messaging_queue',
-
-    eventbus: 'eventbus',
+    // -- Integration / Messaging --
+    messaging_queue: 'messagequeue',
+    message_queue: 'messagequeue',
     event_bus: 'eventbus',
-
-    workfloworchestration: 'workfloworchestration',
     workflow_orchestration: 'workfloworchestration',
+    event_streaming: 'eventstreaming',
+    event_stream: 'eventstreaming',
+    kinesis_stream: 'kinesisstream',
+    batch_job: 'batchjob',
+    sms_notification: 'smsnotification',
+    payment_gateway: 'paymentgateway',
+    websocket_gateway: 'websocketgateway',
+    websocket: 'websocketgateway',
 
-    notification: 'notification',
-
-    emailnotification: 'email_service',
-    email_service: 'email_service',
-
-    pushnotificationservice: 'push_notification_service',
-    push_notification_service: 'push_notification_service',
-    push_notification: 'push_notification_service',
-
-    // --- Security ---
-    identityauth: 'identityauth',
+    // -- Security --
     identity_auth: 'identityauth',
     auth: 'identityauth',
     authentication: 'identityauth',
-
-    secretsmanagement: 'secretsmanagement',
     secrets_management: 'secretsmanagement',
     secrets_manager: 'secretsmanagement',
-
-    keymanagement: 'keymanagement',
     key_management: 'keymanagement',
-
-    certificatemanagement: 'certificate_management',
-    certificate_management: 'certificate_management',
-    certificate_manager: 'certificate_management',
-
-    waf: 'waf',
+    certificate_management: 'certificatemanagement',
+    certificate_manager: 'certificatemanagement',
+    ddos_protection: 'ddosprotection',
+    policy_governance: 'policygovernance',
     waf_security: 'waf',
+    iam_policy: 'iampolicy',
+    vulnerability_scanner: 'vulnerabilityscanner',
+    security_posture: 'securityposture',
 
-    ddosprotection: 'ddos_protection',
-    ddos_protection: 'ddos_protection',
+    // -- Observability --
+    audit_logging: 'auditlogging',
+    log_aggregation: 'logaggregation',
+    incident_management: 'incidentmanagement',
 
-    policygovernance: 'policy_governance',
-    policy_governance: 'policy_governance',
-
-    auditlogging: 'logging',
-    eventstreaming: 'event_stream',
-    vectordatabase: 'nosql_database',
-
-    // --- Observability ---
-    logging: 'logging',
-    monitoring: 'monitoring',
-    tracing: 'tracing',
-    siem: 'siem',
-
-    // --- DevOps ---
-    containerregistry: 'container_registry',
-    container_registry: 'container_registry',
-
-    cicd: 'ci_cd',
-    ci_cd: 'ci_cd',
-
-    artifactrepository: 'artifact_repository',
-    artifact_repository: 'artifact_repository',
-
-    // --- IoT / Analytics / ML (from terraform-modules.json) ---
-    iotcore: 'iot_core',
-    iot_core: 'iot_core',
-
-    timeseriesdatabase: 'time_series_database',
-    time_series_database: 'time_series_database',
-    time_series_db: 'time_series_database',
-
-    eventstream: 'event_stream',
-    event_stream: 'event_stream',
-
-    datawarehouse: 'data_warehouse',
-    data_warehouse: 'data_warehouse',
-
-    streamprocessor: 'stream_processor',
-    stream_processor: 'stream_processor',
-
-    mltraining: 'ml_training',
-    ml_training: 'ml_training',
-
-    mlinference: 'ml_inference',
-    ml_inference: 'ml_inference',
-
-    featurestore: 'feature_store',
-    feature_store: 'feature_store'
+    // -- DevOps --
+    container_registry: 'containerregistry',
+    ci_cd: 'cicd',
+    artifact_repository: 'artifactrepository',
+    build_service: 'buildservice',
+    config_management: 'configmanagement',
+    parameter_store: 'parameterstore',
+    iac_state: 'iacstate',
+    state_locking: 'statelocking'
 };
 
 const CAPABILITY_ALIASES = {
@@ -199,7 +106,8 @@ const CAPABILITY_ALIASES = {
 
 function resolveServiceId(id) {
     if (!id || typeof id !== 'string') return id;
-    const normalized = id.trim().toLowerCase();
+    // Normalize to lowercase first to be extra safe
+    const normalized = id.toLowerCase();
     return SERVICE_ALIASES[normalized] || normalized;
 }
 
@@ -210,13 +118,11 @@ function resolveServiceIds(ids) {
 
 function resolveCapabilityId(id) {
     if (!id || typeof id !== 'string') return id;
-    const normalized = id.trim();
-    return CAPABILITY_ALIASES[normalized] || normalized;
+    return CAPABILITY_ALIASES[id] || id;
 }
 
 function isAlias(id) {
-    if (!id || typeof id !== 'string') return false;
-    return Object.prototype.hasOwnProperty.call(SERVICE_ALIASES, id.trim().toLowerCase());
+    return SERVICE_ALIASES.hasOwnProperty(id);
 }
 
 function getReverseAliasMap() {

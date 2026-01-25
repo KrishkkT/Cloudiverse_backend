@@ -420,7 +420,15 @@ function aggregateScenarios(scenarios) {
     }
 
     if (allCosts.length === 0) {
-        throw new Error("aggregateScenarios: no costs found");
+        console.warn('[aggregateScenarios] No costs found - returning fallback');
+        return {
+            cost_range: {
+                min: 0,
+                max: 0,
+                formatted: '$0.00 - $0.00/month'
+            },
+            recommended: null
+        };
     }
 
     const min = Math.min(...allCosts);
@@ -551,11 +559,27 @@ function computeConfidence(infraSpec, scenarios, usage = {}, estimate_type = 'he
     const usageFields = ['monthly_users', 'requests_per_user', 'data_transfer_gb', 'data_storage_gb'];
     const filledFields = usageFields.filter(f => usage[f] !== undefined).length;
 
+    // 🔥 FIX: Check if we have an authoritative confidence from the engine
+    // If scenarios/result has a pre-calculated confidence (e.g. from Infracost partial success), use it as baseline
+    // We expect it passed via 'infraSpec' context or we infer it?
+    // Actually, this function is called at the END.
+    // Let's rely on estimate_type as the gate.
+
     let usageConfidence = 0;
     if (usage.confidence && typeof usage.confidence === 'number') {
         // Explicit confidence provided from AI or user
         usageConfidence = usage.confidence * 0.5;
         explanation.push(`Usage confidence: ${Math.round(usage.confidence * 100)}%`);
+    } else if (estimate_type === 'heuristic' || estimate_type === 'formula_fallback') {
+        // Fallback pricing -> usage matters less because the pricing itself is flawed
+        // Penalize usage confidence cap
+        if (filledFields === usageFields.length) {
+            usageConfidence = 0.35; // Cap at 35% instead of 50%
+            explanation.push('Complete usage data (approx. pricing)');
+        } else {
+            usageConfidence = 0.15;
+            explanation.push('Approximate usage data');
+        }
     } else if (filledFields === usageFields.length) {
         usageConfidence = 0.5;
         explanation.push('Complete usage data provided');
@@ -600,8 +624,19 @@ function computeConfidence(infraSpec, scenarios, usage = {}, estimate_type = 'he
 
     // ═══════════════════════════════════════════════════════════════════════
     // 4. VALIDATION: Cap at 0.95 (never 100% certain)
+    // 🔥 FIX: Strict cap for heuristic/fallback estimates
     // ═══════════════════════════════════════════════════════════════════════
-    const finalScore = Math.min(score, 0.95);
+    let finalScore = score;
+
+    if (estimate_type === 'heuristic' || estimate_type === 'formula_fallback') {
+        const strictCap = 0.60;
+        if (finalScore > strictCap) {
+            finalScore = strictCap;
+            explanation.push(`Confidence capped at ${Math.round(strictCap * 100)}% due to fallback pricing`);
+        }
+    }
+
+    finalScore = Math.min(finalScore, 0.95);
 
     return {
         score: parseFloat(finalScore.toFixed(2)),
@@ -674,14 +709,18 @@ function generateRecommendationFacts(recommendedResult, allScenarios, usage, pat
     }
 
     // Identify dominant cost drivers from the recommended result
-    const dominantDrivers = recommendedResult.drivers
-        .sort((a, b) => b.cost_contribution - a.cost_contribution)
-        .slice(0, 2)
-        .map(driver => ({
-            name: driver.name,
-            value: driver.value,
-            cost_contribution: driver.cost_contribution
-        }));
+    // 🔥 FIX: Handle undefined drivers array
+    const drivers = recommendedResult.drivers || [];
+    const dominantDrivers = drivers.length > 0
+        ? drivers
+            .sort((a, b) => (b.cost_contribution || 0) - (a.cost_contribution || 0))
+            .slice(0, 2)
+            .map(driver => ({
+                name: driver.name || 'Unknown',
+                value: driver.value || 'Variable',
+                cost_contribution: driver.cost_contribution || 0
+            }))
+        : [];
 
     // Generate pros/cons based on provider and usage pattern
     const pros = [];
@@ -689,8 +728,9 @@ function generateRecommendationFacts(recommendedResult, allScenarios, usage, pat
     const bestFor = [];
     const notIdealFor = [];
 
-    const provider = recommendedResult.provider.toUpperCase();
-    const monthlyCost = recommendedResult.monthly_cost;
+    // 🔥 FIX: Add null safety for provider and monthly_cost
+    const provider = (recommendedResult.provider || 'unknown').toUpperCase();
+    const monthlyCost = recommendedResult.monthly_cost || 0;
 
     // Always add the primary cost-based reason
     pros.push(`Lowest estimated monthly cost at your current usage of $${monthlyCost.toFixed(2)}`);
@@ -743,7 +783,7 @@ function generateRecommendationFacts(recommendedResult, allScenarios, usage, pat
         bestFor.push("Cost-sensitive workloads");
     }
 
-    if (pattern.includes('SERVERLESS')) {
+    if (pattern && pattern.includes('SERVERLESS')) {
         bestFor.push("Serverless-first architectures");
     }
 

@@ -1,0 +1,88 @@
+{
+    "keywords": {
+        "payments": [
+            "payment",
+            "checkout",
+            "upi",
+            "card",
+            "stripe",
+            "paypal"
+        ],
+        "relational_db": [
+            "order",
+            "user",
+            "account",
+            "transaction",
+            "customer",
+            "inventory"
+        ],
+        "analytics": [
+            "analytics",
+            "metrics",
+            "dashboard",
+            "reporting",
+            "stats"
+        ],
+        "object_storage": [
+            "image",
+            "video",
+            "media",
+            "file",
+            "upload",
+            "document"
+        ],
+        "realtime": [
+            "realtime",
+            "chat",
+            "live",
+            "websocket",
+            "streaming",
+            "notification"
+        ],
+        "auth": [
+            "login",
+            "signup",
+            "auth",
+            "signin",
+            "register",
+            "password",
+            "oauth"
+        ],
+        "search": [
+            "search",
+            "query",
+            "find",
+            "elasticsearch",
+            "algolia"
+        ],
+        "mobile": [
+            "mobile",
+            "ios",
+            "android",
+            "app"
+        ],
+        "cache": [
+            "cache",
+            "caching",
+            "redis",
+            "memcached",
+            "valkey",
+            "storage speed",
+            "fast access"
+        ]
+    },
+    "traffic_scenarios": {
+        "small": {
+            "users": 300,
+            "rps": 20
+        },
+        "medium": {
+            "users": 2000,
+            "rps": 150
+        },
+        "large": {
+            "users": 10000,
+            "rps": 800
+        }
+    }
+}

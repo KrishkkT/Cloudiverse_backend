@@ -1,0 +1,164 @@
+{
+    "commerce": {
+        "aliases": [
+            "ecommerce",
+            "marketplace",
+            "payments",
+            "shop",
+            "store"
+        ],
+        "capability_hints": [
+            "payments",
+            "auth",
+            "relational_db"
+        ],
+        "policy_bias": {
+            "availability": "high"
+        }
+    },
+    "saas": {
+        "aliases": [
+            "b2b",
+            "b2c",
+            "internal_tool",
+            "crm",
+            "erp"
+        ],
+        "capability_hints": [
+            "auth",
+            "multi_tenancy",
+            "relational_db"
+        ],
+        "policy_bias": {
+            "availability": "high"
+        }
+    },
+    "fintech": {
+        "aliases": [
+            "banking",
+            "wallet",
+            "trading",
+            "finance"
+        ],
+        "capability_hints": [
+            "auth",
+            "payments",
+            "audit_logging"
+        ],
+        "policy_bias": {
+            "compliance": [
+                "pci",
+                "soc2"
+            ],
+            "encryption": true,
+            "backup_retention_days": 30
+        }
+    },
+    "healthcare": {
+        "aliases": [
+            "ehr",
+            "telemedicine",
+            "medical",
+            "hipaa"
+        ],
+        "capability_hints": [
+            "auth",
+            "audit_logging"
+        ],
+        "policy_bias": {
+            "compliance": [
+                "hipaa"
+            ],
+            "encryption": true
+        }
+    },
+    "media": {
+        "aliases": [
+            "streaming",
+            "images",
+            "audio",
+            "video"
+        ],
+        "capability_hints": [
+            "object_storage",
+            "cdn"
+        ],
+        "policy_bias": {
+            "bandwidth_intensive": true
+        }
+    },
+    "analytics": {
+        "aliases": [
+            "bi",
+            "etl",
+            "data_warehouse",
+            "reporting"
+        ],
+        "capability_hints": [
+            "analytics",
+            "data_warehouse",
+            "batch_processing"
+        ],
+        "policy_bias": {
+            "storage_growth": "high"
+        }
+    },
+    "iot": {
+        "aliases": [
+            "telemetry",
+            "edge",
+            "devices",
+            "sensors"
+        ],
+        "capability_hints": [
+            "time_series",
+            "mqtt"
+        ],
+        "policy_bias": {
+            "protocol": "mqtt"
+        }
+    },
+    "ai_ml": {
+        "aliases": [
+            "inference",
+            "training",
+            "llm",
+            "model"
+        ],
+        "capability_hints": [
+            "gpu_compute",
+            "object_storage"
+        ],
+        "policy_bias": {}
+    },
+    "gaming": {
+        "aliases": [
+            "multiplayer",
+            "backend",
+            "game_server"
+        ],
+        "capability_hints": [
+            "realtime",
+            "udp",
+            "websockets"
+        ],
+        "policy_bias": {
+            "latency": "low"
+        }
+    },
+    "content": {
+        "aliases": [
+            "cms",
+            "blog",
+            "news"
+        ],
+        "capability_hints": [
+            "cdn",
+            "object_storage",
+            "cache"
+        ],
+        "policy_bias": {
+            "caching": "aggressive"
+        }
+    }
+}

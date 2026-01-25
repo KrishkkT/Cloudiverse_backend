@@ -2,6 +2,7 @@
  * schemas/patternSchema.js
  * Validates patterns against the service catalog.
  */
+
 'use strict';
 
 const VALID_COST_ENGINES = ['formula', 'hybrid', 'infracost'];
@@ -14,7 +15,6 @@ function validatePattern(patternId, pattern, servicesRegistry) {
 
     if (!pattern.name) errors.push('Missing pattern.name');
     if (!pattern.description) errors.push('Missing pattern.description');
-
     if (!VALID_COST_ENGINES.includes(pattern.cost_engine)) {
         errors.push(`Invalid cost_engine '${pattern.cost_engine}'. Must be one of: ${VALID_COST_ENGINES.join(', ')}`);
     }
@@ -33,7 +33,7 @@ function validatePattern(patternId, pattern, servicesRegistry) {
 
     // Overlap check
     if (Array.isArray(pattern.allowed_services) && Array.isArray(pattern.forbidden_services)) {
-        const overlap = pattern.allowed_services.filter((s) => pattern.forbidden_services.includes(s));
+        const overlap = pattern.allowed_services.filter(s => pattern.forbidden_services.includes(s));
         if (overlap.length) errors.push(`Service(s) in both allowed and forbidden: ${overlap.join(', ')}`);
     }
 

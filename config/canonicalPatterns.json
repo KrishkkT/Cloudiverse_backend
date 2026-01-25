@@ -74,13 +74,9 @@
             ],
             "forbidden_capabilities": [],
             "services": [
-                "cdn",
-                "apigateway",
                 "computeserverless",
-                "identityauth",
                 "logging",
-                "monitoring",
-                "objectstorage"
+                "monitoring"
             ],
             "score_weights": {
                 "static_content": 0.9,
@@ -100,14 +96,9 @@
             ],
             "forbidden_capabilities": [],
             "services": [
-                "cdn",
-                "apigateway",
                 "computecontainer",
-                "relationaldatabase",
-                "identityauth",
                 "logging",
-                "monitoring",
-                "objectstorage"
+                "monitoring"
             ],
             "score_weights": {
                 "static_content": 0.7,
@@ -127,10 +118,7 @@
             ],
             "forbidden_capabilities": [],
             "services": [
-                "apigateway",
                 "computecontainer",
-                "identityauth",
-                "objectstorage",
                 "logging",
                 "monitoring"
             ],
@@ -151,10 +139,8 @@
             ],
             "forbidden_capabilities": [],
             "services": [
-                "apigateway",
+                "websocketgateway",
                 "computecontainer",
-                "identityauth",
-                "cache",
                 "logging",
                 "monitoring"
             ],
@@ -176,9 +162,7 @@
                 "static_content"
             ],
             "services": [
-                "objectstorage",
-                "relationaldatabase",
-                "computeserverless",
+                "computebatch",
                 "logging",
                 "monitoring"
             ],
@@ -198,17 +182,16 @@
             ],
             "forbidden_capabilities": [],
             "services": [
-                "apigateway",
                 "mlinference",
-                "objectstorage",
-                "identityauth",
                 "logging",
                 "monitoring"
             ],
             "optional_services": [
                 "vectordatabase",
                 "cache",
-                "messagequeue"
+                "messagequeue",
+                "apigateway",
+                "objectstorage"
             ],
             "score_weights": {
                 "domain_ml_heavy": 1.2,
@@ -230,8 +213,8 @@
                 "static_content"
             ],
             "services": [
+                "computebatch",
                 "objectstorage",
-                "computeserverless",
                 "logging",
                 "monitoring"
             ],
@@ -252,12 +235,8 @@
             ],
             "forbidden_capabilities": [],
             "services": [
-                "apigateway",
                 "computecontainer",
-                "relationaldatabase",
-                "identityauth",
-                "cache",
-                "objectstorage",
+                "computeserverless",
                 "logging",
                 "monitoring"
             ],
@@ -297,11 +276,7 @@
             ],
             "forbidden_capabilities": [],
             "services": [
-                "iot_core",
-                "time_series_database",
-                "event_stream",
-                "apigateway",
-                "objectstorage",
+                "iotcore",
                 "logging",
                 "monitoring"
             ],
@@ -323,14 +298,11 @@
             ],
             "forbidden_capabilities": [],
             "services": [
-                "apigateway",
                 "computecontainer",
-                "relationaldatabase",
                 "paymentgateway",
                 "identityauth",
                 "secretsmanagement",
-                "logging",
-                "loadbalancer",
+                "auditlogging",
                 "logging",
                 "monitoring"
             ],
@@ -352,56 +324,20 @@
             ],
             "forbidden_capabilities": [],
             "services": [
-                "apigateway",
                 "computecontainer",
-                "relationaldatabase",
                 "identityauth",
                 "secretsmanagement",
-                "logging",
-                "objectstorage",
+                "auditlogging",
                 "logging",
                 "monitoring"
             ],
             "score_weights": {
-                "domain_healthcare": 2.0,
+                "domain_healthcare": 1.1,
                 "data_persistence": 0.9,
                 "identity_access": 0.8
             },
             "complexity": "complex",
             "name": "Healthcare Platform",
-            "cost_engine": "hybrid"
-        },
-        "GOVERNMENT_PLATFORM": {
-            "description": "Secure, compliant platform for public sector services",
-            "required_capabilities": [
-                "audit_logging",
-                "key_management",
-                "data_persistence"
-            ],
-            "forbidden_capabilities": [
-                "domain_healthcare"
-            ],
-            "services": [
-                "loadbalancer",
-                "waf",
-                "apigateway",
-                "computecontainer",
-                "relationaldatabase",
-                "identityauth",
-                "secretsmanagement",
-                "key_management",
-                "audit_logging",
-                "objectstorage",
-                "logging",
-                "monitoring"
-            ],
-            "score_weights": {
-                "audit_logging": 1.5,
-                "key_management": 1.2,
-                "domain_healthcare": -2.0
-            },
-            "complexity": "complex",
-            "name": "Government Platform",
             "cost_engine": "hybrid"
         },
         "GAMING_BACKEND": {
@@ -411,11 +347,8 @@
             ],
             "forbidden_capabilities": [],
             "services": [
-                "apigateway",
                 "computecontainer",
                 "cache",
-                "relationaldatabase",
-                "identityauth",
                 "logging",
                 "monitoring"
             ],
@@ -435,14 +368,9 @@
             ],
             "forbidden_capabilities": [],
             "services": [
-                "cdn",
-                "apigateway",
                 "computecontainer",
                 "relationaldatabase",
                 "paymentgateway",
-                "identityauth",
-                "objectstorage",
-                "cache",
                 "logging",
                 "monitoring"
             ],
@@ -465,9 +393,7 @@
             "services": [
                 "loadbalancer",
                 "apigateway",
-                "computeserverless",
                 "relationaldatabase",
-                "cache",
                 "identityauth",
                 "logging",
                 "monitoring"
@@ -493,10 +419,7 @@
                 "loadbalancer",
                 "computecontainer",
                 "logging",
-                "monitoring",
-                "identityauth",
-                "waf",
-                "secretsmanagement"
+                "monitoring"
             ],
             "optional_services": [
                 "relationaldatabase",
@@ -504,7 +427,11 @@
                 "objectstorage",
                 "messagequeue",
                 "cdn",
-                "apigateway"
+                "apigateway",
+                "identityauth",
+                "waf",
+                "secretsmanagement",
+                "dns"
             ],
             "score_weights": {
                 "api_backend": 0.9,
@@ -515,16 +442,6 @@
             },
             "complexity": "complex",
             "name": "Containerized Web App",
-            "cost_engine": "hybrid"
-        },
-        "CUSTOM": {
-            "description": "AI-generated custom architecture",
-            "required_capabilities": [],
-            "forbidden_capabilities": [],
-            "services": [],
-            "score_weights": {},
-            "complexity": "complex",
-            "name": "Custom Architecture",
             "cost_engine": "hybrid"
         }
     },

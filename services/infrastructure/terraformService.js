@@ -109,10 +109,10 @@ function getModuleVars(service, sizing) {
 // GET TERRAFORM SERVICES LIST
 // ═══════════════════════════════════════════════════════════════════════════
 /**
- * ✅ FIX 1: Use deployable_services only (single source of truth)
+ * Use deployable_services only (single source of truth)
  */
 function getTerraformServices(infraSpec, provider) {
-    // ✅ FIX 1: Read ONLY from deployable_services (Step 2 output)
+    // Read ONLY from deployable_services (Step 2 output)
     const genericServices = infraSpec.canonical_architecture?.deployable_services || [];
 
     if (!Array.isArray(genericServices) || genericServices.length === 0) {
@@ -138,8 +138,6 @@ function getTerraformResourceType(service, provider) {
             relationaldatabase: 'aws_db_instance',
             cache: 'aws_elasticache_cluster',
             messagequeue: 'aws_sqs_queue',
-            messagingqueue: 'aws_sqs_queue',
-            messaging_queue: 'aws_sqs_queue',
             loadbalancer: 'aws_lb'
         },
         gcp: {
@@ -151,8 +149,6 @@ function getTerraformResourceType(service, provider) {
             relationaldatabase: 'google_sql_database_instance',
             cache: 'google_redis_instance',
             messagequeue: 'google_pubsub_topic',
-            messagingqueue: 'google_pubsub_topic',
-            messaging_queue: 'google_pubsub_topic',
             loadbalancer: 'google_compute_url_map'
         },
         azure: {
@@ -164,8 +160,6 @@ function getTerraformResourceType(service, provider) {
             relationaldatabase: 'azurerm_postgresql_server',
             cache: 'azurerm_redis_cache',
             messagequeue: 'azurerm_servicebus_queue',
-            messagingqueue: 'azurerm_servicebus_queue',
-            messaging_queue: 'azurerm_servicebus_queue',
             loadbalancer: 'azurerm_lb'
         }
     };
@@ -177,15 +171,15 @@ function getTerraformResourceType(service, provider) {
 // GENERATE MODULAR TERRAFORM PROJECT (V2)
 // ═══════════════════════════════════════════════════════════════════════════
 /**
- * ✅ FIX 1-5: Pure consumer — reads ONLY from canonical_architecture.deployable_services
- * 
+ * Pure consumer — reads ONLY from canonical_architecture.deployable_services
+ *  
  * Generate modular Terraform project following V1 specification
  * Returns folder structure with modules/ directory
  */
-async function generateModularTerraform(infraSpec, provider, projectName, requirements = {}) {
+async function generateModularTerraform(infraSpec, provider, projectName, requirements = {}, explicitServices = null) {
     const pattern = infraSpec.service_classes?.pattern || 'SERVERLESS_WEB_APP';
 
-    // ✅ TIGHTENING 1: Explicit contract enforcement - Sizing MUST exist
+    // Explicit contract enforcement - Sizing MUST exist
     if (!infraSpec.sizing) {
         throw new Error(
             '❌ STEP 5 CONTRACT VIOLATION: infraSpec.sizing is missing. ' +
@@ -196,8 +190,8 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
 
     console.log(`[STEP 5 CONTRACT] ✓ Sizing validation passed: tier=${infraSpec.sizing.tier}`);
 
-    // ✅ FIX 1: Step 5 must ONLY read deployable_services (single source of truth)
-    const services = infraSpec.canonical_architecture?.deployable_services || [];
+    // Step 5 must ONLY read deployable_services (single source of truth)
+    const services = explicitServices || infraSpec.canonical_architecture?.deployable_services || [];
 
     if (!Array.isArray(services) || services.length === 0) {
         throw new Error(
@@ -206,11 +200,11 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
         );
     }
 
-    // ✅ FIX 2: TERRAFORM FIREWALL — Assert no logical services leaked through
-    // 🔥 CRITICAL FIX: Normalize services to strings first (services can be objects or strings)
+    // TERRAFORM FIREWALL — Assert no logical services leaked through
+    // CRITICAL: Normalize services to strings first (services can be objects or strings)
     const normalizedServices = services.map(svc =>
         typeof svc === 'string' ? svc :
-            (svc?.service_class || svc?.name || svc?.canonical_type || String(svc))
+            (svc?.service_id || svc?.service_class || svc?.name || svc?.canonical_type || String(svc))
     );
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -224,7 +218,7 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
         if (!serviceDef) return true; // Illegal: Unknown service
 
         // 2. Must be supported by Terraform
-        if (serviceDef.terraform && serviceDef.terraform.moduleId) return false; // Legal
+        if (serviceDef.terraform_supported) return false; // Legal
 
         // 3. Shim for legacy aliases (Optional, can be removed if catalog has aliases)
         const legacyAliases = ['compute_batch', 'email_notification', 'secrets_manager', 'messaging_queue'];
@@ -246,42 +240,104 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
 
     const providerLower = provider.toLowerCase();
 
-    // ✅ FIX 5: Use resolved_region from Step 2 (not hardcoded defaults)
+    // Use resolved_region from Step 2 (not hardcoded defaults)
     const resolvedRegion = infraSpec.region?.resolved_region ||
         requirements.region?.primary_region ||
         getDefaultRegion(providerLower);
 
     console.log(`[TERRAFORM V2] Using resolved region: ${resolvedRegion}`);
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // DELEGATE TO V2 GENERATOR - SOURCE OF TRUTH
-    // ═══════════════════════════════════════════════════════════════════════════
-    // We construct a proxy architecture object to force the generator to use 
-    // our strict 'normalizedServices' list (which came from deployable_services).
-    // This ensures that the Export uses exactly what we validated above.
-    const proxyArchitecture = {
-        ...infraSpec.canonical_architecture,
-        services: normalizedServices, // Override 'services' with verified deployable list
-        pattern: pattern
-    };
+    const projectFolder = {};
 
-    console.log(`[TERRAFORM SERVICE] Delegating generation to V2 Generator for ${projectName}...`);
+    // Generate root files
+    projectFolder['versions.tf'] = terraformGeneratorV2.generateVersionsTf(providerLower);
+    projectFolder['providers.tf'] = terraformGeneratorV2.generateProvidersTf(providerLower, resolvedRegion);
+    projectFolder['variables.tf'] = terraformGeneratorV2.generateVariablesTf(providerLower, pattern, normalizedServices);
+    projectFolder['terraform.tfvars'] = terraformGeneratorV2.generateTfvars(providerLower, resolvedRegion, projectName);
+    projectFolder['main.tf'] = terraformGeneratorV2.generateMainTf(providerLower, pattern, normalizedServices);
+    projectFolder['outputs.tf'] = terraformGeneratorV2.generateOutputsTf(providerLower, pattern, normalizedServices);
+    projectFolder['README.md'] = terraformGeneratorV2.generateReadme(projectName, providerLower, pattern, normalizedServices);
 
-    const result = await terraformGeneratorV2.generateTerraform(
-        proxyArchitecture,
-        provider,
-        resolvedRegion,
-        projectName
-    );
+    // Generate modules
+    projectFolder['modules'] = {};
 
-    // V2 generator returns { files, modules } - we map 'files' to 'projectFolder'
-    // to match the expected return signature of this service.
-    const projectFolder = result.files;
+    // Add networking module if needed
+    if (needsNetworking(pattern, normalizedServices)) {
+        const networkingModule = terraformModules.getModule('networking', providerLower);
+        if (networkingModule) {
+            projectFolder['modules']['networking'] = networkingModule;
+        }
+    }
 
+    // Add service modules
+    const missingModules = [];
 
-    // Hash and Manifest logic follows...
+    normalizedServices.forEach(service => {
+        // Services are already normalized and valid against catalog
+        const module = terraformModules.getModule(service, providerLower);
+        const folderName = getModuleFolderName(service);
 
-    // ✅ TIGHTENING 2: Generate hash for drift detection and caching
+        if (module) {
+            projectFolder['modules'][folderName] = module;
+            console.log(`[TERRAFORM V2] ✓ Module added: ${service} → ${folderName}`);
+        } else {
+            // Check if this service is a blocking service (must have Terraform module)
+            const blockingServices = ['objectstorage', 'apigateway']; // Normalized IDs
+            const isBlocking = blockingServices.includes(service);
+
+            // Classify module failure for better error messaging
+            missingModules.push({
+                service,
+                provider: providerLower,
+                reason: 'MODULE_NOT_IMPLEMENTED',
+                is_blocking: isBlocking
+            });
+            console.error(`[TERRAFORM V2] ✗ Missing Terraform module for service: ${service} on ${provider} (blocking: ${isBlocking})`);
+        }
+    });
+
+    // TERRAFORM-SAFE MODE: Check for blocking services before continuing
+    const blockingMissingModules = missingModules.filter(m => m.is_blocking);
+
+    if (blockingMissingModules.length > 0) {
+        // FAIL if blocking services are missing modules
+        const blockingServiceNames = blockingMissingModules.map(m => m.service).join(', ');
+        throw new Error(
+            `Terraform generation failed: Missing modules for blocking services: ${blockingServiceNames}.\n` +
+            `Blocking services must have Terraform modules implemented for the selected provider.`
+        );
+    } else if (missingModules.length > 0) {
+        // Only warn for non-blocking services
+        const serviceNames = missingModules.map(m => m.service).join(', ');
+        console.warn(`[TERRAFORM-SAFE] Missing modules for non-blocking services: ${serviceNames}. These will be excluded for Terraform generation.`);
+
+        // Log the missing modules but continue
+        missingModules.forEach(m => {
+            console.warn(`[TERRAFORM-SAFE] Service excluded: ${m.service} (normalized: ${m.normalized}) on ${m.provider} - ${m.reason} (blocking: ${m.is_blocking})`);
+        });
+
+        // Remove missing services from the main.tf to avoid broken references
+        // We'll need to rebuild main.tf without the missing services
+        const availableServices = normalizedServices.filter(service => {
+            const normalizedService = getModuleFolderName(service);
+            const lookupName = normalizedService === 'relational_db' ? 'relational_database' :
+                normalizedService === 'auth' ? 'identity_auth' :
+                    normalizedService === 'ml_inference' ? 'ml_inference_service' :
+                        normalizedService === 'websocket' ? 'websocket_gateway' :
+                            normalizedService === 'serverless_compute' ? 'serverless_compute' :
+                                normalizedService === 'analytical_db' ? 'analytical_database' :
+                                    normalizedService === 'push_notification' ? 'push_notification_service' :
+                                        normalizedService;
+            return terraformModules.getModule(lookupName, providerLower) !== undefined;
+        });
+
+        // Regenerate main.tf with only available services
+        projectFolder['main.tf'] = terraformGeneratorV2.generateMainTf(providerLower, pattern, availableServices);
+
+        console.log(`[TERRAFORM-SAFE] Proceeding with ${availableServices.length}/${normalizedServices.length} services (missing non-blocking services excluded)`);
+    }
+
+    // Generate hash for drift detection and caching
     const terraformHash = crypto
         .createHash('sha256')
         .update(JSON.stringify(projectFolder))
@@ -289,7 +345,7 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
 
     console.log(`[STEP 5] ✓ Terraform hash generated: ${terraformHash.substring(0, 16)}...`);
 
-    // ✅ TIGHTENING 3: Emit deployment manifest for audit and rollback
+    // Emit deployment manifest for audit and rollback
     const deploymentManifest = {
         provider: provider,
         region: resolvedRegion,
@@ -324,7 +380,6 @@ function getModuleFolderName(serviceType) {
         pushnotificationservice: 'push_notification',
         globalloadbalancer: 'global_lb',
         messagequeue: 'mq',
-        messaging_queue: 'mq',
         secretsmanagement: 'secrets',
         auditlogging: 'audit_log',
         appcompute: 'app_compute',
@@ -363,5 +418,5 @@ module.exports = {
     generateModularTerraform,
     getTerraformServices,
     getTerraformResourceType,
-    getModuleFolderName  // 🔥 CRITICAL: Required by workflow.js
+    getModuleFolderName  // Required by workflow.js
 };

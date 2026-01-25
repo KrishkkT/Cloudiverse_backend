@@ -1,0 +1,10 @@
+{
+    "core": {
+        "availability": "high",
+        "encryption": true,
+        "private_networking": true,
+        "backups": true,
+        "region_policy": "cheapest_common",
+        "monitoring_level": "standard"
+    }
+}
