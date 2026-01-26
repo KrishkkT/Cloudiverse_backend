@@ -2104,6 +2104,126 @@
           "azure": null
         }
       }
+    },
+    {
+      "service_id": "mlinference",
+      "name": "ML Inference",
+      "domain": "ai",
+      "category": "ai",
+      "terraform_supported": true,
+      "providers": {
+        "aws": true,
+        "gcp": true,
+        "azure": true
+      },
+      "pricing": {
+        "class": "USAGE_BASED",
+        "infracost_supported": {
+          "aws": null,
+          "gcp": null,
+          "azure": null
+        }
+      }
+    },
+    {
+      "service_id": "websocketgateway",
+      "name": "WebSocket Gateway",
+      "domain": "core",
+      "category": "network",
+      "terraform_supported": true,
+      "providers": {
+        "aws": true,
+        "gcp": true,
+        "azure": true
+      },
+      "pricing": {
+        "class": "USAGE_BASED",
+        "infracost_supported": {
+          "aws": true,
+          "gcp": null,
+          "azure": true
+        }
+      }
+    },
+    {
+      "service_id": "containerregistry",
+      "name": "Container Registry",
+      "domain": "devops",
+      "category": "devops",
+      "terraform_supported": true,
+      "providers": {
+        "aws": true,
+        "gcp": true,
+        "azure": true
+      },
+      "pricing": {
+        "class": "USAGE_BASED",
+        "infracost_supported": {
+          "aws": null,
+          "gcp": null,
+          "azure": null
+        }
+      }
+    },
+    {
+      "service_id": "artifactrepository",
+      "name": "Artifact Repository",
+      "domain": "devops",
+      "category": "devops",
+      "terraform_supported": true,
+      "providers": {
+        "aws": true,
+        "gcp": true,
+        "azure": true
+      },
+      "pricing": {
+        "class": "USAGE_BASED",
+        "infracost_supported": {
+          "aws": null,
+          "gcp": null,
+          "azure": null
+        }
+      }
+    },
+    {
+      "service_id": "vulnerabilityscanner",
+      "name": "Vulnerability Scanner",
+      "domain": "security",
+      "category": "security",
+      "terraform_supported": true,
+      "providers": {
+        "aws": true,
+        "gcp": true,
+        "azure": true
+      },
+      "pricing": {
+        "class": "USAGE_BASED",
+        "infracost_supported": {
+          "aws": null,
+          "gcp": null,
+          "azure": null
+        }
+      }
+    },
+    {
+      "service_id": "iampolicy",
+      "name": "IAM Policy",
+      "domain": "security",
+      "category": "security",
+      "terraform_supported": true,
+      "providers": {
+        "aws": true,
+        "gcp": true,
+        "azure": true
+      },
+      "pricing": {
+        "class": "FREE_TIER",
+        "infracost_supported": {
+          "aws": null,
+          "gcp": null,
+          "azure": null
+        }
+      }
     }
   ]
 }

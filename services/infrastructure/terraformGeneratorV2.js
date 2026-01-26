@@ -10,6 +10,8 @@
  * - terraform.tfvars generated from workspace defaults
  */
 
+const { resolveServiceId } = require('../../config/aliases');
+
 // ═══════════════════════════════════════════════════════════════════════════
 // TERRAFORM FILE GENERATORS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -22,7 +24,7 @@ function generatePricingMainTf(provider, services, region, projectName) {
   let tf = `// PRICING TERRAFORM - FLAT STRUCTURE\n`;
 
   // Helper to check service presence (handle strings or objects)
-  const has = (id) => services.some(s => (typeof s === 'string' ? s : s.service_id) === id);
+  const has = (id) => services.some(s => resolveServiceId(typeof s === 'string' ? s : s.service_id) === id);
 
   if (provider === 'aws') {
     // 1. AWS IMPLEMENTATION
@@ -601,6 +603,43 @@ resource "aws_appmesh_mesh" "mesh" {
 `;
     }
 
+    if (has('paymentgateway')) {
+      tf += `
+# Payment Gateway (External Service)
+# Logical dependency on Stripe/PayPal - No AWS resources created
+`;
+    }
+    if (has('auditlogging')) {
+      tf += `
+resource "aws_cloudtrail" "audit" {
+  name                          = "${projectName}-audit-trail"
+  s3_bucket_name                = aws_s3_bucket.main.id
+  include_global_service_events = true
+}
+`;
+    }
+    if (has('vulnerabilityscanner')) {
+      tf += `
+# Vulnerability Scanner
+# Represents AWS Inspector or similar security scanning integration
+resource "aws_inspector_assessment_target" "target" {
+  name = "${projectName}-assessment-target"
+}
+`;
+    }
+    if (has('iampolicy')) {
+      tf += `
+resource "aws_iam_account_password_policy" "strict" {
+  minimum_password_length        = 14
+  require_lowercase_characters   = true
+  require_numbers                = true
+  require_uppercase_characters   = true
+  require_symbols                = true
+  allow_users_to_change_password = true
+}
+`;
+    }
+
   } else if (provider === 'gcp') {
     // 2. GCP IMPLEMENTATION
     // 🔥 FIX: Separate computecontainer and computeserverless to prevent pricing leakage
@@ -1032,6 +1071,33 @@ resource "google_compute_health_check" "mesh" {
   tcp_health_check {
     port = 80
   }
+}
+`;
+    }
+    if (has('paymentgateway')) {
+      tf += `
+# Payment Gateway (External Service)
+# Logical dependency on Stripe/PayPal - No GCP resources created
+`;
+    }
+    if (has('auditlogging')) {
+      // Cloud Audit Logs are on by default, but we can export them
+      tf += `
+# Google Cloud Audit Logging is enabled by default.
+# Configuring Sink for long-term retention:
+resource "google_logging_project_sink" "audit_sink" {
+  name        = "${projectName}-audit-sink"
+  destination = "storage.googleapis.com/${projectName}-audit-bucket"
+  filter      = "logName:\\"logs/cloudaudit.googleapis.com%2Factivity\\""
+}
+`;
+    }
+    if (has('vulnerabilityscanner')) {
+      tf += `
+# Container Security Scanning (Artifact Registry automatically scans)
+# This resource verifies the API is enabled
+resource "google_project_service" "scanner" {
+  service = "containerscanning.googleapis.com"
 }
 `;
     }
@@ -1475,6 +1541,36 @@ resource "azurerm_virtual_network_gateway" "vpn" {
     private_ip_address_allocation = "Dynamic"
     subnet_id                     = "subnet_id"
   }
+}
+`;
+    }
+
+    if (has('paymentgateway')) {
+      tf += `
+# Payment Gateway (External Service)
+# Logical dependency on Stripe/PayPal - No Azure resources created
+`;
+    }
+    if (has('auditlogging')) {
+      tf += `
+resource "azurerm_monitor_log_profile" "audit" {
+  name = "${projectName}-audit"
+  categories = ["Write", "Delete", "Action"]
+  locations = ["global"]
+  
+  retention_policy {
+    enabled = true
+    days    = 365
+  }
+}
+`;
+    }
+    if (has('vulnerabilityscanner')) {
+      tf += `
+# Microsoft Defender for Cloud (Security Center)
+resource "azurerm_security_center_subscription_pricing" "defender" {
+  tier          = "Standard"
+  resource_type = "AppServices"
 }
 `;
     }

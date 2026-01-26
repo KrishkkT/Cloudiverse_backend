@@ -5,10 +5,10 @@
             "marketplace",
             "payments",
             "shop",
-            "store"
+            "store",
+            "payments"
         ],
         "capability_hints": [
-            "payments",
             "auth",
             "relational_db"
         ],

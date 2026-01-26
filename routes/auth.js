@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { register, login, getProfile, updateProfile, deleteAccount, logout, forgotPassword, resetPassword } = require('../controllers/authController');
+const { register, login, getProfile, updateProfile, deleteAccount, logout, forgotPassword, resetPassword, verifyTurnstile } = require('../controllers/authController');
 const authMiddleware = require('../middleware/auth');
 
 // Register route
@@ -21,6 +21,9 @@ router.get('/profile', authMiddleware, getProfile);
 
 // Update profile (protected route)
 router.put('/profile', authMiddleware, updateProfile);
+
+// Turnstile Verification
+router.post('/verify-turnstile', verifyTurnstile);
 
 // Delete account (protected route)
 router.delete('/profile', authMiddleware, deleteAccount);

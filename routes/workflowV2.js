@@ -171,7 +171,7 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             // V1 Compatibility Fields
             project_name: aiIntent.project_info?.name || aiIntent.project_name || "New Project",
             project_summary: aiIntent.project_info?.description || `Optimized ${aiIntent.intent_classification.workload_type} architecture for ${aiIntent.intent_classification.primary_domain}.`,
-            architecture_pattern: architecture.selectedPattern.id,
+            architecture_pattern: typeof architecture.selectedPattern === 'string' ? architecture.selectedPattern : architecture.selectedPattern.id,
             explanations: explanations,
             // 🔥 REQUIRED for Cost Analysis fallback
             services: architecture.servicesContract.required_services || architecture.servicesContract.services || [],

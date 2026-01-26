@@ -8,7 +8,7 @@ require('dotenv').config();
 // Generate JWT token
 const generateToken = (userId) => {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn: '30d'
+    expiresIn: '7d'
   });
 };
 
@@ -145,7 +145,7 @@ const forgotPassword = async (req, res) => {
 
     // Delete existing OTP for this email first
     await pool.query('DELETE FROM password_resets WHERE email = $1', [email]);
-    
+
     // Insert new OTP
     await pool.query(
       `INSERT INTO password_resets (email, otp, expires_at) 
@@ -297,6 +297,26 @@ const logout = async (req, res) => {
   }
 };
 
+// Verify Turnstile Token
+const verifyTurnstile = async (req, res) => {
+  try {
+    const { token } = req.body;
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+    const { verifyToken } = require('../services/shared/turnstileService');
+    const result = await verifyToken(token, ip);
+
+    if (result.success) {
+      res.json({ success: true, message: 'Verification successful' });
+    } else {
+      res.status(400).json({ success: false, message: 'Verification failed', errors: result.messages });
+    }
+  } catch (error) {
+    console.error('Turnstile verification error:', error);
+    res.status(500).json({ success: false, message: 'Server error during verification' });
+  }
+};
+
 module.exports = {
   register,
   login,
@@ -305,5 +325,6 @@ module.exports = {
   getProfile,
   updateProfile,
   deleteAccount,
-  logout
+  logout,
+  verifyTurnstile
 };

@@ -44,9 +44,20 @@ class FusionService {
         // 2. Rule-Based Capability Extraction
         const detectedCapabilities = new Set();
 
-        // Source A: Keyword Extraction
+        // Source A: Keyword Extraction (Improved with negative lookahead logic)
         for (const [cap, keywords] of Object.entries(capabilitiesConfig.keywords)) {
-            if (keywords.some(k => normDesc.includes(k))) {
+            if (keywords.some(k => {
+                const index = normDesc.indexOf(k);
+                if (index === -1) return false;
+
+                // Check if preceded by "no " or "without "
+                const prefix = normDesc.substring(Math.max(0, index - 10), index);
+                if (prefix.includes("no ") || prefix.includes("without ") || prefix.includes("don't need") || prefix.includes("do not need")) {
+                    console.log(`[FUSION] Skipping capability ${cap} due to negative prefix for keyword ${k}`);
+                    return false;
+                }
+                return true;
+            })) {
                 detectedCapabilities.add(cap);
             }
         }
@@ -61,11 +72,15 @@ class FusionService {
         });
 
         // 3. Workload Guess (Simple Heuristic)
-        let workloadGuess = "web"; // Default
+        let workloadGuess = "web_app"; // Default
         if (normDesc.includes("batch") || normDesc.includes("worker") || domains.includes("analytics")) {
             workloadGuess = "worker";
         } else if (normDesc.includes("iot") || domains.includes("iot")) {
             workloadGuess = "iot";
+        } else if (normDesc.includes("static") || normDesc.includes("portfolio") || normDesc.includes("resume") ||
+            normDesc.includes("landing page") || normDesc.includes("blog") ||
+            (normDesc.includes("no api") && normDesc.includes("no backend"))) {
+            workloadGuess = "static_site";
         }
 
         // 4. Assumptions

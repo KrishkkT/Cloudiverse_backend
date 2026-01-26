@@ -1,40 +1,28 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
+require('dotenv').config();
 
-// Create reusable transporter object
-let transporterConfig;
+// Initialize Resend
+// Use provided key if env var is missing (User provided: re_XADo5vcJ_CJNckUejnidSMSvR77p9FM4F)
+const RESEND_API_KEY = process.env.RESEND_API_KEY || 're_XADo5vcJ_CJNckUejnidSMSvR77p9FM4F';
+const resend = new Resend(RESEND_API_KEY);
 
-if (process.env.EMAIL_SERVICE === 'gmail') {
-  transporterConfig = {
-    service: 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-    // 🔥 FIX: Add timeout settings for Render/cloud environments
-    connectionTimeout: 10000,  // 10 seconds to connect
-    greetingTimeout: 10000,    // 10 seconds for greeting
-    socketTimeout: 30000,      // 30 seconds for socket
-  };
-} else {
-  transporterConfig = {
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT) || 587,
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-    // 🔥 FIX: Add timeout settings for Render/cloud environments
-    connectionTimeout: 10000,  // 10 seconds to connect
-    greetingTimeout: 10000,    // 10 seconds for greeting
-    socketTimeout: 30000,      // 30 seconds for socket
-    tls: {
-      rejectUnauthorized: false  // Allow self-signed certs
-    }
-  };
-}
+// Domain configuration
+const DOMAIN = 'cloudiverse.app';
 
-const transporter = nodemailer.createTransport(transporterConfig);
+// Strict Sender Configuration
+const EMAIL_SENDERS = {
+  VERIFICATION: `verification@${DOMAIN}`,
+  ONBOARDING: `onboarding@${DOMAIN}`,
+  NOREPLY: `noreply@${DOMAIN}`,
+  SECURITY: `security@${DOMAIN}`,
+  SUPPORT: `support@${DOMAIN}`,
+  UPDATES: `updates@${DOMAIN}`,
+  BILLING: `billing@${DOMAIN}`,
+};
+
+const getSender = (type) => {
+  return EMAIL_SENDERS[type] || EMAIL_SENDERS.NOREPLY;
+};
 
 // --- Shared HTML Template ---
 const getHtmlTemplate = (title, bodyContent) => {
@@ -79,61 +67,35 @@ const getHtmlTemplate = (title, bodyContent) => {
 };
 
 /**
- * Send an email
+ * Generic Send Function using Resend
  */
-const sendEmail = async (to, subject, html) => {
-  console.log(`[EMAIL SERVICE] Attempting to send email to ${to} with subject: ${subject}`);
-
-  // Check if credentials are provided (support both Gmail and custom SMTP)
-  const hasGmailCreds = process.env.EMAIL_SERVICE === 'gmail' && process.env.EMAIL_USER && process.env.EMAIL_PASS;
-  const hasSmtpCreds = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
-
-  if (!hasGmailCreds && !hasSmtpCreds) {
-    console.log('---------------------------------------------------');
-    console.log(`[EMAIL MOCK SERVICE] To: ${to}`);
-    console.log(`[EMAIL MOCK SERVICE] Subject: ${subject}`);
-
-    console.log(`[EMAIL MOCK SERVICE] OTP (if found): ${extractOtp(html)}`);
-    console.log('---------------------------------------------------');
-    console.warn('SMTP/Gmail credentials missing. Email simulated in console.');
-    return;
-  }
-
-  const fromAddress = process.env.EMAIL_FROM || `"${process.env.SMTP_FROM_NAME || 'Cloudiverse'}" <${process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER}>`;
+const sendEmail = async (to, subject, html, senderType = 'NOREPLY') => {
+  const from = getSender(senderType);
+  console.log(`[EMAIL SERVICE] Sending [${senderType}] email to ${to} from ${from}`);
 
   try {
-    // Race against a 8-second timeout to prevent ETIMEDOUT from hanging or crashing
-    const mailPromise = transporter.sendMail({
-      from: fromAddress,
-      to,
-      subject,
-      html,
+    const { data, error } = await resend.emails.send({
+      from: from,
+      to: [to],
+      subject: subject,
+      html: html,
     });
 
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Email Send Timeout')), 8000)
-    );
+    if (error) {
+      console.error('[EMAIL SERVICE] Resend API Error:', error);
+      return null;
+    }
 
-    const info = await Promise.race([mailPromise, timeoutPromise]);
-    console.log(`[EMAIL SERVICE] Email sent: ${info.messageId}`);
-    return info;
-
-  } catch (error) {
-    // Log error but do NOT throw if it's just a notification (login alert)
-    // We only throw if it's critical? Actually, for now, let's catch all and return null so the flow doesn't break.
-    console.error(`[EMAIL SERVICE] FAILED to send email to ${to}:`, error.message);
+    console.log(`[EMAIL SERVICE] Email sent successfully: ${data.id}`);
+    return data;
+  } catch (err) {
+    console.error('[EMAIL SERVICE] Unexpected error:', err.message);
     return null;
   }
 };
 
-// Helper to extract OTP for mock service
-const extractOtp = (html) => {
-  const match = html.match(/class="otp-code">(\d{6})<\/span>/) || html.match(/<b>(\d{6})<\/b>/) || html.match(/>(\d{6})</);
-  return match ? match[1] : 'Not found in pattern';
-};
-
+// 1. WELCOME / ONBOARDING
 const sendWelcomeEmail = async (user) => {
-  console.log(`[EMAIL SERVICE] Preparing Welcome Email for ${user.email}`);
   const subject = 'Welcome to Cloudiverse!';
   const body = `
     <p>We are thrilled to have you on board. Cloudiverse is your AI-powered companion for designing robust, multi-cloud architectures.</p>
@@ -142,11 +104,11 @@ const sendWelcomeEmail = async (user) => {
       <a href="${process.env.VITE_FRONTEND_URL || '#'}" class="btn" style="color: #ffffff;">Go to Dashboard</a>
     </div>
   `;
-  await sendEmail(user.email, subject, getHtmlTemplate(`Welcome, ${user.name}!`, body));
+  await sendEmail(user.email, subject, getHtmlTemplate(`Welcome, ${user.name}!`, body), 'ONBOARDING');
 };
 
+// 3. SYSTEM NOTIFICATIONS (Login Alert)
 const sendLoginNotification = async (user) => {
-  console.log(`[EMAIL SERVICE] Preparing Login Notification for ${user.email}`);
   const subject = 'New Login to Cloudiverse';
   const body = `
     <p>We detected a new login to your Cloudiverse account on <strong>${new Date().toLocaleString()}</strong>.</p>
@@ -155,48 +117,45 @@ const sendLoginNotification = async (user) => {
       <strong>Not you?</strong> Please reset your password immediately to secure your account.
     </div>
   `;
-  await sendEmail(user.email, subject, getHtmlTemplate('New Login Detected', body));
+  await sendEmail(user.email, subject, getHtmlTemplate('New Login Detected', body), 'SECURITY');
 };
 
+// 1. OTP / VERIFICATION CODES
 const sendPasswordResetEmail = async (email, otp) => {
   const subject = 'Reset Your Password - Cloudiverse';
   const body = `
-    <p>You have requested to reset your password. Please use the verification code below to proceed with setting a new password:</p>
+    <p>You have requested to reset your password. Please use the verification code below to proceed:</p>
     <div class="otp-box">
       <span class="otp-code">${otp}</span>
     </div>
     <p>This code is valid for <strong>10 minutes</strong>. Do not share this code with anyone.</p>
-    <p>If you did not request a password reset, please ignore this email.</p>
   `;
-  await sendEmail(email, subject, getHtmlTemplate('Password Reset', body));
+  await sendEmail(email, subject, getHtmlTemplate('Password Reset', body), 'VERIFICATION');
 };
 
+// 4. ACCOUNT DELETION
 const sendAccountDeletionEmail = async (user) => {
-  console.log(`[EMAIL SERVICE] Sending Account Deletion Email to ${user.email}`);
   const subject = 'Account Deleted - Cloudiverse';
   const body = `
     <p>Your Cloudiverse account associated with <strong>${user.email}</strong> has been successfully deleted.</p>
     <p>We are sorry to see you go. All your workspaces and data have been permanently removed.</p>
-    <p>We hope to see you again in the future!</p>
   `;
-  await sendEmail(user.email, subject, getHtmlTemplate('Account Deleted', body));
+  await sendEmail(user.email, subject, getHtmlTemplate('Account Deleted', body), 'SECURITY');
 };
 
+// 4. WORKSPACE DELETION
 const sendWorkspaceDeletionEmail = async (user, workspaceName) => {
-  console.log(`[EMAIL SERVICE] Sending Workspace Deletion Email to ${user.email}`);
   const subject = `Workspace Deleted: ${workspaceName}`;
   const body = `
     <p>This is a confirmation that your workspace <strong>${workspaceName}</strong> has been successfully deleted.</p>
     <p>Any associated project data and configurations have been removed from our servers.</p>
-    <p>Keep building!</p>
   `;
-  await sendEmail(user.email, subject, getHtmlTemplate('Workspace Deleted', body));
+  await sendEmail(user.email, subject, getHtmlTemplate('Workspace Deleted', body), 'SECURITY');
 };
 
+// 3. SYSTEM NOTIFICATIONS (Deployment Ready)
 const sendDeploymentReadyEmail = async (user, deploymentDetails) => {
-  console.log(`[EMAIL SERVICE] Sending Deployment Ready Email to ${user.email}`);
-  const { workspaceName, provider, estimatedCost, pattern, services, region } = deploymentDetails;
-
+  const { workspaceName, provider, estimatedCost, pattern, services, region, workspaceId } = deploymentDetails;
   const subject = `Your Terraform is Ready: ${workspaceName}`;
   const body = `
     <h2 style="color: #2563EB;">Your Terraform is Ready</h2>
@@ -205,50 +164,37 @@ const sendDeploymentReadyEmail = async (user, deploymentDetails) => {
     <div style="background-color: #F3F4F6; padding: 15px; border-radius: 8px; margin: 20px 0;">
       <h3 style="margin-top: 0; color: #1e293b;">Infrastructure Summary</h3>
       <table style="width: 100%; border-collapse: collapse;">
-        <tr>
-          <td style="padding: 8px 0; color: #64748b;">Cloud Provider</td>
-          <td style="padding: 8px 0; color: #1e293b; font-weight: 600; text-align: right;">${(provider || 'Not Selected').toUpperCase()}</td>
-        </tr>
-        <tr>
-          <td style="padding: 8px 0; color: #64748b;">Architecture Pattern</td>
-          <td style="padding: 8px 0; color: #1e293b; font-weight: 600; text-align: right;">${pattern || 'Custom'}</td>
-        </tr>
-        <tr>
-          <td style="padding: 8px 0; color: #64748b;">Region</td>
-          <td style="padding: 8px 0; color: #1e293b; font-weight: 600; text-align: right;">${region || 'Default'}</td>
-        </tr>
-        <tr>
-          <td style="padding: 8px 0; color: #64748b;">Estimated Monthly Cost</td>
-          <td style="padding: 8px 0; color: #22c55e; font-weight: 700; text-align: right;">${estimatedCost || 'N/A'} (Heuristic Estimate)</td>
-        </tr>
-        <tr>
-          <td style="padding: 8px 0; color: #64748b;">Services</td>
-          <td style="padding: 8px 0; color: #1e293b; text-align: right;">${services?.length || 0} services</td>
-        </tr>
+        <tr><td style="padding: 8px 0; color: #64748b;">Cloud Provider</td><td style="text-align: right; font-weight: 600;">${(provider || 'N/A').toUpperCase()}</td></tr>
+        <tr><td style="padding: 8px 0; color: #64748b;">Pattern</td><td style="text-align: right; font-weight: 600;">${pattern || 'Custom'}</td></tr>
+        <tr><td style="padding: 8px 0; color: #64748b;">Region</td><td style="text-align: right; font-weight: 600;">${region || 'Default'}</td></tr>
+        <tr><td style="padding: 8px 0; color: #64748b;">Est. Cost</td><td style="text-align: right; font-weight: 700; color: #22c55e;">${estimatedCost || 'N/A'}</td></tr>
       </table>
     </div>
 
-    <p style="color: #475569;">Your Terraform code has been generated. No resources have been provisioned in your cloud account yet.</p>
-    <ul style="color: #475569;">
-      <li>Download the Terraform files from your workspace</li>
-      <li>Run <code>terraform init</code> and <code>terraform apply</code> in your terminal</li>
-      <li>Verify your resources in the ${provider} console</li>
-    </ul>
-
     <div style="text-align: center; margin-top: 30px;">
-      <a href="${process.env.VITE_FRONTEND_URL || 'https://cloudiverse.vercel.app'}/workspaces" class="btn" style="color: #ffffff; text-decoration: none;">View Your Workspace</a>
-    </div>
-
-    <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin-top: 30px; color: #92400e;">
-      <strong>Next Steps:</strong> You will need to install Terraform and authenticate with your cloud provider to deploy.
+      <a href="${process.env.VITE_FRONTEND_URL || 'https://cloudiverse.vercel.app'}/workspaces" class="btn" style="color: #ffffff;">View Workspace</a>
     </div>
     
-    <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px dashed #e2e8f0;">
-       <p style="margin-bottom: 10px; color: #64748b; font-size: 14px;">Need a PDF documentation for your team?</p>
-       <a href="${process.env.VITE_FRONTEND_URL || 'https://cloudiverse.vercel.app'}/report-download/${deploymentDetails.workspaceId}" class="btn" style="background-color: #0f172a; color: #ffffff; text-decoration: none; padding: 10px 20px; font-size: 14px;">📄 Download Project Report</a>
+    <div style="text-align: center; margin-top: 20px;">
+       <a href="${process.env.VITE_FRONTEND_URL || 'https://cloudiverse.vercel.app'}/report-download/${workspaceId}" class="btn" style="background-color: #0f172a;">📄 Download PDF Report</a>
     </div>
   `;
-  await sendEmail(user.email, subject, getHtmlTemplate('Infrastructure Ready', body));
+  await sendEmail(user.email, subject, getHtmlTemplate('Infrastructure Ready', body), 'NOREPLY');
+};
+
+// 5. SUPPORT REPLIES
+const sendSupportEmail = async (to, subject, content) => {
+  await sendEmail(to, subject, getHtmlTemplate('Support Reply', content), 'SUPPORT');
+};
+
+// 6. PRODUCT UPDATES
+const sendUpdateEmail = async (to, subject, content) => {
+  await sendEmail(to, subject, getHtmlTemplate('Product Update', content), 'UPDATES');
+};
+
+// 7. BILLING
+const sendBillingEmail = async (to, subject, content) => {
+  await sendEmail(to, subject, getHtmlTemplate('Billing Notification', content), 'BILLING');
 };
 
 module.exports = {
@@ -258,5 +204,8 @@ module.exports = {
   sendPasswordResetEmail,
   sendAccountDeletionEmail,
   sendWorkspaceDeletionEmail,
-  sendDeploymentReadyEmail
+  sendDeploymentReadyEmail,
+  sendSupportEmail,
+  sendUpdateEmail,
+  sendBillingEmail
 };
