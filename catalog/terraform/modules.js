@@ -336,9 +336,9 @@ resource "aws_lambda_function" "main" {
   timeout       = var.timeout_seconds
 
   environment {
-    variables = {
+    variables = merge({
       ENVIRONMENT = var.environment
-    }
+    }, var.extra_env_vars)
   }
 
   tags = { Name = "\${var.project_name}-function" }
@@ -352,6 +352,7 @@ resource "aws_lambda_function" "main" {
 ${renderStandardVariables('aws')}
 variable "memory_mb" { type = number default = 256 }
 variable "timeout_seconds" { type = number default = 30 }
+variable "extra_env_vars" { type = map(string) default = {} }
 `.trim(),
       outputsTf: `
 output "function_name" { value = aws_lambda_function.main.function_name }

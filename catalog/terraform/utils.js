@@ -18,7 +18,9 @@ if (servicesRaw.services) {
     servicesRaw.services.forEach(s => { services[s.service_id] = s; });
     console.log(`[UTILS] Indexed ${Object.keys(services).length} services from New SSOT`);
 }
-const patterns = require('../patterns/index');
+// const patterns = require('../patterns/index'); // Unused constant and causes cycle
+// Validating patterns via dynamic lookup if needed, or breaking cycle by deferred import
+const getPatternDefinition = (id) => require('../patterns/index')[id];
 
 const SUPPORTED_PROVIDERS = ['aws', 'gcp', 'azure'];
 
@@ -97,9 +99,9 @@ const getInfracostResourceType = (serviceId) => {
  * PATTERNS HELPERS
  */
 
-const getPattern = (patternId) => patterns[patternId] || null;
+const getPattern = (patternId) => getPatternDefinition(patternId) || null;
 
-const getPatternNames = () => Object.keys(patterns);
+const getPatternNames = () => Object.keys(require('../patterns/index'));
 
 const getAllowedServices = (patternId) => {
     const pattern = getPattern(patternId);

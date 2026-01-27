@@ -197,6 +197,46 @@ const sendBillingEmail = async (to, subject, content) => {
   await sendEmail(to, subject, getHtmlTemplate('Billing Notification', content), 'BILLING');
 };
 
+const sendSubscriptionSuccessEmail = async (user, planName = 'Pro Plan') => {
+  const subject = 'Welcome to Cloudiverse Pro!';
+  const body = `
+    <h2 style="color: #2563EB;">Upgrade Successful!</h2>
+    <p>Congratulations, <strong>${user.name}</strong>!</p>
+    <p>Your subscription to <strong>${planName}</strong> is now active. You have unlocked unlimited projects, advanced AI models, and Terraform exports.</p>
+    
+    <div style="background-color: #ecfdf5; padding: 15px; border-radius: 8px; border-left: 4px solid #10b981; margin: 20px 0; color: #065f46;">
+      <strong>Next Billing Date:</strong> One month from today.
+    </div>
+
+    <div style="text-align: center; margin-top: 30px;">
+      <a href="${process.env.VITE_FRONTEND_URL || 'https://cloudiverse.vercel.app'}/workspaces" class="btn" style="color: #ffffff;">Go to Dashboard</a>
+    </div>
+  `;
+  await sendEmail(user.email, subject, getHtmlTemplate('Subscription Active', body), 'BILLING');
+};
+
+const sendPaymentFailedEmail = async (user) => {
+  const subject = 'Action Required: Payment Failed';
+  const body = `
+    <p>We encountered an issue processing your subscription renewal.</p>
+    <p>Your access to Pro features has been temporarily paused. Please update your payment method to restore access.</p>
+    <div style="text-align: center; margin-top: 30px;">
+      <a href="${process.env.VITE_FRONTEND_URL || '#'}/settings" class="btn" style="background-color: #ef4444; color: #ffffff;">Update Payment Method</a>
+    </div>
+  `;
+  await sendEmail(user.email, subject, getHtmlTemplate('Payment Failed', body), 'BILLING');
+};
+
+const sendSubscriptionCancelledEmail = async (user) => {
+  const subject = 'Subscription Cancelled';
+  const body = `
+    <p>Your subscription has been cancelled as requested.</p>
+    <p>You will continue to have access to Pro features until the end of your current billing period.</p>
+    <p>We're sorry to see you go! You can reactivate your subscription at any time.</p>
+  `;
+  await sendEmail(user.email, subject, getHtmlTemplate('Subscription Cancelled', body), 'BILLING');
+};
+
 module.exports = {
   sendEmail,
   sendWelcomeEmail,
@@ -207,5 +247,8 @@ module.exports = {
   sendDeploymentReadyEmail,
   sendSupportEmail,
   sendUpdateEmail,
-  sendBillingEmail
+  sendBillingEmail,
+  sendSubscriptionSuccessEmail,
+  sendPaymentFailedEmail,
+  sendSubscriptionCancelledEmail
 };

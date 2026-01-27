@@ -795,6 +795,18 @@ router.post('/analyze', authMiddleware, async (req, res) => {
             console.log("--- AXIS ANSWER RECEIVED (NO AI CALL) ---");
             step1Result = { ...ai_snapshot };
 
+            // INCREMENT AI USAGE COUNT
+            if (req.user && req.user.id) {
+                // Increment usage count for the user
+                try {
+                    await pool.query("UPDATE users SET ai_usage_count = COALESCE(ai_usage_count, 0) + 1 WHERE id = $1", [req.user.id]);
+                    console.log(`[USAGE] Incremented AI usage count for user ${req.user.id}`);
+                } catch (usageErr) {
+                    console.error("Failed to increment usage count:", usageErr);
+                }
+            }
+
+
             // ═══════════════════════════════════════════════════════════════════
             // FIX: Extract and apply user's answer to the axes object
             // ═══════════════════════════════════════════════════════════════════

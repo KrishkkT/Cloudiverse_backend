@@ -9,7 +9,7 @@
  * 3. execute Deterministic Routing (The Pure Function)
  */
 
-const { PATTERNS } = require('../../config/canonicalPatterns.json');
+const { patterns: PATTERNS } = require('../../config/canonicalPatterns.json');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. CANONICAL AXES DEFINITION
@@ -140,7 +140,10 @@ class TruthGate {
 
         // Static Sites (The "No Backend" Case)
         if (axes.static_content) {
-            if (axes.authentication) return 'STATIC_SITE_WITH_AUTH';
+            // User Request: If "authentication" is for admin-only access to a static site, prefer STATICSITEWITHAUTH
+            // rather than attaching a full backend by default.
+            if (axes.authentication && !axes.api_backend) return 'STATIC_SITE_WITH_AUTH';
+            if (axes.authentication && axes.api_backend) return 'SERVERLESS_WEB_APP'; // Or other backend patterns
             return 'STATIC_SITE';
         }
 

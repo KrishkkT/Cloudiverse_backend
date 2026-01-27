@@ -175,7 +175,15 @@ class PatternResolver {
       }
 
       // 🔥 FIX 1: Detect machine_learning domain → ML flag
-      if (primaryDomain === 'machine_learning' || primaryDomain.includes('ml') || primaryDomain.includes('ai')) {
+      // Strict check to avoid "supply_chain" matching "ai"
+      const mlDomains = ['machine_learning', 'artificial_intelligence', 'ai_saas', 'data_science', 'llm'];
+      if (mlDomains.includes(primaryDomain) || primaryDomain === 'ai' || primaryDomain === 'ml') {
+        requirements.ml = true;
+      }
+
+      // Fallback: Check text for strict keywords if not already detected
+      const mlKeywords = ['inference', 'training', 'gpu', 'embeddings', ' LLM ', 'neural network'];
+      if (!requirements.ml && mlKeywords.some(k => text.includes(k))) {
         requirements.ml = true;
       }
 

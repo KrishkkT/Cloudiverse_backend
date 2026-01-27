@@ -188,22 +188,40 @@ app.use((req, res, next) => {
   next();
 });
 
+// Import routes
+const authRoutes = require('./routes/auth');
+const workspaceRoutes = require('./routes/workspaces');
+const workflowRoutes = require('./routes/workflow');
+const workflowV2Routes = require('./routes/workflowV2');
+const feedbackRoutes = require('./routes/feedback');
+const analyticsRoutes = require('./routes/analytics');
+const architectureRoutes = require('./routes/architectureRoutes');
+const projectRoutes = require('./routes/projects'); // New import
+const billingRoutes = require('./routes/billing'); // New import
+const settingsRoutes = require('./routes/settings'); // New import
+
 // Routes
+// Health Check
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date() });
+});
+
 app.get('/', (req, res) => {
   res.json({ message: 'Cloudiverse Backend API' });
 });
 
-// Auth routes
-app.use('/api/auth', require('./routes/auth'));
+// Mount Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/workspaces', workspaceRoutes);
+app.use('/api/workflow', workflowRoutes);
+app.use('/api/workflow/v2', workflowV2Routes);
+app.use('/api', feedbackRoutes); // Feedback mounts at root /api/feedback usually, check file. Assuming /api based on previous
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/architecture', architectureRoutes);
+app.use('/api/projects', projectRoutes);
+app.use('/api/billing', billingRoutes);
+app.use('/api/settings', settingsRoutes);
 
-// Workspace routes
-app.use('/api/workspaces', require('./routes/workspaces'));
-
-// Workflow routes
-app.use('/api/workflow', require('./routes/workflow'));
-app.use('/api/workflow/v2', require('./routes/workflowV2'));
-
-// Feedback route
 app.use('/api', require('./routes/feedback'));
 
 // Analytics routes (templates, cost history, audit logs)

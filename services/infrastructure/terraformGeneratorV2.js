@@ -23,8 +23,17 @@ const { resolveServiceId } = require('../../config/aliases');
 function generatePricingMainTf(provider, services, region, projectName, sizing = {}) {
   let tf = `// PRICING TERRAFORM - FLAT STRUCTURE\n`;
 
+  // 🔒 FILTER: Exclude EXTERNAL services (Stripe, Auth0, etc.) from pricing Terraform
+  // We assume 'services' contains objects with pricing.class or we look them up.
+  // Since 'has' relies on ID check, we should filter the check or user Input.
+  // Better: We wrap 'has' to check exclusion list.
+  const EXTERNAL_SERVICES = ['paymentgateway', 'emailservice', 'auth0', 'monitoring_datadog', 'contentful', 'algolia'];
+
   // Helper to check service presence (handle strings or objects)
-  const has = (id) => services.some(s => resolveServiceId(typeof s === 'string' ? s : s.service_id) === id);
+  const has = (id) => {
+    if (EXTERNAL_SERVICES.includes(id)) return false; // Never price external services
+    return services.some(s => resolveServiceId(typeof s === 'string' ? s : s.service_id) === id);
+  };
 
   if (provider === 'aws') {
     // 1. AWS IMPLEMENTATION
@@ -66,11 +75,20 @@ resource "aws_lambda_function" "app" {
   role          = "arn:aws:iam::123456789012:role/service-role/role"
   handler       = "index.handler"
   runtime       = "nodejs18.x"
-  memory_size   = ${sizing.function_memory || 128}
+  memory_size   = ${sizing.function_memory || 1024}
 }
-`;  // 🔥 FIX: API Gateway moved to separate has('apigateway') check
+`;
     }
 
+    // 🔥 ADDED: API Gateway
+    if (has('apigateway') || has('websocketgateway')) {
+      tf += `
+resource "aws_apigatewayv2_api" "main" {
+  name          = "http-api"
+  protocol_type = "HTTP"
+}
+`;
+    }
 
     if (has('relationaldatabase')) {
       tf += `
@@ -99,11 +117,62 @@ resource "aws_dynamodb_table" "main" {
     name = "UserId"
     type = "S"
   }
-
   attribute {
     name = "GameTitle"
     type = "S"
   }
+}
+`;
+    }
+
+    // 🔥 ADDED: Missing Services for Scenarios
+
+    if (has('objectstorage')) {
+      tf += `
+resource "aws_s3_bucket" "b" {
+  bucket = "${projectName.toLowerCase()}-bucket"
+}
+`;
+    }
+
+    if (has('mlinference')) {
+      tf += `
+resource "aws_sagemaker_endpoint_config" "ec" {
+  production_variants {
+    initial_instance_count = 1
+    instance_type          = "ml.g4dn.xlarge" # GPU instance
+  }
+  name = "ml-endpoint"
+}
+`;
+    }
+
+    if (has('iotcore')) {
+      tf += `
+resource "aws_iot_thing" "thing" {
+  name = "example"
+}
+`;
+    }
+
+    if (has('messagequeue')) {
+      tf += `
+resource "aws_sqs_queue" "q" {
+  name = "example-queue"
+}
+`;
+    }
+
+    if (has('cache')) {
+      tf += `
+resource "aws_elasticache_cluster" "c" {
+  cluster_id           = "cluster-example"
+  engine               = "redis"
+  node_type            = "cache.t3.micro"
+  num_cache_nodes      = 1
+  parameter_group_name = "default.redis3.2"
+  engine_version       = "3.2.10"
+  port                 = 6379
 }
 `;
     }
@@ -1661,6 +1730,30 @@ function generateProvidersTf(provider, region) {
 function generateVariablesTf(provider, pattern, services) {
   let variables = '';
 
+  // 🔥 EXTERNAL_CONFIGS MAPPING
+  const EXTERNAL_CONFIGS = {
+    paymentgateway: { var: 'stripe_secret_key', env: 'STRIPE_SECRET_KEY', desc: 'Stripe Secret Key' },
+    auth0: { var: 'auth0_client_id', env: 'AUTH0_CLIENT_ID', desc: 'Auth0 Client ID' },
+    auth: { var: 'auth0_client_id', env: 'AUTH0_CLIENT_ID', desc: 'Auth0 Client ID' }, // Alias
+    emailservice: { var: 'sendgrid_api_key', env: 'SENDGRID_API_KEY', desc: 'SendGrid API Key' },
+    monitoring_datadog: { var: 'dd_api_key', env: 'DD_API_KEY', desc: 'Datadog API Key' },
+    contentful: { var: 'contentful_token', env: 'CONTENTFUL_ACCESS_TOKEN', desc: 'Contentful Access Token' },
+    algolia: { var: 'algolia_key', env: 'ALGOLIA_ADMIN_KEY', desc: 'Algolia Admin Key' }
+  };
+
+  // Inject External Variables if Service Present
+  services.forEach(svc => {
+    const config = EXTERNAL_CONFIGS[svc];
+    if (config) {
+      variables += `variable "${config.var}" {
+  description = "${config.desc}"
+  type        = string
+  sensitive   = true
+}
+`;
+    }
+  });
+
   // Common variables
   if (provider === 'aws') {
     variables += `variable "region" {
@@ -1889,8 +1982,39 @@ function generateMainTf(provider, pattern, services) {
         region = var.region
   
   # Inject common dependencies if available
-  # vpc_id = module.networking.vpc_id
+  # vpc_id = module.networking.vpc_id\n`;
+
+      // 🔥 INJECT EXTERNAL CONFIGS into Compute Modules
+      if (service === 'computeserverless' || service === 'computecontainer' || service === 'appcompute') {
+        const EXTERNAL_CONFIGS = {
+          paymentgateway: { var: 'stripe_secret_key', env: 'STRIPE_SECRET_KEY' },
+          auth0: { var: 'auth0_client_id', env: 'AUTH0_CLIENT_ID' },
+          auth: { var: 'auth0_client_id', env: 'AUTH0_CLIENT_ID' },
+          emailservice: { var: 'sendgrid_api_key', env: 'SENDGRID_API_KEY' },
+          monitoring_datadog: { var: 'dd_api_key', env: 'DD_API_KEY' },
+          contentful: { var: 'contentful_token', env: 'CONTENTFUL_ACCESS_TOKEN' },
+          algolia: { var: 'algolia_key', env: 'ALGOLIA_ADMIN_KEY' }
+        };
+
+        let envVarsBlock = '{\n';
+        let hasEnvs = false;
+        services.forEach(s => {
+          const conf = EXTERNAL_CONFIGS[s];
+          if (conf) {
+            envVarsBlock += `          "${conf.env}" = var.${conf.var}\n`;
+            hasEnvs = true;
+          }
+        });
+        envVarsBlock += '        }';
+
+        if (hasEnvs) {
+          mainTf += `
+        extra_env_vars = ${envVarsBlock}
+`;
+        }
       }
+
+      mainTf += `      }
 
       `;
     });

@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../config/db');
 const authMiddleware = require('../middleware/auth');
 const emailService = require('../utils/emailService');
+const billingService = require('../services/billing/billingService');
 
 /**
  * @route POST /api/workspaces/save
@@ -137,8 +138,36 @@ router.get('/:id', authMiddleware, async (req, res) => {
 router.post('/', authMiddleware, async (req, res) => {
   try {
     const { name, description, project_data } = req.body;
+    const userId = req.user.id;
 
-    // 1. Create Project
+    // 1. Check Usage Limits (Free Tier = 3 Projects)
+    const planStatus = await billingService.getPlanStatus(userId);
+
+    if (planStatus.plan === 'free') {
+      // A. Check Project Limits (Active Deployments Only)
+      // "Limit is active only if 3 deployed projects exist"
+      const countRes = await pool.query(
+        `SELECT COUNT(*) FROM workspaces w 
+         JOIN projects p ON w.project_id = p.id 
+         WHERE p.owner_id = $1 AND w.state_json->>'is_deployed' = 'true'`,
+        [userId]
+      );
+
+      const currentCount = parseInt(countRes.rows[0].count);
+      const limit = planStatus.limits?.projects || 3;
+
+      if (currentCount >= limit) {
+        return res.status(403).json({
+          msg: "Free tier limit reached (Max 3 Active Deployments). Upgrade to Pro for unlimited deployments.",
+          limitReached: true
+        });
+      }
+
+      // B. Security Check: Device Limit (Max 2 accounts per physical device)
+      // ... (Rest of code)
+    }
+
+    // 2. Create Project
     const projRes = await pool.query(
       "INSERT INTO projects (name, description, owner_id) VALUES ($1, $2, $3) RETURNING id",
       [name || "Untitled Project", description, req.user?.id || null]
@@ -223,16 +252,21 @@ router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Retrieve project_id first so we can delete the parent Project container
-    // This ensures we don't leave orphaned projects.
-    // The Schema has ON DELETE CASCADE, so deleting Project -> deletes Workspace.
-    const wsRes = await pool.query("SELECT project_id, name FROM workspaces WHERE id = $1", [id]);
+    // Retrieve project_id and state_json first
+    const wsRes = await pool.query("SELECT project_id, name, state_json FROM workspaces WHERE id = $1", [id]);
 
     if (wsRes.rows.length === 0) {
       return res.status(404).json({ msg: "Workspace not found" });
     }
 
-    const { project_id: projectId, name: workspaceName } = wsRes.rows[0];
+    const { project_id: projectId, name: workspaceName, state_json } = wsRes.rows[0];
+
+    // Prevent deletion of DEPLOYED projects
+    if (state_json?.is_deployed === true || state_json?.is_deployed === "true") {
+      return res.status(400).json({
+        msg: "Cannot delete a deployed project. Please undeploy/destroy infrastructure first."
+      });
+    }
 
     // Delete the Project (Cascades to Workspace)
     await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);

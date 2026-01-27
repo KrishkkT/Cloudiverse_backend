@@ -38,7 +38,8 @@ const register = async (req, res) => {
       name,
       email,
       password,
-      company
+      company,
+      device_id: req.body.device_id
     });
 
     // Generate token
@@ -97,6 +98,20 @@ const login = async (req, res) => {
 
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    // Update device_id if provided
+    if (req.body.device_id) {
+      // We use a direct query here or add a method to User model. 
+      // Since User.js is likely a wrapper, let's try to stick to the pattern or direct pool usage if User model doesn't support generic update easily without ID.
+      // Actually User.update is available.
+      try {
+        if (user.device_id !== req.body.device_id) {
+          await pool.query("UPDATE users SET device_id = $1 WHERE id = $2", [req.body.device_id, user.id]);
+        }
+      } catch (err) {
+        console.error("Failed to update device_id", err);
+      }
     }
 
     // Generate token
@@ -254,7 +269,44 @@ const updateProfile = async (req, res) => {
   }
 };
 
-// Delete user account
+// Update Password (Authenticated)
+const updatePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'Current and new passwords are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'New password must be at least 6 characters' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Verify current
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Incorrect current password' });
+    }
+
+    // Hash new
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    // Update
+    await pool.query("UPDATE users SET password = $1 WHERE id = $2", [hashedPassword, req.user.id]);
+
+    res.json({ message: 'Password updated successfully' });
+  } catch (error) {
+    console.error('Update password error:', error);
+    res.status(500).json({ message: 'Server error updating password' });
+  }
+};
+
 // Delete user account
 const deleteAccount = async (req, res) => {
   try {
@@ -265,6 +317,23 @@ const deleteAccount = async (req, res) => {
     }
 
     // Delete user (this will cascade delete workspaces due to foreign key constraint)
+
+    // SAFETY CHECK: Prevent deletion if user has ACTIVE deployments
+    const activeDeploymentsRes = await pool.query(
+      `SELECT COUNT(*) as count 
+       FROM workspaces w 
+       JOIN projects p ON w.project_id = p.id 
+       WHERE p.owner_id = $1 AND (w.state_json->>'is_deployed' = 'true' OR w.step = 'deployed')`,
+      [req.user.id]
+    );
+
+    const activeCount = parseInt(activeDeploymentsRes.rows[0].count);
+    if (activeCount > 0) {
+      return res.status(400).json({
+        message: `Cannot delete account. You have ${activeCount} active project(s). Please undeploy them first to prevent orphaned resources.`
+      });
+    }
+
     const deletedUser = await User.delete(req.user.id);
 
     if (!deletedUser) {
@@ -324,6 +393,7 @@ module.exports = {
   resetPassword,
   getProfile,
   updateProfile,
+  updatePassword,
   deleteAccount,
   logout,
   verifyTurnstile
