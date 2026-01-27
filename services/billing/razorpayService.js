@@ -5,13 +5,20 @@ const { RAZORPAY_PLAN_IDS } = require('../../config/plans');
 class RazorpayService {
     constructor() {
         if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
-            console.warn("⚠️ Razorpay credentials missing in .env");
+            console.warn("⚠️ Razorpay credentials missing in .env. Billing features will be disabled.");
+            this.instance = null;
+            return;
         }
 
-        this.instance = new Razorpay({
-            key_id: process.env.RAZORPAY_KEY_ID,
-            key_secret: process.env.RAZORPAY_KEY_SECRET
-        });
+        try {
+            this.instance = new Razorpay({
+                key_id: process.env.RAZORPAY_KEY_ID,
+                key_secret: process.env.RAZORPAY_KEY_SECRET
+            });
+        } catch (err) {
+            console.error("Failed to initialize Razorpay:", err);
+            this.instance = null;
+        }
     }
 
     /**
@@ -20,6 +27,7 @@ class RazorpayService {
      * @param {number} totalCount - billing cycles (default 12)
      */
     async createSubscription(planId, totalCount = 12) {
+        if (!this.instance) throw new Error("Razorpay not initialized - Credentials missing");
         try {
             const subscription = await this.instance.subscriptions.create({
                 plan_id: planId,
@@ -38,6 +46,7 @@ class RazorpayService {
      * Cancel a Subscription
      */
     async cancelSubscription(subscriptionId) {
+        if (!this.instance) throw new Error("Razorpay not initialized - Credentials missing");
         try {
             // cancel_at_cycle_end is safer for UX
             return await this.instance.subscriptions.cancel(subscriptionId, false);
@@ -66,6 +75,7 @@ class RazorpayService {
      * Fetch Subscription Details
      */
     async getSubscription(subscriptionId) {
+        if (!this.instance) throw new Error("Razorpay not initialized - Credentials missing");
         return await this.instance.subscriptions.fetch(subscriptionId);
     }
 }
