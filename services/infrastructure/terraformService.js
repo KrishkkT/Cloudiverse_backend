@@ -253,7 +253,7 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
     projectFolder['versions.tf'] = terraformGeneratorV2.generateVersionsTf(providerLower);
     projectFolder['providers.tf'] = terraformGeneratorV2.generateProvidersTf(providerLower, resolvedRegion);
     projectFolder['variables.tf'] = terraformGeneratorV2.generateVariablesTf(providerLower, pattern, normalizedServices);
-    projectFolder['terraform.tfvars'] = terraformGeneratorV2.generateTfvars(providerLower, resolvedRegion, projectName);
+    projectFolder['terraform.tfvars'] = terraformGeneratorV2.generateTfvars(providerLower, resolvedRegion, projectName, infraSpec.sizing);
     projectFolder['main.tf'] = terraformGeneratorV2.generateMainTf(providerLower, pattern, normalizedServices);
     projectFolder['outputs.tf'] = terraformGeneratorV2.generateOutputsTf(providerLower, pattern, normalizedServices);
     projectFolder['README.md'] = terraformGeneratorV2.generateReadme(projectName, providerLower, pattern, normalizedServices);

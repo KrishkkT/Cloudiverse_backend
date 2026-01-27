@@ -20,7 +20,7 @@ const { resolveServiceId } = require('../../config/aliases');
  * Generate FLAT pricing-optimized main.tf (No modules)
  * Matches strict keys in usageNormalizer.js
  */
-function generatePricingMainTf(provider, services, region, projectName) {
+function generatePricingMainTf(provider, services, region, projectName, sizing = {}) {
   let tf = `// PRICING TERRAFORM - FLAT STRUCTURE\n`;
 
   // Helper to check service presence (handle strings or objects)
@@ -43,18 +43,18 @@ resource "aws_ecs_service" "app" {
   }
 }
 
-resource "aws_ecs_task_definition" "pricing-task" {
+  resource "aws_ecs_task_definition" "pricing-task" {
   family                   = "pricing-task"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = 1024 # 1 vCPU
-  memory                   = 2048 # 2 GB
+  cpu                      = ${sizing.container_cpu || 1024} # Dynamic sizing
+  memory                   = ${sizing.container_memory || 2048} # Dynamic sizing
   execution_role_arn       = "arn:aws:iam::123456789012:role/ecsTaskExecutionRole"
   container_definitions    = jsonencode([{
     name  = "app"
     image = "nginx"
-    cpu   = 1024
-    memory = 2048
+    cpu   = ${sizing.container_cpu || 1024}
+    memory = ${sizing.container_memory || 2048}
   }])
 }
 `;
@@ -66,7 +66,7 @@ resource "aws_lambda_function" "app" {
   role          = "arn:aws:iam::123456789012:role/service-role/role"
   handler       = "index.handler"
   runtime       = "nodejs18.x"
-  memory_size   = 128
+  memory_size   = ${sizing.function_memory || 128}
 }
 `;  // 🔥 FIX: API Gateway moved to separate has('apigateway') check
     }
@@ -75,8 +75,8 @@ resource "aws_lambda_function" "app" {
     if (has('relationaldatabase')) {
       tf += `
 resource "aws_db_instance" "db" {
-  instance_class    = "db.t3.medium" # 🔥 UPDATED: Realistic prod size
-  allocated_storage = 100            # 🔥 UPDATED: Realistic storage
+  instance_class    = "${sizing.instance_class || "db.t3.medium"}" # Dynamic sizing
+  allocated_storage = ${sizing.storage_gb || 20}                 # Dynamic sizing
   engine            = "postgres"
   username          = "foo"
   password          = "bar"
@@ -655,8 +655,8 @@ resource "google_cloud_run_service" "app" {
         image = "gcr.io/cloudrun/hello"
         resources {
           limits = {
-            cpu    = "2000m" # 🔥 UPDATED: 2 vCPU
-            memory = "2Gi"   # 🔥 UPDATED: 2 GiB to avoid free tier
+            cpu    = "${(sizing.container_cpu || 1024) / 1000}000m" # Dynamic
+            memory = "${(sizing.container_memory || 2048)}Mi"     # Dynamic
           }
         }
       }
@@ -679,7 +679,7 @@ resource "google_cloud_run_service" "app" {
 resource "google_cloudfunctions_function" "func" {
   name                  = "${projectName}-func"
   runtime               = "nodejs18"
-  available_memory_mb   = 1024 # 🔥 UPDATED: 1GB memory
+  available_memory_mb   = ${sizing.function_memory || 256} # Dynamic
   source_archive_bucket = "mock-bucket"
   source_archive_object = "mock-object"
   trigger_http          = true
@@ -695,7 +695,7 @@ resource "google_sql_database_instance" "db" {
   database_version = "POSTGRES_13"
   region           = "${region}"
   settings {
-    tier = "db-custom-2-3840" # 🔥 UPDATED: 2 vCPU, 3.75GB RAM (Standard)
+    tier = "${sizing.instance_class || "db-custom-2-3840"}" # Dynamic
   }
 }
 `;
@@ -1173,8 +1173,8 @@ resource "azurerm_postgresql_flexible_server" "db" {
         version = "12"
         administrator_login = "psqladmin"
         administrator_password = "H@Sh1CoR3!"
-        storage_mb = 32768
-        sku_name = "B_Standard_B1ms"
+        storage_mb = ${(sizing.storage_gb || 32) * 1024}
+        sku_name = "${sizing.instance_class || "B_Standard_B1ms"}"
       }
       `;
     }
@@ -1762,7 +1762,7 @@ variable "monitoring_enabled" {
 /**
  * Generate terraform.tfvars from workspace defaults
  */
-function generateTfvars(provider, region, projectName) {
+function generateTfvars(provider, region, projectName, sizing = {}) {
   // const region resolved from arg
 
 
@@ -1780,9 +1780,20 @@ function generateTfvars(provider, region, projectName) {
   tfvars += `project_name = "${projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')}"\n`;
   tfvars += `environment = "production"\n\n`;
 
+  // Sizing & Cost Drivers (Injected from Cost Analysis)
+  if (sizing) {
+    tfvars += `# Sizing & Cost Drivers\n`;
+    if (sizing.instance_class) tfvars += `db_instance_class = "${sizing.instance_class}"\n`;
+    if (sizing.storage_gb) tfvars += `db_allocated_storage = ${sizing.storage_gb}\n`;
+    if (sizing.container_cpu) tfvars += `container_cpu = ${sizing.container_cpu}\n`;
+    if (sizing.container_memory) tfvars += `container_memory = ${sizing.container_memory}\n`;
+    if (sizing.function_memory) tfvars += `function_memory = ${sizing.function_memory}\n`;
+    if (sizing.requests_per_month) tfvars += `estimated_requests = ${sizing.requests_per_month}\n`;
+  }
+
   // NFR-driven values (Defaults since requirements obj is not available in V2 generator yet)
   const nfr = {};
-  tfvars += `# NFR - Driven Configuration\n`;
+  tfvars += `\n# NFR - Driven Configuration\n`;
   tfvars += `encryption_at_rest = true\n`;
   tfvars += `backup_retention_days = 7\n`;
   tfvars += `deletion_protection = true\n`;
@@ -2646,6 +2657,34 @@ resource "aws_apigatewayv2_stage" "default" {
 variable "region" { type = string }`,
           outputs: `output "endpoint" { value = aws_apigatewayv2_api.api.api_endpoint }`
         };
+
+      case 'cdn':
+        return {
+          main: `resource "aws_cloudfront_distribution" "cdn" {
+  enabled = true
+  origin {
+    domain_name = "example.com"
+    origin_id   = "site"
+  }
+  default_cache_behavior {
+    allowed_methods  = ["GET", "HEAD"]
+    cached_methods   = ["GET", "HEAD"]
+    target_origin_id = "site"
+    viewer_protocol_policy = "allow-all"
+  }
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+}`,
+          variables: `variable "project_name" { type = string }
+variable "region" { type = string }`,
+          outputs: `output "cdn_domain" { value = aws_cloudfront_distribution.cdn.domain_name }`
+        };
     }
   }
 
@@ -2695,6 +2734,23 @@ variable "region" { type = string }`,
           outputs: `output "bucket_name" { value = google_storage_bucket.store.name }`
         };
 
+      case 'cdn':
+        return {
+          main: `resource "google_compute_backend_bucket" "static" {
+  name        = "\${var.project_name}-backend"
+  bucket_name = "example-bucket"
+  enable_cdn  = true
+}
+
+resource "google_compute_url_map" "default" {
+  name            = "\${var.project_name}-url-map"
+  default_service = google_compute_backend_bucket.static.id
+}`,
+          variables: `variable "project_name" { type = string }
+variable "region" { type = string }`,
+          outputs: `output "url_map" { value = google_compute_url_map.default.name }`
+        };
+
       default:
         return skeleton;
     }
@@ -2739,19 +2795,38 @@ variable "location" { type = string }`,
         return {
           main: `resource "azurerm_storage_account" "store" {
   name                     = replace("\${var.project_name}store", "-", "")
-  resource_group_name      = azurerm_resource_group.rg.name
+  resource_group_name      = "static-resource-group"
   location                 = var.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
-}
-
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-data-rg"
-  location = var.location
 }`,
           variables: `variable "project_name" { type = string }
 variable "location" { type = string }`,
           outputs: `output "storage_account_name" { value = azurerm_storage_account.store.name }`
+        };
+
+      case 'cdn':
+        return {
+          main: `resource "azurerm_cdn_profile" "cdn" {
+  name                = "\${var.project_name}-cdn"
+  location            = "global"
+  resource_group_name = "static-resource-group"
+  sku                 = "Standard_Microsoft"
+}
+
+resource "azurerm_cdn_endpoint" "endpoint" {
+  name                = "\${var.project_name}-endpoint"
+  profile_name        = azurerm_cdn_profile.cdn.name
+  location            = "global"
+  resource_group_name = "static-resource-group"
+  origin {
+    name      = "origin1"
+    host_name = "example.com"
+  }
+}`,
+          variables: `variable "project_name" { type = string }
+variable "location" { type = string }`,
+          outputs: `output "cdn_endpoint" { value = azurerm_cdn_endpoint.endpoint.name }`
         };
 
       default:

@@ -418,6 +418,19 @@ async function calculateCostForMode(costMode, infraSpec, intent, costProfile, us
  */
 async function calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile) {
   const description = intent?.intent_classification?.project_description?.toLowerCase() || '';
+  const pattern = infraSpec.canonical_architecture?.pattern || '';
+
+  // 🔒 GOLD STANDARD FIX: Static Site Bypass
+  if (pattern === 'STATIC_SITE' || pattern === 'STATIC_WEB_HOSTING' || description.includes('static site')) {
+    console.log('[COST ENGINE] 🔒 STATIC_SITE_BYPASS Triggered');
+    const staticResult = await handleStaticWebsiteCost(infraSpec, intent, usageProfile);
+    // Ensure we return the expected cost_mode for verification
+    return {
+      ...staticResult,
+      cost_mode: 'STATIC_SITE_BYPASS',
+      pricing_method_used: 'formula_bypass'
+    };
+  }
 
   // Check if this is operational failure analysis
   if (description.includes('fail') ||
@@ -2412,7 +2425,8 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
       genProvider,
       deployableServices,
       resolvedRegion,
-      resolvedProjectName
+      resolvedProjectName,
+      sizing
     );
     const versionsTf = terraformGeneratorV2.generateVersionsTf(genProvider);
     const providersTf = terraformGeneratorV2.generateProvidersTf(genProvider, resolvedRegion);
@@ -3248,7 +3262,13 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
     // STEP 1: CLASSIFY WORKLOAD INTO COST MODE
     // This determines the pricing approach to use
     // ═══════════════════════════════════════════════════════════════════
-    const costMode = classifyWorkload(intent, infraSpec);
+    let costMode = classifyWorkload(intent, infraSpec);
+
+    // 🔥 FIX: Enforce STATIC_SITE_BYPASS for STATIC_SITE pattern
+    if (infraSpec.canonical_architecture?.pattern_id === 'STATIC_SITE' || infraSpec.architecture_pattern === 'STATIC_SITE') {
+      console.log(`[COST ANALYSIS] Overriding Cost Mode for STATIC_SITE -> STATIC_SITE_BYPASS`);
+      costMode = 'STATIC_SITE_BYPASS';
+    }
     console.log(`[COST ANALYSIS] Cost Mode: ${costMode}`);
 
     // ═══════════════════════════════════════════════════════════════════
@@ -3256,8 +3276,10 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
     // ═══════════════════════════════════════════════════════════════════
     const result = await calculateCostForMode(costMode, infraSpec, intent, costProfile, usageOverrides);
 
-    // Add cost mode information to result
-    result.cost_mode = costMode;
+    // Add cost mode information to result if not already set by specialized calculator
+    if (!result.cost_mode) {
+      result.cost_mode = costMode;
+    }
     result.pricing_method_used = result.pricing_method_used || 'unknown';
 
     console.log(`[COST ANALYSIS] Mode: ${costMode}, Method: ${result.pricing_method_used}, Cost: $${result.recommended?.monthly_cost?.toFixed(2) || 'N/A'}`);

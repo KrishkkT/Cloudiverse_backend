@@ -3161,7 +3161,7 @@ router.post('/terraform', authMiddleware, async (req, res) => {
 
         console.log(`[TERRAFORM] InfraSpec:`, JSON.stringify(infraSpec, null, 2));
         console.log(`[TERRAFORM] InfraSpec pattern:`, infraSpec?.architecture_pattern || infraSpec?.canonical_architecture?.pattern);
-        console.log(`[TERRAFORM] Services:`, infraSpec?.service_classes?.required_services?.map(s => s.service_class));
+        console.log(`[TERRAFORM] Services:`, infraSpec?.service_classes?.required_services?.map(s => s.canonical_type || s.service_class || s.name));
 
         // 🔥 TERRAFORM-SAFE MODE: Validate that deployable services have modules available for the selected provider
         if (infraSpec.canonical_architecture?.deployable_services && Array.isArray(infraSpec.canonical_architecture.deployable_services)) {

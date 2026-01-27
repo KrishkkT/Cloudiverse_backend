@@ -317,19 +317,26 @@ class PatternResolver {
         }
       }
 
-      // Determine data stores (fallback text search)
-      if (requirements.data_stores.length === 0) {
+      // Determine data stores (Additive text search - Robust)
+      if (!requirements.data_stores.includes('relationaldatabase')) {
         if (text.includes('sql') || text.includes('database') || text.includes('relational') ||
           text.includes('mysql') || text.includes('postgres')) {
           requirements.data_stores.push('relationaldatabase');
+          requirements.stateful = true; // Implicitly stateful
         }
+      }
+      if (!requirements.data_stores.includes('cache')) {
         if (text.includes('cache') || text.includes('redis')) {
           requirements.data_stores.push('cache');
         }
+      }
+      if (!requirements.data_stores.includes('messagequeue')) {
         if (text.includes('queue') || text.includes('message') || text.includes('kafka')) {
           requirements.data_stores.push('messagequeue');
         }
-        if (text.includes('file') || text.includes('storage') || text.includes('s3')) {
+      }
+      if (!requirements.data_stores.includes('objectstorage')) {
+        if (text.includes('file') || text.includes('storage') || text.includes('s3') || text.includes('images') || text.includes('photos')) {
           requirements.data_stores.push('objectstorage');
         }
       }

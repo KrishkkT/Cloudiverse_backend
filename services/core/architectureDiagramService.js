@@ -333,11 +333,15 @@ function generateEdgesForPattern(pattern, nodes) {
         // Option B: Generic Fallback (V1 Legacy Support)
 
         // Connect frontend -> ingress
-        if (hasNode('client')) {
-            if (hasNode('cdn')) addEdge('client', 'cdn', 'requests');
-            else if (hasNode('apigateway')) addEdge('client', 'apigateway', 'requests');
-            else if (hasNode('loadbalancer')) addEdge('client', 'loadbalancer', 'requests');
-            else if (hasNode('websocketgateway')) addEdge('client', 'websocketgateway', 'connects');
+        if (hasNode('cdn')) addEdge('client', 'cdn', 'requests');
+        else if (hasNode('apigateway')) addEdge('client', 'apigateway', 'requests');
+        else if (hasNode('loadbalancer')) addEdge('client', 'loadbalancer', 'requests');
+        else if (hasNode('websocketgateway')) addEdge('client', 'websocketgateway', 'connects');
+
+
+        // STATIC SITE / CDN PATTERN: Connect CDN -> Storage
+        if (hasNode('cdn') && hasNode('objectstorage')) {
+            addEdge('cdn', 'objectstorage', 'origins from');
         }
 
         // Connect ingress -> compute
