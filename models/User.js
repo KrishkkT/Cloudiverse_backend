@@ -9,12 +9,12 @@ class User {
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
     const query = `
-      INSERT INTO users (name, email, password, company)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO users (name, email, password, company, device_id)
+      VALUES ($1, $2, $3, $4, $5)
       RETURNING id, name, email, company, created_at
     `;
-    
-    const values = [name, email, hashedPassword, company];
+
+    const values = [name, email, hashedPassword, company, userData.device_id];
     const result = await pool.query(query, values);
     return result.rows[0];
   }
@@ -39,7 +39,7 @@ class User {
       WHERE id = $4
       RETURNING id, name, email, company, updated_at
     `;
-    
+
     const values = [name, email, company, id];
     const result = await pool.query(query, values);
     return result.rows[0];
@@ -48,7 +48,7 @@ class User {
   static async delete(id) {
     // First delete all workspaces belonging to the user
     await pool.query('DELETE FROM workspaces WHERE user_id = $1', [id]);
-    
+
     // Then delete the user
     const query = 'DELETE FROM users WHERE id = $1 RETURNING *';
     const result = await pool.query(query, [id]);
