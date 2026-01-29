@@ -337,9 +337,10 @@ router.get('/:provider/callback', async (req, res) => {
                              window.opener.postMessage({ type: 'CLOUD_AUTH_SUCCESS', provider: '${provider}', workspaceId: '${workspace_id}', status: '${connectionMetadata.status}' }, '*');
                         } catch (e) { console.error("PostMessage failed", e); }
                     }
-                    setTimeout(() => window.close(), 2000);
+                    // Try to close, but offer button if blocked
+                    setTimeout(() => window.close(), 1000);
                 </script>
-                <button onclick="window.close()" style="margin-top: 20px; padding: 10px 20px; background: #334155; border: none; color: white; border-radius: 8px; cursor: pointer;">Close Window</button>
+                <button onclick="window.close()" style="margin-top: 20px; padding: 12px 24px; background: #334155; border: 1px solid #475569; color: white; border-radius: 8px; cursor: pointer; font-weight: bold; transition: all 0.2s;">Close Window</button>
             </body>
             </html>
         `;
