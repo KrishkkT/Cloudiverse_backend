@@ -84,7 +84,7 @@ function detectLogicalRegion(userInput, requirements = {}) {
     }
   }
 
-  // Default to ASIA_PRIMARY (India) as per user preference
+  // FIX: Hardcode to ASIA_PRIMARY (India) for now as per requirements
   return LogicalRegion.ASIA_PRIMARY;
 }
 

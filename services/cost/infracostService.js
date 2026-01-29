@@ -769,7 +769,7 @@ function generatePricingTerraform(provider, infraSpec, billableServices, sizing,
   // The V2 generator (terraformGeneratorV2.js) is the Source of Truth for resource definitions.
   // It handles full catalog support, whereas the legacy functions below (now unused) were manual subsets.
 
-  const region = infraSpec.region || 'us-east-1';
+  const region = infraSpec.region || 'ap-south-1';
   // Fallback project name
   const projectName = infraSpec.name || (infraSpec.project_name || 'infracost-project');
 
