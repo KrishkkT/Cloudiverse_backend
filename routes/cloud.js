@@ -28,6 +28,71 @@ const cca = new msal.ConfidentialClientApplication(msalConfig);
  * @desc Generate auth URL for the selected provider (MOCKED)
  * @access Private
  */
+/**
+ * @route POST /api/cloud/aws/template
+ * @desc Generate CloudFormation Template Content (Manual Flow)
+ */
+router.post('/aws/template', authMiddleware, async (req, res) => {
+    try {
+        const { workspace_id } = req.body;
+        if (!workspace_id) return res.status(400).json({ msg: "Workspace ID is required" });
+
+        const externalId = `cloudiverse-${workspace_id}-${Math.random().toString(36).substring(7)}`;
+        const accountId = process.env.AWS_ACCOUNT_ID || "123456789012"; // Fallback for dev
+
+        const yamlContent = `
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Cloudiverse Cross-Account Access Role'
+Parameters:
+  ExternalId:
+    Type: String
+    Description: 'The External ID for security'
+    Default: '${externalId}'
+  CloudiverseAccountId:
+    Type: String
+    Description: 'The Cloudiverse AWS Account ID'
+    Default: '${accountId}'
+Resources:
+  CloudiverseAccessRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub 'CloudiverseAccessRole-\${ExternalId}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref CloudiverseAccountId
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'sts:ExternalId': !Ref ExternalId
+      Policies:
+        - PolicyName: 'CloudiversePowerUserAccess'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: '*'
+                Resource: '*'
+Outputs:
+  RoleArn:
+    Description: 'The ARN of the role to paste into Cloudiverse'
+    Value: !GetAtt CloudiverseAccessRole.Arn
+`;
+
+        res.json({
+            template: yamlContent,
+            filename: `cloudiverse-trust-role-${workspace_id}.yaml`,
+            extra: { externalId, accountId }
+        });
+
+    } catch (err) {
+        console.error("Template Gen Error:", err);
+        res.status(500).send("Server Error");
+    }
+});
+
 router.post('/:provider/connect', authMiddleware, async (req, res) => {
     try {
         const { provider } = req.params;
@@ -163,9 +228,37 @@ router.get('/:provider/callback', async (req, res) => {
             [JSON.stringify(updatedState), workspace_id]
         );
 
-        const frontendUrl = process.env.VITE_FRONTEND_URL || 'http://localhost:3000';
-        const redirectBase = frontendUrl.endsWith('/') ? frontendUrl : `${frontendUrl}/`;
-        res.redirect(`${redirectBase}workspace/${workspace_id}?step=deploy&connection=success`);
+        // Return HTML that communicates with the opener
+        const successHtml = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Success</title>
+                <style>
+                    body { background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; }
+                    .icon { font-size: 48px; color: #4ade80; margin-bottom: 20px; }
+                    p { color: #94a3b8; }
+                </style>
+            </head>
+            <body>
+                <div class="icon">✓</div>
+                <h1>Connection Successful</h1>
+                <p>You can close this window now.</p>
+                <script>
+                    // Communicate to the main window
+                    if (window.opener) {
+                        window.opener.postMessage({ type: 'CLOUD_AUTH_SUCCESS', provider: '${provider}', workspaceId: '${workspace_id}' }, '*');
+                    }
+                    // Attempt to close self
+                    setTimeout(() => {
+                        window.close();
+                    }, 1500);
+                </script>
+            </body>
+            </html>
+        `;
+
+        res.send(successHtml);
 
     } catch (err) {
         console.error("Cloud Callback Error:", err);
