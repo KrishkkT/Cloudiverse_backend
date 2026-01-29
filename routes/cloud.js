@@ -111,8 +111,8 @@ router.post('/:provider/connect', authMiddleware, async (req, res) => {
             const externalId = `cloudiverse-${workspace_id}-${Math.random().toString(36).substring(7)}`;
 
             // Construct CloudFormation URL
-            const templateUri = "https://cloudiverse-cloudformation.s3.amazonaws.com/aws-trust-role.yaml"; // Hypothetical
-            const accountId = process.env.AWS_ACCOUNT_ID; // The Cloudiverse Account ID to trust
+            const templateUri = "https://cloudiverse-cloudformation.s3.amazonaws.com/aws-trust-role.yaml";
+            const accountId = process.env.AWS_ACCOUNT_ID;
 
             authUrl = `https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=${templateUri}&stackName=CloudiverseAccess&param_ExternalId=${externalId}&param_CloudiverseAccountId=${accountId}`;
 
@@ -247,13 +247,16 @@ router.get('/:provider/callback', async (req, res) => {
                 <script>
                     // Communicate to the main window
                     if (window.opener) {
-                        window.opener.postMessage({ type: 'CLOUD_AUTH_SUCCESS', provider: '${provider}', workspaceId: '${workspace_id}' }, '*');
+                        try {
+                             window.opener.postMessage({ type: 'CLOUD_AUTH_SUCCESS', provider: '${provider}', workspaceId: '${workspace_id}' }, '*');
+                        } catch (e) { console.error("PostMessage failed", e); }
                     }
                     // Attempt to close self
                     setTimeout(() => {
                         window.close();
                     }, 1500);
                 </script>
+                <button onclick="window.close()" style="margin-top: 20px; padding: 10px 20px; background: #334155; border: none; color: white; border-radius: 8px; cursor: pointer;">Close Window</button>
             </body>
             </html>
         `;
