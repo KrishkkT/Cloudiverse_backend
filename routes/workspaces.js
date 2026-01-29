@@ -164,7 +164,24 @@ router.post('/', authMiddleware, async (req, res) => {
       }
 
       // B. Security Check: Device Limit (Max 2 accounts per physical device)
-      // ... (Rest of code)
+      const userRes = await pool.query("SELECT device_id FROM users WHERE id = $1", [userId]);
+      const deviceId = userRes.rows[0]?.device_id;
+
+      if (deviceId) {
+        // Count how many unique user IDs are associated with this device_id
+        const deviceCountRes = await pool.query(
+          "SELECT COUNT(DISTINCT id) FROM users WHERE device_id = $1",
+          [deviceId]
+        );
+        const accountCount = parseInt(deviceCountRes.rows[0].count);
+
+        if (accountCount > 2) {
+          return res.status(403).json({
+            msg: "Security Limit: This device is already associated with 2 or more accounts. Please use one of your existing accounts to continue on the Free Tier.",
+            limitReached: true
+          });
+        }
+      }
     }
 
     // 2. Create Project
