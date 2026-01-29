@@ -26,10 +26,25 @@ const cca = new msal.ConfidentialClientApplication(msalConfig);
 
 // Unified Verification Helper
 const verifyCloudConnection = async (provider, metadata) => {
+    console.log(`[VERIFY_START] ${provider.toUpperCase()}`, {
+        hasTokens: !!metadata.tokens,
+        hasRoleArn: !!metadata.role_arn,
+        hasExternalId: !!metadata.external_id,
+        context: metadata
+    });
+
     try {
         if (provider === 'aws') {
             // AWS Verification (AssumeRole + GetCallerIdentity)
-            const client = new STSClient({ region: "us-east-1" });
+            // 🔧 BOOTSTRAP: Must have base credentials to AssumeRole
+            const clientConfig = { region: "ap-south-1" };
+            if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+                clientConfig.credentials = {
+                    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+                    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+                };
+            }
+            const client = new STSClient(clientConfig);
 
             // 1. Assume Role
             const assumeCmd = new AssumeRoleCommand({
@@ -41,7 +56,7 @@ const verifyCloudConnection = async (provider, metadata) => {
 
             // 2. Verify Identity with Temp Creds
             const identityClient = new STSClient({
-                region: "us-east-1",
+                region: "ap-south-1",
                 credentials: {
                     accessKeyId: assumed.Credentials.AccessKeyId,
                     secretAccessKey: assumed.Credentials.SecretAccessKey,
@@ -57,13 +72,17 @@ const verifyCloudConnection = async (provider, metadata) => {
             };
         }
         else if (provider === 'gcp') {
-            // GCP Verification (Projects.get)
+            // GCP Verification (Projects.list - verified access to Cloud Platform)
+            console.log("[GCP] Setting credentials...");
+            if (!metadata.tokens) throw new Error("No tokens found in metadata");
+
             oauth2Client.setCredentials(metadata.tokens);
             const crm = google.cloudresourcemanager('v1');
 
-            // Verify access to list projects or get specific project if ID known
-            // For now, we just list to ensure API access works
+            // Verify access to list projects
+            console.log("[GCP] Listing projects to verify scope...");
             const res = await crm.projects.list({ auth: oauth2Client, pageSize: 1 });
+            console.log("[GCP] Project list success:", res.data.projects ? res.data.projects.length : '0 found');
 
             return {
                 verified: true,
@@ -73,15 +92,26 @@ const verifyCloudConnection = async (provider, metadata) => {
         }
         else if (provider === 'azure') {
             // Azure Verification (List Subscriptions)
+            console.log("[AZURE] Verifying with token...");
+
+            // Ensure we have a valid token (re-acquire if needed logic could go here, but simply using stored token for now)
             const token = metadata.tokens.accessToken;
-            const res = await axios.get('https://management.azure.com/subscriptions?api-version=2020-01-01', {
+            if (!token) throw new Error("No access token found for Azure");
+
+            // Using the correct API version and logging the request
+            const subUrl = 'https://management.azure.com/subscriptions?api-version=2020-01-01';
+            console.log(`[AZURE] Calling GET ${subUrl}`);
+
+            const res = await axios.get(subUrl, {
                 headers: { Authorization: `Bearer ${token}` }
             });
 
             if (!res.data.value || res.data.value.length === 0) {
+                console.warn("[AZURE] No subscriptions found for this account.");
                 throw new Error("No subscriptions found or accessible.");
             }
 
+            console.log("[AZURE] Subscriptions found:", res.data.value.length);
             return {
                 verified: true,
                 account_id: res.data.value[0].subscriptionId, // Use first sub ID as ref
@@ -90,6 +120,9 @@ const verifyCloudConnection = async (provider, metadata) => {
         }
     } catch (err) {
         console.error(`[VERIFY_FAIL] ${provider}: ${err.message}`);
+        if (err.response) {
+            console.error(`[VERIFY_FAIL_DATA]`, err.response.data);
+        }
         throw err;
     }
 };
@@ -172,7 +205,7 @@ router.post('/:provider/connect', authMiddleware, async (req, res) => {
             const templateUri = "https://cloudiverse-cloudformation.s3.amazonaws.com/aws-trust-role.yaml";
             const accountId = process.env.AWS_ACCOUNT_ID;
 
-            authUrl = `https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=${templateUri}&stackName=CloudiverseAccess&param_ExternalId=${externalId}&param_CloudiverseAccountId=${accountId}`;
+            authUrl = `https://console.aws.amazon.com/cloudformation/home?region=ap-south-1#/stacks/create/review?templateURL=${templateUri}&stackName=CloudiverseAccess&param_ExternalId=${externalId}&param_CloudiverseAccountId=${accountId}`;
             extra = { externalId, accountId };
         }
         else if (provider === 'gcp') {
@@ -189,7 +222,7 @@ router.post('/:provider/connect', authMiddleware, async (req, res) => {
         }
         else if (provider === 'azure') {
             const authCodeUrlParameters = {
-                scopes: ["https://management.azure.com/user_impersonation"],
+                scopes: ["https://management.azure.com/.default"], // 🔧 SCOPE FIX: Use .default for ARM access
                 redirectUri: process.env.AZURE_REDIRECT_URI,
                 state: workspace_id
             };
@@ -241,7 +274,7 @@ router.get('/:provider/callback', async (req, res) => {
         else if (provider === 'azure') {
             const tokenRequest = {
                 code: code,
-                scopes: ["https://management.azure.com/user_impersonation"],
+                scopes: ["https://management.azure.com/.default"], // 🔧 SCOPE FIX: Match request scope
                 redirectUri: process.env.AZURE_REDIRECT_URI,
             };
             const response = await cca.acquireTokenByCode(tokenRequest);
