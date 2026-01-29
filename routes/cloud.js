@@ -95,7 +95,7 @@ Outputs:
 
 router.post('/:provider/connect', authMiddleware, async (req, res) => {
     try {
-        const { provider } = req.params;
+        const provider = req.params.provider.toLowerCase();
         const { workspace_id } = req.body;
 
         if (!workspace_id) {
