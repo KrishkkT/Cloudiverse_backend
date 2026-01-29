@@ -111,7 +111,7 @@ router.post('/:provider/connect', authMiddleware, async (req, res) => {
             const externalId = `cloudiverse-${workspace_id}-${Math.random().toString(36).substring(7)}`;
 
             // Construct CloudFormation URL
-            const templateUri = "https://cloudiverse-public.s3.amazonaws.com/templates/trust-role.yaml"; // Hypothetical
+            const templateUri = "https://cloudiverse-cloudformation.s3.amazonaws.com/aws-trust-role.yaml"; // Hypothetical
             const accountId = process.env.AWS_ACCOUNT_ID; // The Cloudiverse Account ID to trust
 
             authUrl = `https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=${templateUri}&stackName=CloudiverseAccess&param_ExternalId=${externalId}&param_CloudiverseAccountId=${accountId}`;
