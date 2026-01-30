@@ -395,15 +395,43 @@ const verifyTurnstile = async (req, res) => {
 const googleLogin = async (req, res) => {
   try {
     const { token } = req.body;
+    let email, name, picture, googleId;
 
-    // Verify Google Token
-    const ticket = await googleClient.verifyIdToken({
-      idToken: token,
-      audience: process.env.GOOGLE_CLIENT_ID
-    });
+    console.log("[AUTH] Google Login attempt...");
 
-    const payload = ticket.getPayload();
-    const { email, name, picture, sub: googleId } = payload;
+    try {
+      // 1. Attempt to verify as ID Token (JWT)
+      const ticket = await googleClient.verifyIdToken({
+        idToken: token,
+        audience: process.env.GOOGLE_CLIENT_ID
+      });
+      const payload = ticket.getPayload();
+      email = payload.email;
+      name = payload.name;
+      picture = payload.picture;
+      googleId = payload.sub;
+      console.log("[AUTH] Google ID Token verified:", email);
+    } catch (verifyError) {
+      console.warn("[AUTH] ID Token verification failed, trying Access Token fallback...");
+
+      // 2. Fallback: Verify as Access Token via Google UserInfo API
+      try {
+        const axios = require('axios');
+        const googleRes = await axios.get(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${token}`);
+
+        email = googleRes.data.email;
+        name = googleRes.data.name;
+        picture = googleRes.data.picture;
+        googleId = googleRes.data.sub;
+        console.log("[AUTH] Google Access Token verified via UserInfo API:", email);
+      } catch (accessError) {
+        console.error("[AUTH] Both ID Token and Access Token verification failed");
+        return res.status(401).json({
+          message: 'Google authentication failed',
+          error: 'Invalid token'
+        });
+      }
+    }
 
     // Check if user exists
     let user = await User.findByEmail(email);
@@ -449,7 +477,7 @@ const googleLogin = async (req, res) => {
 
   } catch (error) {
     console.error('Google Login Error:', error);
-    res.status(401).json({ message: 'Google authentication failed', error: error.message });
+    res.status(500).json({ message: 'Internal server error during Google Login' });
   }
 };
 
