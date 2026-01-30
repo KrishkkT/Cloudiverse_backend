@@ -5,6 +5,11 @@ const pool = require('../config/db');
 const { sendWelcomeEmail, sendLoginNotification, sendPasswordResetEmail, sendAccountDeletionEmail } = require('../utils/emailService');
 require('dotenv').config();
 
+// Initialize Google OAuth Client
+const { OAuth2Client } = require('google-auth-library');
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+
 // Generate JWT token
 const generateToken = (userId) => {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
@@ -386,6 +391,68 @@ const verifyTurnstile = async (req, res) => {
   }
 };
 
+// Google Login
+const googleLogin = async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    // Verify Google Token
+    const ticket = await googleClient.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID
+    });
+
+    const payload = ticket.getPayload();
+    const { email, name, picture, sub: googleId } = payload;
+
+    // Check if user exists
+    let user = await User.findByEmail(email);
+
+    if (user) {
+      // Link Google ID if not linked
+      if (!user.google_id) {
+        user = await User.updateGoogleInfo(user.id, googleId, picture);
+      }
+    } else {
+      // Create new user without password
+      user = await User.create({
+        name,
+        email,
+        company: `${name}'s Workspace`,
+        google_id: googleId,
+        avatar_url: picture,
+        device_id: req.body.device_id
+      });
+
+      // Auto-send welcome email
+      try {
+        sendWelcomeEmail(user).catch(console.error);
+      } catch (e) {
+        console.error("Welcome email failed", e);
+      }
+    }
+
+    // Generate App Token
+    const appToken = generateToken(user.id);
+
+    res.json({
+      success: true,
+      token: appToken,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        company: user.company,
+        avatar_url: user.avatar_url
+      }
+    });
+
+  } catch (error) {
+    console.error('Google Login Error:', error);
+    res.status(401).json({ message: 'Google authentication failed', error: error.message });
+  }
+};
+
 module.exports = {
   register,
   login,
@@ -396,5 +463,6 @@ module.exports = {
   updatePassword,
   deleteAccount,
   logout,
-  verifyTurnstile
+  verifyTurnstile,
+  googleLogin
 };

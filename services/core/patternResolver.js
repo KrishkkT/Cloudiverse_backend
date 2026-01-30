@@ -47,6 +47,136 @@ function resolveDomainCapabilities(domainName) {
   return null;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// NEW: Extract Explicit Services from User Description
+// ═══════════════════════════════════════════════════════════════════════════
+/**
+ * Parses user description text to detect explicitly mentioned services.
+ * Returns an object with detected data_stores and capabilities.
+ */
+function extractExplicitServicesFromText(text) {
+  if (!text || typeof text !== 'string') return { data_stores: [], capabilities: {} };
+
+  const lowerText = text.toLowerCase();
+  const detected = {
+    data_stores: [],
+    capabilities: {}
+  };
+
+  // Service keyword mappings - explicit mentions trigger service addition
+  const serviceKeywords = {
+    // Databases
+    'database': 'relationaldatabase',
+    'sql database': 'relationaldatabase',
+    'relational database': 'relationaldatabase',
+    'postgresql': 'relationaldatabase',
+    'postgres': 'relationaldatabase',
+    'mysql': 'relationaldatabase',
+    'mariadb': 'relationaldatabase',
+    'rds': 'relationaldatabase',
+    'nosql': 'nosqldatabase',
+    'mongodb': 'nosqldatabase',
+    'dynamodb': 'nosqldatabase',
+    'document database': 'nosqldatabase',
+
+    // Storage
+    'object storage': 'objectstorage',
+    'blob storage': 'objectstorage',
+    'file storage': 'objectstorage',
+    's3': 'objectstorage',
+    'storage bucket': 'objectstorage',
+    'media storage': 'objectstorage',
+    'image storage': 'objectstorage',
+    'asset storage': 'objectstorage',
+
+    // Cache
+    'cache': 'cache',
+    'caching': 'cache',
+    'redis': 'cache',
+    'memcached': 'cache',
+    'elasticache': 'cache',
+
+    // CDN
+    'cdn': 'cdn',
+    'content delivery': 'cdn',
+    'cloudfront': 'cdn',
+
+    // Queue/Messaging
+    'queue': 'messagequeue',
+    'message queue': 'messagequeue',
+    'messaging': 'messagequeue',
+    'rabbitmq': 'messagequeue',
+    'sqs': 'messagequeue',
+    'pub/sub': 'messagequeue',
+    'event bus': 'messagequeue',
+
+    // Search
+    'search': 'searchengine',
+    'elasticsearch': 'searchengine',
+    'opensearch': 'searchengine',
+    'full-text search': 'searchengine',
+
+    // Realtime
+    'websocket': 'websocketgateway',
+    'real-time': 'websocketgateway',
+    'realtime': 'websocketgateway',
+    'live updates': 'websocketgateway',
+    'push notifications': 'websocketgateway',
+
+    // ML/AI
+    'machine learning': 'mlinference',
+    'ml model': 'mlinference',
+    'ai inference': 'mlinference',
+    'model serving': 'mlinference'
+  };
+
+  // Capability keywords - trigger capability flags
+  const capabilityKeywords = {
+    'payment': 'payments',
+    'payments': 'payments',
+    'checkout': 'payments',
+    'billing': 'payments',
+    'stripe': 'payments',
+    'razorpay': 'payments',
+
+    'auth': 'auth',
+    'authentication': 'auth',
+    'login': 'auth',
+    'signup': 'auth',
+    'user accounts': 'auth',
+    'sso': 'auth',
+    'oauth': 'auth',
+
+    'cache': 'cache',
+    'caching': 'cache',
+
+    'search': 'search',
+    'searching': 'search'
+  };
+
+  // Check for service keywords (longest match first for multi-word phrases)
+  const sortedKeywords = Object.keys(serviceKeywords).sort((a, b) => b.length - a.length);
+  for (const keyword of sortedKeywords) {
+    if (lowerText.includes(keyword)) {
+      const service = serviceKeywords[keyword];
+      if (!detected.data_stores.includes(service)) {
+        detected.data_stores.push(service);
+        console.log(`[EXPLICIT SERVICE] Detected '${keyword}' → ${service}`);
+      }
+    }
+  }
+
+  // Check for capability keywords
+  for (const [keyword, capability] of Object.entries(capabilityKeywords)) {
+    if (lowerText.includes(keyword)) {
+      detected.capabilities[capability] = true;
+      console.log(`[EXPLICIT CAPABILITY] Detected '${keyword}' → ${capability}`);
+    }
+  }
+
+  return detected;
+}
+
 class PatternResolver {
   /**
    * Extract project requirements into a strict schema
@@ -116,14 +246,82 @@ class PatternResolver {
       // Fallback: Also safely extract from intent text if provided
       const text = (intent.project_description || intent.description || intent || '').toString().toLowerCase();
 
+      // ═════════════════════════════════════════════════════════════════
+      // 🔥 NEW: Extract explicit services from user text
+      // When user says "database", "storage", etc., detect and add them
+      // ═════════════════════════════════════════════════════════════════
+      const explicitServices = extractExplicitServicesFromText(text);
+      if (explicitServices.data_stores.length > 0) {
+        console.log('[EXPLICIT EXTRACTION] Detected services from text:', explicitServices.data_stores);
+        explicitServices.data_stores.forEach(svc => {
+          if (!requirements.data_stores.includes(svc)) {
+            requirements.data_stores.push(svc);
+          }
+        });
+      }
+
+      // Merge explicit capabilities from text
+      if (explicitServices.capabilities) {
+        Object.assign(capabilities, explicitServices.capabilities);
+        if (explicitServices.capabilities.payments) requirements.payments = true;
+        if (explicitServices.capabilities.auth) requirements.authentication = true;
+        if (explicitServices.capabilities.cache) capabilities.cache = true;
+        if (explicitServices.capabilities.search) capabilities.search = true;
+      }
 
       // ═════════════════════════════════════════════════════════════════
-      // 🔥 NEW: DOMAIN CAPABILITY RESOLUTION (DISABLED PER USER REQUEST)
-      // We strictly rely on explicit/inferred features from text input now.
+      // 🔥 DOMAIN CAPABILITY RESOLUTION
+      // Apply domain-specific defaults (ecommerce, fintech, etc.)
       // ═════════════════════════════════════════════════════════════════
       const primaryDomain = intentClassification.primary_domain || '';
+
+      // ECOMMERCE: Auto-enable critical capabilities
+      if (primaryDomain === 'ecommerce') {
+        console.log('[DOMAIN HINT] Ecommerce detected → Enabling payments, stateful, database hints');
+        requirements.payments = true;
+        requirements.stateful = true;
+        if (!requirements.data_stores.includes('relationaldatabase')) {
+          requirements.data_stores.push('relationaldatabase');
+        }
+        if (!requirements.data_stores.includes('objectstorage')) {
+          requirements.data_stores.push('objectstorage');
+        }
+        capabilities.payments = true;
+        capabilities.cache = true;
+      }
+
+      // FINTECH: Auto-enable critical capabilities  
+      if (primaryDomain === 'fintech' || primaryDomain === 'finance') {
+        console.log('[DOMAIN HINT] Fintech detected → Enabling payments, stateful, relational database');
+        requirements.payments = true;
+        requirements.stateful = true;
+        requirements.authentication = true;
+        if (!requirements.data_stores.includes('relationaldatabase')) {
+          requirements.data_stores.push('relationaldatabase');
+        }
+        capabilities.payments = true;
+        capabilities.auth = true;
+      }
+
+      // HEALTHCARE: Auto-enable compliance and security
+      if (primaryDomain === 'healthcare' || primaryDomain === 'health') {
+        console.log('[DOMAIN HINT] Healthcare detected → Enabling stateful, relational database, compliance');
+        requirements.stateful = true;
+        requirements.authentication = true;
+        requirements.nfr.compliance.push('HIPAA');
+        if (!requirements.data_stores.includes('relationaldatabase')) {
+          requirements.data_stores.push('relationaldatabase');
+        }
+      }
+
+      // ════════════════════════════════════════════════════════════════
+      // 🔥 PASS DOMAIN TO REQUIREMENTS (for TruthGate pattern selection)
+      // ════════════════════════════════════════════════════════════════
+      requirements.domain = primaryDomain || 'generic';
+      console.log(`[EXTRACT REQUIREMENTS] Domain set to: ${requirements.domain}`);
+
       /* 
-      // DISABLED: User wants strict input reliance, not domain defaults.
+      // DISABLED: Original domain config approach
       const domainConfig = resolveDomainCapabilities(primaryDomain);
 
       if (domainConfig) {
@@ -500,11 +698,19 @@ class PatternResolver {
     // 2️⃣ REQUIREMENTS ENFORCEMENT (SSOT RULES - NEW)
     // ═════════════════════════════════════════════════════════════════
     if (requirements) {
-      // Rule 1: Stateful + Relational Data -> Mandatory Relational DB
-      if (requirements.stateful && requirements.data_stores?.includes('relationaldatabase')) {
+      // Rule 1: Relational Database (explicitly requested OR stateful + relational)
+      if (requirements.data_stores?.includes('relationaldatabase')) {
         if (!forbidden.has('relationaldatabase')) {
-          selected.set('relationaldatabase', { source: 'requirement_rule', rule: 'stateful_relational', removable: false });
-          console.log(`[SERVICE RESOLUTION] 🔒 Added relationaldatabase (Requirement Rule: stateful + relational)`);
+          selected.set('relationaldatabase', { source: 'requirement_rule', rule: 'explicit_or_stateful_relational', removable: false });
+          console.log(`[SERVICE RESOLUTION] 🔒 Added relationaldatabase (Requirement Rule: explicit/stateful + relational)`);
+        }
+      }
+
+      // Rule 1b: NoSQL Database (explicitly requested)
+      if (requirements.data_stores?.includes('nosqldatabase')) {
+        if (!forbidden.has('nosqldatabase')) {
+          selected.set('nosqldatabase', { source: 'requirement_rule', rule: 'explicit_nosql', removable: false });
+          console.log(`[SERVICE RESOLUTION] 🔒 Added nosqldatabase (Requirement Rule: explicit nosql)`);
         }
       }
 
@@ -515,6 +721,7 @@ class PatternResolver {
           console.log(`[SERVICE RESOLUTION] 🔒 Added objectstorage (Requirement Rule: object_storage)`);
         }
       }
+
 
       // Rule 3: Authentication -> Identity Auth
       if (requirements.authentication) {
@@ -543,6 +750,47 @@ class PatternResolver {
           console.log(`[SERVICE RESOLUTION] ➕ Added messagequeue (Requirement Rule: messaging)`);
         }
       }
+
+      // Rule 5b: CDN (explicitly requested)
+      if (requirements.data_stores?.includes('cdn')) {
+        if (!forbidden.has('cdn')) {
+          selected.set('cdn', { source: 'requirement_rule', rule: 'explicit_cdn', removable: false });
+          console.log(`[SERVICE RESOLUTION] 🔒 Added cdn (Requirement Rule: explicit cdn)`);
+        }
+      }
+
+      // Rule 5c: Search Engine (explicitly requested)
+      if (requirements.data_stores?.includes('searchengine')) {
+        if (!forbidden.has('searchengine')) {
+          selected.set('searchengine', { source: 'requirement_rule', rule: 'explicit_search', removable: true });
+          console.log(`[SERVICE RESOLUTION] ➕ Added searchengine (Requirement Rule: explicit search)`);
+        }
+      }
+
+      // Rule 5d: WebSocket Gateway (explicitly requested)
+      if (requirements.data_stores?.includes('websocketgateway')) {
+        if (!forbidden.has('websocketgateway')) {
+          selected.set('websocketgateway', { source: 'requirement_rule', rule: 'explicit_websocket', removable: false });
+          console.log(`[SERVICE RESOLUTION] 🔒 Added websocketgateway (Requirement Rule: explicit websocket)`);
+        }
+      }
+
+      // Rule 5e: Cache (explicitly requested)
+      if (requirements.data_stores?.includes('cache')) {
+        if (!forbidden.has('cache')) {
+          selected.set('cache', { source: 'requirement_rule', rule: 'explicit_cache', removable: false });
+          console.log(`[SERVICE RESOLUTION] 🔒 Added cache (Requirement Rule: explicit cache)`);
+        }
+      }
+
+      // Rule 5f: ML Inference (explicitly requested)
+      if (requirements.data_stores?.includes('mlinference')) {
+        if (!forbidden.has('mlinference')) {
+          selected.set('mlinference', { source: 'requirement_rule', rule: 'explicit_ml', removable: false });
+          console.log(`[SERVICE RESOLUTION] 🔒 Added mlinference (Requirement Rule: explicit ML)`);
+        }
+      }
+
 
       // ════════════════════════════════════════════════════════════════
       // 🔥 NEW RULE 6: Payments -> Payment Gateway (User Input Driven)
@@ -1644,6 +1892,49 @@ class PatternResolver {
     if (capabilities.has('relational_db')) requirements.data_stores.push('relationaldatabase');
     if (capabilities.has('object_storage')) requirements.data_stores.push('objectstorage');
     if (capabilities.has('message_queue')) requirements.data_stores.push('messagequeue');
+
+    // ═════════════════════════════════════════════════════════════════
+    // 🔥 NEW: Extract explicit services from user description text
+    // This ensures "database", "cache", "storage" mentioned in text are detected
+    // ═════════════════════════════════════════════════════════════════
+    const rawDescription = preIntentContext.raw_description || "";
+    const explicitServices = extractExplicitServicesFromText(rawDescription);
+    if (explicitServices.data_stores.length > 0) {
+      console.log('[RESOLVE V2] Extracted explicit services from text:', explicitServices.data_stores);
+      explicitServices.data_stores.forEach(svc => {
+        if (!requirements.data_stores.includes(svc)) {
+          requirements.data_stores.push(svc);
+        }
+      });
+    }
+
+    // Merge explicit capabilities from text
+    if (explicitServices.capabilities.payments) requirements.payments = true;
+    if (explicitServices.capabilities.auth) requirements.authentication = true;
+    if (explicitServices.capabilities.cache) requirements.capabilities.cache = true;
+    if (explicitServices.capabilities.search) requirements.capabilities.search = true;
+
+    // ═════════════════════════════════════════════════════════════════
+    // 🔥 NEW: Pass domain for TruthGate pattern routing
+    // ═════════════════════════════════════════════════════════════════
+    const primaryDomain = v2Axes.primary_domain?.value || v2Axes.intent_classification?.primary_domain || 'generic';
+    requirements.domain = primaryDomain;
+    console.log(`[RESOLVE V2] Domain set to: ${requirements.domain}`);
+
+    // Apply domain-specific hints
+    if (primaryDomain === 'ecommerce') {
+      console.log('[RESOLVE V2] Ecommerce domain → Adding payments, stateful, database hints');
+      requirements.payments = true;
+      requirements.stateful = true;
+      requirements.capabilities.payments = true;
+      requirements.capabilities.cache = true;
+      if (!requirements.data_stores.includes('relationaldatabase')) {
+        requirements.data_stores.push('relationaldatabase');
+      }
+      if (!requirements.data_stores.includes('objectstorage')) {
+        requirements.data_stores.push('objectstorage');
+      }
+    }
 
     // 2. Select Pattern (Deterministic)
     // Reuse existing deterministic logic which we verified in V1

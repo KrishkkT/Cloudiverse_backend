@@ -61,7 +61,9 @@ class TruthGate {
                 requirements.data_stores?.includes('nosqldatabase') ? 'document' : 'none',
             traffic_tier: requirements.traffic_tier || 'standard',
             compute_preference: requirements.compute_preference || 'none',
-            exclusions: requirements.terminal_exclusions || []
+            exclusions: requirements.terminal_exclusions || [],
+            // NEW: Include domain for specialized pattern routing
+            domain: requirements.domain || 'generic'
         };
     }
 
@@ -94,12 +96,38 @@ class TruthGate {
             return 'REALTIME_PLATFORM';
         }
 
-        // specialized: Fintech
-        if (axes.payments && axes.primary_data_model === 'relational' && (axes.traffic_tier === 'high' || axes.authentication)) {
+        // ════════════════════════════════════════════════════════════════
+        // DOMAIN-SPECIFIC PATTERNS (Check domain first for specialized routing)
+        // ════════════════════════════════════════════════════════════════
+
+        // Ecommerce domain → E_COMMERCE_BACKEND (always, regardless of other flags)
+        if (axes.domain === 'ecommerce') {
+            console.log('[TRUTHGATE] Domain is ecommerce → E_COMMERCE_BACKEND');
+            return 'E_COMMERCE_BACKEND';
+        }
+
+        // Fintech domain → FINTECH_PAYMENT_PLATFORM (explicit fintech only)
+        if (axes.domain === 'fintech' || axes.domain === 'finance') {
+            console.log('[TRUTHGATE] Domain is fintech → FINTECH_PAYMENT_PLATFORM');
             return 'FINTECH_PAYMENT_PLATFORM';
         }
 
-        // specialized: Ecommerce
+        // Healthcare domain → STATEFUL_WEB_PLATFORM (for compliance)
+        if (axes.domain === 'healthcare' || axes.domain === 'health') {
+            console.log('[TRUTHGATE] Domain is healthcare → STATEFUL_WEB_PLATFORM');
+            return 'STATEFUL_WEB_PLATFORM';
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        // GENERIC PATTERNS (Fallback when domain is generic/unknown)
+        // ════════════════════════════════════════════════════════════════
+
+        // Fintech-like: high-traffic payments with relational DB and auth
+        if (axes.payments && axes.primary_data_model === 'relational' && axes.traffic_tier === 'high') {
+            return 'FINTECH_PAYMENT_PLATFORM';
+        }
+
+        // Ecommerce-like: payments with relational DB (generic)
         if (axes.payments && axes.primary_data_model === 'relational') {
             return 'E_COMMERCE_BACKEND';
         }

@@ -3492,4 +3492,137 @@ This configuration uses **local state** (\`terraform.tfstate\`). For team collab
     }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// AI SERVICE SUGGESTIONS ENDPOINT
+// Suggests complementary services based on user description and context
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/suggest-services', authMiddleware, async (req, res) => {
+    try {
+        const { user_description, domains = [], selected_services = [] } = req.body;
+
+        if (!user_description || user_description.trim().length < 10) {
+            return res.status(400).json({
+                error: 'Please provide a meaningful project description (at least 10 characters)'
+            });
+        }
+
+        // Load available services from catalog
+        const servicesCatalog = require('../catalog/new_services.json');
+        const availableServiceIds = servicesCatalog.services
+            .filter(s => s.terraform_supported === true)
+            .map(s => s.service_id);
+
+        // Build prompt for AI
+        const prompt = `You are a cloud architect assistant. Analyze the following project and suggest additional cloud services.
+
+PROJECT DESCRIPTION: ${user_description}
+
+BUSINESS DOMAINS: ${domains.length > 0 ? domains.join(', ') : 'Not specified'}
+
+ALREADY SELECTED SERVICES: ${selected_services.length > 0 ? selected_services.join(', ') : 'None yet'}
+
+AVAILABLE SERVICES: ${availableServiceIds.join(', ')}
+
+Based on the project description (PRIMARY SOURCE) and context, suggest 3-5 additional services that would complement this architecture. Focus on:
+1. Missing critical infrastructure (if needed)
+2. Security best practices
+3. Observability requirements
+4. Scalability considerations
+
+IMPORTANT: Only suggest services from the AVAILABLE SERVICES list. Do NOT invent service names.
+
+Output ONLY valid JSON in this exact format:
+{
+  "suggestions": [
+    { "service_id": "servicename", "reason": "Brief reason why this is useful" }
+  ]
+}`;
+
+        const aiResponse = await aiService.getCompletion({
+            systemPrompt: 'You are a cloud architecture expert. Always respond with valid JSON only.',
+            userMessage: prompt,
+            temperature: 0.3,
+            maxTokens: 500
+        });
+
+        // Parse AI response
+        let suggestions = [];
+        try {
+            const parsed = JSON.parse(aiResponse.content || aiResponse);
+            suggestions = parsed.suggestions || [];
+
+            // Filter to only valid services that aren't already selected
+            const selectedSet = new Set(selected_services.map(s => s.toLowerCase()));
+            const availableSet = new Set(availableServiceIds);
+
+            suggestions = suggestions.filter(s =>
+                availableSet.has(s.service_id) && !selectedSet.has(s.service_id)
+            );
+        } catch (parseError) {
+            console.error('[SUGGEST-SERVICES] Failed to parse AI response:', parseError);
+            // Fallback: Return common recommendations based on domains
+            suggestions = generateFallbackSuggestions(domains, selected_services);
+        }
+
+        res.json({
+            success: true,
+            suggestions: suggestions.slice(0, 5), // Limit to 5
+            source: suggestions.length > 0 ? 'ai' : 'fallback'
+        });
+
+    } catch (error) {
+        console.error('[SUGGEST-SERVICES] Error:', error);
+        res.status(500).json({
+            error: 'Failed to generate suggestions',
+            suggestions: []
+        });
+    }
+});
+
+/**
+ * Fallback suggestions when AI fails
+ */
+function generateFallbackSuggestions(domains, selectedServices) {
+    const selectedSet = new Set(selectedServices.map(s => s.toLowerCase()));
+    const suggestions = [];
+
+    // Common recommendations based on domains
+    const domainSuggestions = {
+        'fintech': ['paymentgateway', 'secretsmanagement', 'waf', 'auditlogging'],
+        'ecommerce': ['cdn', 'cache', 'searchengine', 'objectstorage'],
+        'healthcare': ['secretsmanagement', 'auditlogging', 'keymanagement', 'vpcnetworking'],
+        'saas': ['identityauth', 'monitoring', 'logging', 'loadbalancer'],
+        'iot': ['iotcore', 'messagequeue', 'timeseriesdatabase', 'streamprocessor'],
+        'analytics': ['datawarehouse', 'etlorchestration', 'bidashboard', 'datalake'],
+        'machine_learning': ['mltraining', 'mlinference', 'vectordatabase', 'featurestore']
+    };
+
+    // Universal recommendations
+    const universalRecs = [
+        { service_id: 'logging', reason: 'Centralized logging is essential for debugging and compliance' },
+        { service_id: 'monitoring', reason: 'Monitor application health and performance' },
+        { service_id: 'secretsmanagement', reason: 'Secure credential management for API keys and secrets' }
+    ];
+
+    // Add domain-specific suggestions
+    for (const domain of domains) {
+        const domainKey = domain.toLowerCase().replace(/[^a-z]/g, '_');
+        const domainRecs = domainSuggestions[domainKey] || [];
+        for (const svc of domainRecs) {
+            if (!selectedSet.has(svc)) {
+                suggestions.push({ service_id: svc, reason: `Recommended for ${domain} applications` });
+            }
+        }
+    }
+
+    // Add universal recommendations
+    for (const rec of universalRecs) {
+        if (!selectedSet.has(rec.service_id) && !suggestions.some(s => s.service_id === rec.service_id)) {
+            suggestions.push(rec);
+        }
+    }
+
+    return suggestions.slice(0, 5);
+}
+
 module.exports = router;

@@ -36,10 +36,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_lambda_function",
+        "gcp": "google_cloudfunctions_function",
+        "azure": "azurerm_function_app"
       }
     },
     {
@@ -66,10 +71,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_ecs_task_definition",
+        "gcp": "google_cloud_run_service",
+        "azure": "azurerm_container_app"
       }
     },
     {
@@ -86,10 +96,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_instance",
+        "gcp": "google_compute_instance",
+        "azure": "azurerm_virtual_machine"
       }
     },
     {
@@ -106,10 +121,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_batch_compute_environment",
+        "gcp": "google_cloud_run_v2_job",
+        "azure": "azurerm_batch_pool"
       }
     },
     {
@@ -126,10 +146,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_lambda_function",
+        "gcp": "google_cloudfunctions_function",
+        "azure": "azurerm_cdn_endpoint"
       }
     },
     {
@@ -146,10 +171,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_db_instance",
+        "gcp": "google_sql_database_instance",
+        "azure": "azurerm_postgresql_server"
       }
     },
     {
@@ -166,10 +196,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_dynamodb_table",
+        "gcp": "google_firestore_database",
+        "azure": "azurerm_cosmosdb_account"
       }
     },
     {
@@ -190,6 +225,11 @@
           "gcp": true,
           "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_elasticache_cluster",
+        "gcp": "google_redis_instance",
+        "azure": "azurerm_redis_cache"
       }
     },
     {
@@ -206,9 +246,9 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": false,
+          "azure": true
         }
       }
     },
@@ -238,10 +278,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_s3_bucket",
+        "gcp": "google_storage_bucket",
+        "azure": "azurerm_storage_account"
       }
     },
     {
@@ -258,10 +303,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_ebs_volume",
+        "gcp": "google_compute_disk",
+        "azure": "azurerm_managed_disk"
       }
     },
     {
@@ -278,10 +328,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_efs_file_system",
+        "gcp": "google_filestore_instance",
+        "azure": "azurerm_storage_share"
       }
     },
     {
@@ -298,10 +353,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": false,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_backup_vault",
+        "gcp": null,
+        "azure": "azurerm_backup_vault"
       }
     },
     {
@@ -319,9 +379,14 @@
         "class": "USAGE_BASED",
         "infracost_supported": {
           "aws": true,
-          "gcp": null,
-          "azure": null
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_apigatewayv2_api",
+        "gcp": "google_api_gateway_api",
+        "azure": "azurerm_api_management"
       }
     },
     {
@@ -338,10 +403,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_lb",
+        "gcp": "google_compute_global_forwarding_rule",
+        "azure": "azurerm_lb"
       }
     },
     {
@@ -382,6 +452,11 @@
           "gcp": true,
           "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_cognito_user_pool",
+        "gcp": "google_identity_platform_config",
+        "azure": "azurerm_active_directory_domain_service"
       }
     },
     {
@@ -398,10 +473,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_cloudfront_distribution",
+        "gcp": "google_compute_backend_bucket",
+        "azure": "azurerm_cdn_endpoint"
       }
     },
     {
@@ -418,10 +498,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_route53_zone",
+        "gcp": "google_dns_managed_zone",
+        "azure": "azurerm_dns_zone"
       }
     },
     {
@@ -438,9 +523,9 @@
       "pricing": {
         "class": "FREE_TIER",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
       }
     },
@@ -458,10 +543,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_nat_gateway",
+        "gcp": "google_compute_router_nat",
+        "azure": "azurerm_nat_gateway"
       }
     },
     {
@@ -478,10 +568,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_vpn_gateway",
+        "gcp": "google_compute_vpn_gateway",
+        "azure": "azurerm_vpn_gateway"
       }
     },
     {
@@ -498,10 +593,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_vpc_endpoint",
+        "gcp": "google_compute_service_attachment",
+        "azure": "azurerm_private_endpoint"
       }
     },
     {
@@ -518,10 +618,15 @@
       "pricing": {
         "class": "FREE_TIER",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_service_discovery_private_dns_namespace",
+        "gcp": "google_service_directory_namespace",
+        "azure": "azurerm_private_dns_zone"
       }
     },
     {
@@ -538,10 +643,15 @@
       "pricing": {
         "class": "FREE_TIER",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": false
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_appmesh_mesh",
+        "gcp": "google_gke_hub_feature_membership",
+        "azure": null
       }
     },
     {
@@ -559,9 +669,14 @@
         "class": "USAGE_BASED",
         "infracost_supported": {
           "aws": true,
-          "gcp": null,
+          "gcp": true,
           "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_sqs_queue",
+        "gcp": "google_pubsub_subscription",
+        "azure": "azurerm_servicebus_queue"
       }
     },
     {
@@ -578,10 +693,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_cloudwatch_event_bus",
+        "gcp": "google_pubsub_topic",
+        "azure": "azurerm_eventgrid_topic"
       }
     },
     {
@@ -598,10 +718,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_sfn_state_machine",
+        "gcp": "google_workflows_workflow",
+        "azure": "azurerm_logic_app_workflow"
       }
     },
     {
@@ -618,10 +743,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_sns_topic",
+        "gcp": "google_pubsub_topic",
+        "azure": "azurerm_notification_hub"
       }
     },
     {
@@ -638,50 +768,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
-        }
-      }
-    },
-    {
-      "service_id": "paymentgateway",
-      "name": "Payment Gateway",
-      "domain": "core",
-      "category": "integration",
-      "terraform_supported": true,
-      "providers": {
-        "aws": true,
-        "gcp": true,
-        "azure": true
-      },
-      "pricing": {
-        "class": "EXTERNAL",
-        "infracost_supported": {
-          "aws": false,
+          "aws": true,
           "gcp": false,
           "azure": false
         }
-      }
-    },
-    {
-      "service_id": "identityauth",
-      "name": "Identity & Auth",
-      "domain": "core",
-      "category": "security",
-      "terraform_supported": true,
-      "providers": {
-        "aws": true,
-        "gcp": true,
-        "azure": true
       },
-      "pricing": {
-        "class": "EXTERNAL",
-        "infracost_supported": {
-          "aws": false,
-          "gcp": false,
-          "azure": false
-        }
+      "infracost_resource_type": {
+        "aws": "aws_ses_domain_identity",
+        "gcp": null,
+        "azure": null
       }
     },
     {
@@ -698,10 +793,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_secretsmanager_secret",
+        "gcp": "google_secret_manager_secret",
+        "azure": "azurerm_key_vault_secret"
       }
     },
     {
@@ -718,10 +818,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_kms_key",
+        "gcp": "google_kms_crypto_key",
+        "azure": "azurerm_key_vault_key"
       }
     },
     {
@@ -738,10 +843,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": false,
+          "azure": false
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_acm_certificate",
+        "gcp": null,
+        "azure": null
       }
     },
     {
@@ -758,10 +868,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_wafv2_web_acl",
+        "gcp": "google_compute_security_policy",
+        "azure": "azurerm_web_application_firewall_policy"
       }
     },
     {
@@ -778,10 +893,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_shield_protection",
+        "gcp": "google_compute_security_policy",
+        "azure": "azurerm_network_ddos_protection_plan"
       }
     },
     {
@@ -798,10 +918,15 @@
       "pricing": {
         "class": "FREE_TIER",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_config_config_rule",
+        "gcp": "google_org_policy_policy",
+        "azure": "azurerm_policy_definition"
       }
     },
     {
@@ -819,9 +944,14 @@
         "class": "USAGE_BASED",
         "infracost_supported": {
           "aws": true,
-          "gcp": null,
+          "gcp": true,
           "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_cloudwatch_log_group",
+        "gcp": "google_logging_project_sink",
+        "azure": "azurerm_log_analytics_workspace"
       }
     },
     {
@@ -839,9 +969,14 @@
         "class": "USAGE_BASED",
         "infracost_supported": {
           "aws": true,
-          "gcp": null,
-          "azure": null
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_cloudwatch_metric_alarm",
+        "gcp": "google_monitoring_alert_policy",
+        "azure": "azurerm_monitor_metric_alert"
       }
     },
     {
@@ -858,10 +993,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_xray_group",
+        "gcp": "google_monitoring_custom_service",
+        "azure": "azurerm_application_insights"
       }
     },
     {
@@ -878,10 +1018,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_securityhub_account",
+        "gcp": "google_scc_source",
+        "azure": "azurerm_sentinel_alert_rule"
       }
     },
     {
@@ -898,10 +1043,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_ecr_repository",
+        "gcp": "google_artifact_registry_repository",
+        "azure": "azurerm_container_registry"
       }
     },
     {
@@ -918,10 +1068,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_codepipeline",
+        "gcp": "google_cloudbuild_trigger",
+        "azure": "azurerm_devops_pipeline"
       }
     },
     {
@@ -938,10 +1093,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_codeartifact_domain",
+        "gcp": "google_artifact_registry_repository",
+        "azure": "azurerm_container_registry"
       }
     },
     {
@@ -958,10 +1118,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_sns_platform_application",
+        "gcp": "google_firebase_project",
+        "azure": "azurerm_notification_hub"
       }
     },
     {
@@ -978,10 +1143,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": false,
+          "azure": false
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_apigatewayv2_api",
+        "gcp": null,
+        "azure": null
       }
     },
     {
@@ -998,10 +1168,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_globalaccelerator_accelerator",
+        "gcp": "google_compute_global_forwarding_rule",
+        "azure": "azurerm_frontdoor"
       }
     },
     {
@@ -1018,10 +1193,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_rds_global_cluster",
+        "gcp": "google_sql_database_instance",
+        "azure": "azurerm_cosmosdb_account"
       }
     },
     {
@@ -1038,10 +1218,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_iot_thing",
+        "gcp": "google_cloudiot_registry",
+        "azure": "azurerm_iothub"
       }
     },
     {
@@ -1058,10 +1243,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_iot_thing",
+        "gcp": "google_cloudiot_registry",
+        "azure": "azurerm_iothub_dps"
       }
     },
     {
@@ -1078,10 +1268,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": false,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_iot_thing",
+        "gcp": null,
+        "azure": "azurerm_digital_twins_instance"
       }
     },
     {
@@ -1098,10 +1293,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_kinesis_stream",
+        "gcp": "google_pubsub_topic",
+        "azure": "azurerm_eventhub"
       }
     },
     {
@@ -1118,10 +1318,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_kinesis_analytics_application",
+        "gcp": "google_dataflow_job",
+        "azure": "azurerm_stream_analytics_job"
       }
     },
     {
@@ -1138,10 +1343,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": false,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_timestream_database",
+        "gcp": null,
+        "azure": "azurerm_iot_time_series_insights_gen2_environment"
       }
     },
     {
@@ -1158,10 +1368,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_iot_thing",
+        "gcp": "google_cloudiot_registry",
+        "azure": "azurerm_iothub"
       }
     },
     {
@@ -1178,10 +1393,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": false,
+          "azure": false
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_iot_thing",
+        "gcp": null,
+        "azure": null
       }
     },
     {
@@ -1198,10 +1418,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_sagemaker_notebook_instance",
+        "gcp": "google_notebooks_instance",
+        "azure": "azurerm_machine_learning_compute_instance"
       }
     },
     {
@@ -1218,10 +1443,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_sagemaker_endpoint_configuration",
+        "gcp": "google_vertex_ai_endpoint",
+        "azure": "azurerm_machine_learning_compute_instance"
       }
     },
     {
@@ -1238,10 +1468,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": false
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_sagemaker_feature_group",
+        "gcp": "google_vertex_ai_featurestore",
+        "azure": null
       }
     },
     {
@@ -1258,10 +1493,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_sagemaker_domain",
+        "gcp": "google_artifact_registry_repository",
+        "azure": "azurerm_machine_learning_workspace"
       }
     },
     {
@@ -1278,10 +1518,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_sagemaker_domain",
+        "gcp": "google_vertex_ai_tensorboard",
+        "azure": "azurerm_machine_learning_workspace"
       }
     },
     {
@@ -1298,10 +1543,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_sagemaker_domain",
+        "gcp": "google_vertex_ai_pipeline_job",
+        "azure": "azurerm_machine_learning_workspace"
       }
     },
     {
@@ -1318,10 +1568,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_opensearch_domain",
+        "gcp": "google_vertex_ai_index",
+        "azure": "azurerm_search_service"
       }
     },
     {
@@ -1338,10 +1593,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_sagemaker_domain",
+        "gcp": "google_vertex_ai_endpoint",
+        "azure": "azurerm_machine_learning_workspace"
       }
     },
     {
@@ -1358,10 +1618,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_redshift_cluster",
+        "gcp": "google_bigquery_dataset",
+        "azure": "azurerm_synapse_workspace"
       }
     },
     {
@@ -1378,10 +1643,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_s3_bucket",
+        "gcp": "google_storage_bucket",
+        "azure": "azurerm_storage_data_lake_gen2_filesystem"
       }
     },
     {
@@ -1398,10 +1668,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_glue_job",
+        "gcp": "google_dataflow_job",
+        "azure": "azurerm_data_factory"
       }
     },
     {
@@ -1418,10 +1693,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_glue_catalog_database",
+        "gcp": "google_data_catalog_entry_group",
+        "azure": "azurerm_purview_account"
       }
     },
     {
@@ -1438,10 +1718,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_quicksight_user",
+        "gcp": "google_looker_instance",
+        "azure": "azurerm_powerbi_embedded"
       }
     },
     {
@@ -1459,10 +1744,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_kms_key",
+        "gcp": "google_kms_crypto_key",
+        "azure": "azurerm_key_vault_key"
       }
     },
     {
@@ -1479,10 +1769,15 @@
       "pricing": {
         "class": "FREE_TIER",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_iam_policy",
+        "gcp": "google_project_iam_policy",
+        "azure": "azurerm_role_assignment"
       }
     },
     {
@@ -1499,10 +1794,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": false,
+          "azure": false
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_inspector_assessment_target",
+        "gcp": null,
+        "azure": null
       }
     },
     {
@@ -1519,10 +1819,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": false,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": null,
+        "gcp": "google_data_loss_prevention_job_trigger",
+        "azure": "azurerm_purview_account"
       }
     },
     {
@@ -1539,10 +1844,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_securityhub_account",
+        "gcp": "google_scc_source",
+        "azure": "azurerm_security_center_subscription_pricing"
       }
     },
     {
@@ -1559,10 +1869,15 @@
       "pricing": {
         "class": "FREE_TIER",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_vpc",
+        "gcp": "google_compute_network",
+        "azure": "azurerm_virtual_network"
       }
     },
     {
@@ -1579,10 +1894,15 @@
       "pricing": {
         "class": "FREE_TIER",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_subnet",
+        "gcp": "google_compute_subnetwork",
+        "azure": "azurerm_subnet"
       }
     },
     {
@@ -1599,10 +1919,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_vpn_gateway",
+        "gcp": "google_compute_vpn_gateway",
+        "azure": "azurerm_vpn_gateway"
       }
     },
     {
@@ -1619,10 +1944,15 @@
       "pricing": {
         "class": "FREE_TIER",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_internet_gateway",
+        "gcp": "google_compute_router",
+        "azure": "azurerm_virtual_network_gateway"
       }
     },
     {
@@ -1639,10 +1969,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_ec2_transit_gateway",
+        "gcp": "google_compute_router",
+        "azure": "azurerm_virtual_hub"
       }
     },
     {
@@ -1659,10 +1994,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_network_firewall_firewall",
+        "gcp": "google_compute_firewall",
+        "azure": "azurerm_firewall"
       }
     },
     {
@@ -1679,10 +2019,15 @@
       "pricing": {
         "class": "FREE_TIER",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_security_group",
+        "gcp": "google_compute_firewall",
+        "azure": "azurerm_network_security_group"
       }
     },
     {
@@ -1699,10 +2044,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": false
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_nat_gateway",
+        "gcp": "google_compute_router_nat",
+        "azure": null
       }
     },
     {
@@ -1719,10 +2069,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_codebuild_project",
+        "gcp": "google_cloudbuild_trigger",
+        "azure": "azurerm_container_registry_task"
       }
     },
     {
@@ -1739,10 +2094,15 @@
       "pricing": {
         "class": "FREE_TIER",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": false,
+          "azure": false
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_ssm_parameter",
+        "gcp": null,
+        "azure": null
       }
     },
     {
@@ -1759,10 +2119,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_ssm_parameter",
+        "gcp": "google_secret_manager_secret",
+        "azure": "azurerm_app_configuration"
       }
     },
     {
@@ -1779,10 +2144,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_s3_bucket",
+        "gcp": "google_storage_bucket",
+        "azure": "azurerm_storage_account"
       }
     },
     {
@@ -1799,10 +2169,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_dynamodb_table",
+        "gcp": "google_storage_bucket",
+        "azure": "azurerm_storage_account"
       }
     },
     {
@@ -1839,10 +2214,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_xray_group",
+        "gcp": "google_monitoring_custom_service",
+        "azure": "azurerm_application_insights"
       }
     },
     {
@@ -1859,10 +2239,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_cloudwatch_metric_alarm",
+        "gcp": "google_monitoring_metric_descriptor",
+        "azure": "azurerm_monitor_metric_alert"
       }
     },
     {
@@ -1879,10 +2264,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_cloudwatch_metric_alarm",
+        "gcp": "google_monitoring_alert_policy",
+        "azure": "azurerm_monitor_action_group"
       }
     },
     {
@@ -1919,10 +2309,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_cloudtrail",
+        "gcp": "google_logging_project_sink",
+        "azure": "azurerm_monitor_activity_log_alert"
       }
     },
     {
@@ -1939,10 +2334,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_cloudwatch_log_group",
+        "gcp": "google_logging_project_sink",
+        "azure": "azurerm_log_analytics_workspace"
       }
     },
     {
@@ -1959,10 +2359,15 @@
       "pricing": {
         "class": "FREE_TIER",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_cloudwatch_dashboard",
+        "gcp": "google_monitoring_dashboard",
+        "azure": "azurerm_portal_dashboard"
       }
     },
     {
@@ -1979,10 +2384,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_sqs_queue",
+        "gcp": "google_pubsub_subscription",
+        "azure": "azurerm_servicebus_queue"
       }
     },
     {
@@ -1999,10 +2409,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_sns_topic",
+        "gcp": "google_pubsub_topic",
+        "azure": "azurerm_servicebus_topic"
       }
     },
     {
@@ -2019,10 +2434,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_kinesis_stream",
+        "gcp": "google_pubsub_topic",
+        "azure": "azurerm_eventhub"
       }
     },
     {
@@ -2039,10 +2459,15 @@
       "pricing": {
         "class": "USAGE_BASED",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_kinesis_stream",
+        "gcp": "google_pubsub_topic",
+        "azure": "azurerm_eventhub"
       }
     },
     {
@@ -2059,10 +2484,15 @@
       "pricing": {
         "class": "DIRECT",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
+          "aws": true,
+          "gcp": true,
+          "azure": true
         }
+      },
+      "infracost_resource_type": {
+        "aws": "aws_batch_job_definition",
+        "gcp": "google_cloud_run_v2_job",
+        "azure": "azurerm_batch_job"
       }
     },
     {
@@ -2099,130 +2529,15 @@
       "pricing": {
         "class": "FREE_TIER",
         "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
-        }
-      }
-    },
-    {
-      "service_id": "mlinference",
-      "name": "ML Inference",
-      "domain": "ai",
-      "category": "ai",
-      "terraform_supported": true,
-      "providers": {
-        "aws": true,
-        "gcp": true,
-        "azure": true
-      },
-      "pricing": {
-        "class": "USAGE_BASED",
-        "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
-        }
-      }
-    },
-    {
-      "service_id": "websocketgateway",
-      "name": "WebSocket Gateway",
-      "domain": "core",
-      "category": "network",
-      "terraform_supported": true,
-      "providers": {
-        "aws": true,
-        "gcp": true,
-        "azure": true
-      },
-      "pricing": {
-        "class": "USAGE_BASED",
-        "infracost_supported": {
           "aws": true,
-          "gcp": null,
+          "gcp": true,
           "azure": true
         }
-      }
-    },
-    {
-      "service_id": "containerregistry",
-      "name": "Container Registry",
-      "domain": "devops",
-      "category": "devops",
-      "terraform_supported": true,
-      "providers": {
-        "aws": true,
-        "gcp": true,
-        "azure": true
       },
-      "pricing": {
-        "class": "USAGE_BASED",
-        "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
-        }
-      }
-    },
-    {
-      "service_id": "artifactrepository",
-      "name": "Artifact Repository",
-      "domain": "devops",
-      "category": "devops",
-      "terraform_supported": true,
-      "providers": {
-        "aws": true,
-        "gcp": true,
-        "azure": true
-      },
-      "pricing": {
-        "class": "USAGE_BASED",
-        "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
-        }
-      }
-    },
-    {
-      "service_id": "vulnerabilityscanner",
-      "name": "Vulnerability Scanner",
-      "domain": "security",
-      "category": "security",
-      "terraform_supported": true,
-      "providers": {
-        "aws": true,
-        "gcp": true,
-        "azure": true
-      },
-      "pricing": {
-        "class": "USAGE_BASED",
-        "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
-        }
-      }
-    },
-    {
-      "service_id": "iampolicy",
-      "name": "IAM Policy",
-      "domain": "security",
-      "category": "security",
-      "terraform_supported": true,
-      "providers": {
-        "aws": true,
-        "gcp": true,
-        "azure": true
-      },
-      "pricing": {
-        "class": "FREE_TIER",
-        "infracost_supported": {
-          "aws": null,
-          "gcp": null,
-          "azure": null
-        }
+      "infracost_resource_type": {
+        "aws": "aws_apigatewayv2_api",
+        "gcp": "google_pubsub_topic",
+        "azure": "azurerm_eventgrid_topic"
       }
     }
   ]

@@ -3,19 +3,40 @@ const bcrypt = require('bcryptjs');
 
 class User {
   static async create(userData) {
-    const { name, email, password, company } = userData;
-    // Use fewer rounds in development for faster hashing
-    const saltRounds = process.env.NODE_ENV === 'production' ? 12 : 8;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    const { name, email, password, company, google_id, avatar_url } = userData;
+
+    let hashedPassword = null;
+    if (password) {
+      // Use fewer rounds in development for faster hashing
+      const saltRounds = process.env.NODE_ENV === 'production' ? 12 : 8;
+      hashedPassword = await bcrypt.hash(password, saltRounds);
+    }
 
     const query = `
-      INSERT INTO users (name, email, password, company, device_id)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING id, name, email, company, created_at
+      INSERT INTO users (name, email, password, company, device_id, google_id, avatar_url)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id, name, email, company, created_at, avatar_url
     `;
 
-    const values = [name, email, hashedPassword, company, userData.device_id];
+    const values = [name, email, hashedPassword, company, userData.device_id, google_id, avatar_url];
     const result = await pool.query(query, values);
+    return result.rows[0];
+  }
+
+  static async findByGoogleId(googleId) {
+    const query = 'SELECT * FROM users WHERE google_id = $1';
+    const result = await pool.query(query, [googleId]);
+    return result.rows[0];
+  }
+
+  static async updateGoogleInfo(id, googleId, avatarUrl) {
+    const query = `
+        UPDATE users 
+        SET google_id = $1, avatar_url = $2
+        WHERE id = $3
+        RETURNING id, name, email, company, google_id, avatar_url
+      `;
+    const result = await pool.query(query, [googleId, avatarUrl, id]);
     return result.rows[0];
   }
 

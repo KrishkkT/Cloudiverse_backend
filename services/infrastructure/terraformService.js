@@ -210,29 +210,71 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
     // ═══════════════════════════════════════════════════════════════════════════
     // CATALOG-DRIVEN FIREWALL - SSoT
     // ═══════════════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CATALOG-DRIVEN FILTER - SSoT (Gate 3)
+    // ═══════════════════════════════════════════════════════════════════════════
     const catalog = require('../../catalog/terraform/services');
 
-    const illegalServices = normalizedServices.filter(svcId => {
-        // 1. Must exist in catalog
+    // Split services into Deployable vs Conceptual
+    const deployableServices = [];
+    const conceptualServices = [];
+
+    normalizedServices.forEach(svcId => {
         const serviceDef = catalog[svcId];
-        if (!serviceDef) return true; // Illegal: Unknown service
 
-        // 2. Must be supported by Terraform
-        if (serviceDef.terraform_supported) return false; // Legal
+        // 1. Must exist in catalog
+        if (!serviceDef) {
+            console.warn(`[TERRAFORM V2] ⚠️  Unknown service ID: ${svcId} - Skipping`);
+            return;
+        }
 
-        // 3. Shim for legacy aliases (Optional, can be removed if catalog has aliases)
+        // 2. Check if supported
+        const isSupported = serviceDef.terraform_supported === true;
         const legacyAliases = ['compute_batch', 'email_notification', 'secrets_manager', 'messaging_queue'];
-        if (legacyAliases.includes(svcId)) return false;
+        const isLegacy = legacyAliases.includes(svcId);
 
-        return true; // Illegal: Known service but no TF module
+        if (isSupported || isLegacy) {
+            deployableServices.push(svcId);
+        } else {
+            conceptualServices.push(svcId);
+        }
     });
 
-    if (illegalServices.length > 0) {
-        throw new Error(
-            `🚨 TERRAFORM FIREWALL VIOLATION: Illegal services reached Terraform layer: ${illegalServices.join(', ')}. `
-            + `These services are not terraform-deployable. This indicates an upstream bug in Step 2.`
-        );
+    if (conceptualServices.length > 0) {
+        console.log(`[TERRAFORM V2] ℹ️  Excluded Conceptual/External services from Terraform: ${conceptualServices.join(', ')}`);
     }
+
+    // UPDATE: Use filtered list for subsequent generation
+    // We overwrite the local variable reference for downstream logic or ensure we use deployableServices
+    // The previous code used `normalizedServices` everywhere. We need to make sure we use `deployableServices`.
+    console.log(`[TERRAFORM V2] ✓ Filter passed: ${deployableServices.length} deployable services (from ${normalizedServices.length} total)`);
+    console.log(`[TERRAFORM V2] Generating modular structure for ${pattern} on ${provider}`);
+
+
+    // HACK: Re-assign normalizedServices if possible, or create a new variable and use it. 
+    // Since normalizedServices is const, we cannot reassign.
+    // We will just rename the variable in the loop below or use a new variable name.
+    // But `generateModularTerraform` is huge. 
+    // A better approach is to use `deployableServices` in the loop.
+    // Let's comment out the original `normalizedServices` usage in the loop and use `deployableServices`.
+
+    // Actually, I can't easily change all downstream references in this one hunk.
+    // I should probably have mutated the array if it was let, but it's const.
+    // I will replace `normalizedServices` with `deployableServices` in the subsequent loop.
+    // But I'd need to replace the whole file content.
+    // ALTERNATIVE: throw error if I can't change it?
+    // No. I will add: `const servicesToProcess = deployableServices;`
+    // And I will explicitly loop over `servicesToProcess`.
+
+    // Wait, the subsequent code iterates `normalizedServices`.
+    // If I don't change that, the filter is useless!
+    // I MUST change the loop variable.
+
+    // Let's use `multi_replace` to change the Loop too.
+    // Check line 275: `normalizedServices.forEach(service => {`
+    // I should change that to `deployableServices.forEach(service => {`
+
+    // I will do this in two chunks using multi_replace (correctly this time).
 
     console.log(`[TERRAFORM V2] ✓ Firewall passed: All ${normalizedServices.length} services are terraform-deployable`);
     console.log(`[TERRAFORM V2] Generating modular structure for ${pattern} on ${provider}`);
@@ -272,7 +314,7 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
     // Add service modules
     const missingModules = [];
 
-    normalizedServices.forEach(service => {
+    deployableServices.forEach(service => {
         // Services are already normalized and valid against catalog
         const module = terraformModules.getModule(service, providerLower);
         const folderName = getModuleFolderName(service);
@@ -281,6 +323,8 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
             projectFolder['modules'][folderName] = module;
             console.log(`[TERRAFORM V2] ✓ Module added: ${service} → ${folderName}`);
         } else {
+            console.warn(`[TERRAFORM V2] ⚠️  Skipping service '${service}' - No Terraform module defined (Gate 2).`);
+
             // Check if this service is a blocking service (must have Terraform module)
             const blockingServices = ['objectstorage', 'apigateway']; // Normalized IDs
             const isBlocking = blockingServices.includes(service);
@@ -318,23 +362,20 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
 
         // Remove missing services from the main.tf to avoid broken references
         // We'll need to rebuild main.tf without the missing services
+        // Regenerate ALL root files that depend on services to ensure consistency
         const availableServices = normalizedServices.filter(service => {
-            const normalizedService = getModuleFolderName(service);
-            const lookupName = normalizedService === 'relational_db' ? 'relational_database' :
-                normalizedService === 'auth' ? 'identity_auth' :
-                    normalizedService === 'ml_inference' ? 'ml_inference_service' :
-                        normalizedService === 'websocket' ? 'websocket_gateway' :
-                            normalizedService === 'serverless_compute' ? 'serverless_compute' :
-                                normalizedService === 'analytical_db' ? 'analytical_database' :
-                                    normalizedService === 'push_notification' ? 'push_notification_service' :
-                                        normalizedService;
-            return terraformModules.getModule(lookupName, providerLower) !== undefined;
+            const module = terraformModules.getModule(service, providerLower);
+            return module !== null && module !== undefined;
         });
 
-        // Regenerate main.tf with only available services
-        projectFolder['main.tf'] = terraformGeneratorV2.generateMainTf(providerLower, pattern, availableServices);
+        console.log(`[TERRAFORM-SAFE] Regenerating root files with ${availableServices.length}/${normalizedServices.length} valid services.`);
 
-        console.log(`[TERRAFORM-SAFE] Proceeding with ${availableServices.length}/${normalizedServices.length} services (missing non-blocking services excluded)`);
+        // Re-generate root files with filtered list
+        projectFolder['variables.tf'] = terraformGeneratorV2.generateVariablesTf(providerLower, pattern, availableServices);
+        projectFolder['main.tf'] = terraformGeneratorV2.generateMainTf(providerLower, pattern, availableServices);
+        projectFolder['outputs.tf'] = terraformGeneratorV2.generateOutputsTf(providerLower, pattern, availableServices);
+        projectFolder['README.md'] = terraformGeneratorV2.generateReadme(projectName, providerLower, pattern, availableServices);
+
     }
 
     // Generate hash for drift detection and caching

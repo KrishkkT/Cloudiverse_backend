@@ -84,9 +84,11 @@ function getModule(serviceId, provider) {
         }
     }
 
-    // 4. Fallback: Systematic minimal generator for ALL services
-    // This satisfies the "create for all services" constraint by ensuring coverage.
-    return generateMinimalModule(provider, moduleId || sid);
+    // 4. Fallback: Strict Gate - Return NULL if no module found
+    // This allows the caller (terraformService.js) to exclude it completely
+    // instead of generating an empty placeholder.
+    console.warn(`[TF-GATE] No module generator for '${moduleId}' (original: ${serviceId}). Returning null.`);
+    return null;
 }
 
 module.exports = { getModule };
