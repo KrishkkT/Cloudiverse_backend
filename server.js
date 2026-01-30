@@ -200,6 +200,7 @@ const projectRoutes = require('./routes/projects'); // New import
 const billingRoutes = require('./routes/billing'); // New import
 const settingsRoutes = require('./routes/settings'); // New import
 const cloudRoutes = require('./routes/cloud'); // New import
+const aiRoutes = require('./routes/ai');
 
 // Routes
 // Health Check
@@ -223,6 +224,7 @@ app.use('/api/projects', projectRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/cloud', cloudRoutes);
+app.use('/api/ai', aiRoutes);
 
 app.use('/api', require('./routes/feedback'));
 
