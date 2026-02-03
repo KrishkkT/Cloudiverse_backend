@@ -283,9 +283,14 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
     const providerLower = provider.toLowerCase();
 
     // Use resolved_region from Step 2 (not hardcoded defaults)
-    const resolvedRegion = infraSpec.region?.resolved_region ||
+    let resolvedRegion = infraSpec.region?.resolved_region ||
         requirements.region?.primary_region ||
         getDefaultRegion(providerLower);
+
+    // FIX: Normalize Region (Handle 'ap-south1' typo)
+    if (resolvedRegion && /^[a-z]+-[a-z]+\d$/.test(resolvedRegion) === false && resolvedRegion.match(/[a-z]+[a-z]+\d/)) {
+        resolvedRegion = resolvedRegion.replace(/([a-z]+)-?([a-z]+)(\d)/, "$1-$2-$3");
+    }
 
     console.log(`[TERRAFORM V2] Using resolved region: ${resolvedRegion}`);
 
@@ -295,7 +300,7 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
     projectFolder['versions.tf'] = terraformGeneratorV2.generateVersionsTf(providerLower);
     projectFolder['providers.tf'] = terraformGeneratorV2.generateProvidersTf(providerLower, resolvedRegion);
     projectFolder['variables.tf'] = terraformGeneratorV2.generateVariablesTf(providerLower, pattern, normalizedServices);
-    projectFolder['terraform.tfvars'] = terraformGeneratorV2.generateTfvars(providerLower, resolvedRegion, projectName, infraSpec.sizing);
+    projectFolder['terraform.tfvars'] = terraformGeneratorV2.generateTfvars(providerLower, resolvedRegion, projectName, infraSpec.sizing, infraSpec.connection);
     projectFolder['main.tf'] = terraformGeneratorV2.generateMainTf(providerLower, pattern, normalizedServices);
     projectFolder['outputs.tf'] = terraformGeneratorV2.generateOutputsTf(providerLower, pattern, normalizedServices);
     projectFolder['README.md'] = terraformGeneratorV2.generateReadme(projectName, providerLower, pattern, normalizedServices);
@@ -317,7 +322,7 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
     deployableServices.forEach(service => {
         // Services are already normalized and valid against catalog
         const module = terraformModules.getModule(service, providerLower);
-        const folderName = getModuleFolderName(service);
+        const folderName = terraformGeneratorV2.getModuleName(service);
 
         if (module) {
             projectFolder['modules'][folderName] = module;
@@ -408,28 +413,9 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
     };
 }
 
-// Helper function to get module folder name
+// Helper function to get module folder name (DEPRECATED - Use terraformGeneratorV2.getModuleName)
 function getModuleFolderName(serviceType) {
-    // Normalize service type names for folder structure
-    const nameMap = {
-        relationaldatabase: 'relational_db',
-        identityauth: 'auth',
-        mlinferenceservice: 'ml_inference',
-        websocketgateway: 'websocket',
-        computeserverless: 'serverless_compute',
-        analyticaldatabase: 'analytical_db',
-        pushnotificationservice: 'push_notification',
-        globalloadbalancer: 'global_lb',
-        messagequeue: 'mq',
-        secretsmanagement: 'secrets',
-        auditlogging: 'audit_log',
-        appcompute: 'app_compute',
-        searchengine: 'search',
-        blockstorage: 'block_store',
-        dns: 'dns'
-    };
-
-    return nameMap[serviceType] || serviceType;
+    return terraformGeneratorV2.getModuleName(serviceType);
 }
 
 // Helper function to determine if networking module is needed
@@ -459,5 +445,5 @@ module.exports = {
     generateModularTerraform,
     getTerraformServices,
     getTerraformResourceType,
-    getModuleFolderName  // Required by workflow.js
+    getModuleName: terraformGeneratorV2.getModuleName
 };

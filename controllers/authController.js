@@ -231,7 +231,12 @@ const getProfile = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-    res.json(user);
+
+    // Fetch Plan Status
+    const billingService = require('../services/billing/billingService');
+    const planStatus = await billingService.getPlanStatus(req.user.id);
+
+    res.json({ ...user, plan: planStatus });
   } catch (error) {
     console.error('Get profile error:', error);
     res.status(500).json({ message: 'Server error retrieving profile' });

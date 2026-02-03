@@ -8,4 +8,7 @@ router.post('/validate-removal', architectureController.validateRemoval);
 // Reconcile architecture (future)
 router.post('/reconcile', architectureController.reconcile);
 
+// AI Validation
+router.post('/validate-completeness', architectureController.validateCompleteness);
+
 module.exports = router;

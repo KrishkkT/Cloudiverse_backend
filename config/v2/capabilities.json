@@ -69,6 +69,57 @@
             "valkey",
             "storage speed",
             "fast access"
+        ],
+        "compute_heavy": [
+            "vm",
+            "virtual machine",
+            "ec2",
+            "compute engine",
+            "high cpu",
+            "heavy processing"
+        ],
+        "batch_processing": [
+            "batch",
+            "job",
+            "offline processing",
+            "cron",
+            "scheduled"
+        ],
+        "global_delivery": [
+            "global",
+            "multi-region",
+            "low latency",
+            "edge",
+            "worldwide"
+        ],
+        "microservices_governance": [
+            "service mesh",
+            "discovery",
+            "microservices",
+            "governance",
+            "traffic management"
+        ],
+        "notifications_extended": [
+            "email",
+            "push",
+            "sms",
+            "notification",
+            "alert"
+        ],
+        "iot_management": [
+            "ota",
+            "updates",
+            "device management",
+            "digital twin",
+            "iot edge"
+        ],
+        "ml_ops": [
+            "mlops",
+            "training",
+            "pipeline",
+            "experiment",
+            "model registry",
+            "model monitoring"
         ]
     },
     "traffic_scenarios": {

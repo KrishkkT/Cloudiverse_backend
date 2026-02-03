@@ -100,10 +100,10 @@ class TruthGate {
         // DOMAIN-SPECIFIC PATTERNS (Check domain first for specialized routing)
         // ════════════════════════════════════════════════════════════════
 
-        // Ecommerce domain → E_COMMERCE_BACKEND (always, regardless of other flags)
+        // Ecommerce domain → ECOMMERCE (always, regardless of other flags)
         if (axes.domain === 'ecommerce') {
-            console.log('[TRUTHGATE] Domain is ecommerce → E_COMMERCE_BACKEND');
-            return 'E_COMMERCE_BACKEND';
+            console.log('[TRUTHGATE] Domain is ecommerce → ECOMMERCE');
+            return 'ECOMMERCE';
         }
 
         // Fintech domain → FINTECH_PAYMENT_PLATFORM (explicit fintech only)
@@ -129,7 +129,7 @@ class TruthGate {
 
         // Ecommerce-like: payments with relational DB (generic)
         if (axes.payments && axes.primary_data_model === 'relational') {
-            return 'E_COMMERCE_BACKEND';
+            return 'ECOMMERCE';
         }
 
         // Mobile Backends
@@ -187,12 +187,10 @@ class TruthGate {
     static enforceServiceInvariants(services, axes) {
         const cleaned = new Set(services);
 
-        // Rule 1: Static Content => NO COMPUTE
+        // Rule 1: Static Content Invariants (Removed compute restriction to allow Nginx containers)
         if (axes.static_content && !axes.api_backend) {
-            cleaned.delete('computeserverless');
-            cleaned.delete('computecontainer');
-            cleaned.delete('loadbalancer');
-            cleaned.delete('apigateway'); // Usually not needed for pure static
+            // apigateway usually not needed for pure static
+            cleaned.delete('apigateway');
         }
 
         // Rule 2: Exclusions

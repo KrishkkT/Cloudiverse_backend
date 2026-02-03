@@ -146,9 +146,16 @@ function mapToProvider(canonicalArchitecture, provider) {
     console.log(`[MAP TO PROVIDER] Mapping ${canonicalArchitecture.pattern} to ${provider}`);
 
     // Validate that we have canonical services
-    const services = canonicalArchitecture.services || [];
+    let services = canonicalArchitecture.services || [];
+
+    // 🔥 FIX: Filter out services that were removed (USER_DISABLED)
+    // The canonical architecture preserves them for undo, but diagram must ignore them.
+    services = services.filter(s => s.state !== 'USER_DISABLED');
+
     if (services.length === 0) {
-        console.error('[MAP TO PROVIDER] No services in canonical architecture');
+        console.error('[MAP TO PROVIDER] No services in canonical architecture (after filtering disabled)');
+        // Warn instead of throw? Or throw if required.
+        // If user removed everything, that's an edge case.
         throw new Error('Canonical architecture must include services');
     }
 

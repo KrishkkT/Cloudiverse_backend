@@ -11,8 +11,9 @@
                 "identity_access"
             ],
             "services": [
+                "loadbalancer",
                 "cdn",
-                "objectstorage"
+                "computecontainer"
             ],
             "score_weights": {
                 "static_content": 1,
@@ -33,8 +34,9 @@
                 "data_persistence"
             ],
             "services": [
+                "loadbalancer",
                 "cdn",
-                "objectstorage",
+                "computecontainer",
                 "identityauth"
             ],
             "score_weights": {
@@ -360,7 +362,7 @@
             "name": "Gaming Backend",
             "cost_engine": "hybrid"
         },
-        "E_COMMERCE_BACKEND": {
+        "ECOMMERCE": {
             "description": "E-commerce with payments and inventory",
             "required_capabilities": [
                 "payments",

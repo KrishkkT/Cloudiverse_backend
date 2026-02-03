@@ -1016,5 +1016,63 @@ Output:
   }
 };
 
-module.exports = { normalizeIntent, normalizeIntentV2, generateConstrainedProposal, scoreInfraSpec, explainOutcomes, predictUsage, generateProviderReasoning, enhanceRequirements };
+
+/**
+ * STEP 2.7 — COMPLETENESS VALIDATION (Layer Q)
+ * Goal: Check if selected services match the description.
+ */
+const validateServiceCompleteness = async (description, currentServices, catalog) => {
+  console.log("--- STEP 2.7: Completeness Validation (AI) ---");
+  try {
+    const serviceNames = currentServices.map(s => s.name || s.canonical_type || s.id).join(', ');
+    const catalogList = Object.keys(catalog).map(k => `${k} (${catalog[k].description || ''})`).join('\n');
+
+    const prompt = `
+    Analyze if the CURRENT SERVICES are sufficient for the PROJECT DESCRIPTION.
+    
+    PROJECT DESCRIPTION:
+    "${description}"
+
+    CURRENT SERVICES:
+    ${serviceNames}
+
+    FULL SERVICE CATALOG (Only suggest from here):
+    ${catalogList}
+
+    TASK:
+    - Identify if any critical component is MISSING based on the description.
+    - If missing, suggest the exact service ID from the catalog.
+    - If the current services are sufficient, return an empty list.
+    - IGNORE optional or nice-to-have services. Focus on FUNCTIONAL GAPS.
+
+    OUTPUT JSON:
+    {
+       "suggestions": [
+          { "service_id": "string", "reason": "string" }
+       ]
+    }
+    `;
+
+    const completion = await groq.chat.completions.create({
+      messages: [
+        { role: "system", content: "You are a cloud architecture validator. Output strict JSON." },
+        { role: "user", content: prompt }
+      ],
+      model: "llama-3.1-8b-instant",
+      temperature: 0.1,
+      response_format: { type: "json_object" }
+    });
+
+    const result = JSON.parse(completion.choices[0]?.message?.content || "{}");
+    console.log("AI Validation Output:", JSON.stringify(result, null, 2));
+    return result;
+
+  } catch (error) {
+    console.error("AI Validation Error:", error.message);
+    return { suggestions: [] };
+  }
+};
+
+module.exports = { normalizeIntent, normalizeIntentV2, generateConstrainedProposal, scoreInfraSpec, explainOutcomes, predictUsage, generateProviderReasoning, enhanceRequirements, validateServiceCompleteness };
+
 

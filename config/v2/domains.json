@@ -81,10 +81,29 @@
         ],
         "capability_hints": [
             "object_storage",
-            "cdn"
+            "cdn",
+            "global_delivery"
         ],
         "policy_bias": {
             "bandwidth_intensive": true
+        }
+    },
+    "mobile": {
+        "aliases": [
+            "app",
+            "ios",
+            "android",
+            "flutter",
+            "react native"
+        ],
+        "capability_hints": [
+            "api_backend",
+            "auth",
+            "notifications_extended",
+            "object_storage"
+        ],
+        "policy_bias": {
+            "api_first": true
         }
     },
     "analytics": {
@@ -112,7 +131,8 @@
         ],
         "capability_hints": [
             "time_series",
-            "mqtt"
+            "mqtt",
+            "iot_management"
         ],
         "policy_bias": {
             "protocol": "mqtt"
@@ -127,7 +147,9 @@
         ],
         "capability_hints": [
             "gpu_compute",
-            "object_storage"
+            "object_storage",
+            "ml_ops",
+            "compute_heavy"
         ],
         "policy_bias": {}
     },

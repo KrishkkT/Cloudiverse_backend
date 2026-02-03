@@ -16,54 +16,58 @@
 
 const AWS_SERVICE_MAP = {
     // Compute
-    compute_container: { COST_EFFECTIVE: 'aws_ecs_fargate', HIGH_PERFORMANCE: 'aws_eks' },
-    compute_serverless: { DEFAULT: 'aws_lambda' },
-    compute_vm: { DEFAULT: 'aws_instance' },
-    compute_batch: { DEFAULT: 'aws_batch' },
-    compute_edge: { DEFAULT: 'aws_cloudfront_functions' },
+    computecontainer: { COST_EFFECTIVE: 'aws_ecs_fargate', HIGH_PERFORMANCE: 'aws_eks' },
+    computeserverless: { DEFAULT: 'aws_lambda' },
+    computevm: { DEFAULT: 'aws_instance' },
+    computebatch: { DEFAULT: 'aws_batch' },
+    computeedge: { DEFAULT: 'aws_cloudfront_functions' },
 
     // Data
-    relational_database: {
+    relationaldatabase: {
         POSTGRES_COST: 'aws_rds_postgresql',
         POSTGRES_PERF: 'aws_aurora_postgresql',
         MYSQL_COST: 'aws_rds_mysql',
         MYSQL_PERF: 'aws_aurora_mysql',
         DEFAULT: 'aws_rds_postgresql'
     },
-    nosql_database: { DEFAULT: 'aws_dynamodb' },
+    nosqldatabase: { DEFAULT: 'aws_dynamodb' },
     cache: { DEFAULT: 'aws_elasticache_redis' },
-    search_engine: { DEFAULT: 'aws_opensearch' },
-    object_storage: { DEFAULT: 'aws_s3' },
-    block_storage: { DEFAULT: 'aws_ebs' },
-    file_storage: { DEFAULT: 'aws_efs' },
+    searchengine: { DEFAULT: 'aws_opensearch' },
+    objectstorage: { DEFAULT: 'aws_s3' },
+    blockstorage: { DEFAULT: 'aws_ebs' },
+    filestorage: { DEFAULT: 'aws_efs' },
     backup: { DEFAULT: 'aws_backup' },
 
     // Networking / delivery
-    load_balancer: { DEFAULT: 'aws_alb' },
-    api_gateway: { COST_EFFECTIVE: 'aws_apigateway_v2', HIGH_PERFORMANCE: 'aws_api_gateway_rest', DEFAULT: 'aws_apigateway_v2' },
+    loadbalancer: { DEFAULT: 'aws_alb' },
+    apigateway: { COST_EFFECTIVE: 'aws_apigateway_v2', HIGH_PERFORMANCE: 'aws_api_gateway_rest', DEFAULT: 'aws_apigateway_v2' },
     cdn: { DEFAULT: 'aws_cloudfront' },
     dns: { DEFAULT: 'aws_route53' },
-    vpc_networking: { DEFAULT: 'aws_vpc' },
-    nat_gateway: { DEFAULT: 'aws_nat_gateway' },
+    vpcnetworking: { DEFAULT: 'aws_vpc' },
+    natgateway: { DEFAULT: 'aws_nat_gateway' },
     vpn: { DEFAULT: 'aws_vpn' },
-    private_link: { DEFAULT: 'aws_privatelink' },
-    service_discovery: { DEFAULT: 'aws_cloud_map' },
-    service_mesh: { DEFAULT: 'aws_app_mesh' },
+    privatelink: { DEFAULT: 'aws_privatelink' },
+    servicediscovery: { DEFAULT: 'aws_cloud_map' },
+    servicemesh: { DEFAULT: 'aws_app_mesh' },
+    websocketgateway: { DEFAULT: 'aws_apigateway_v2' },
+    globalloadbalancer: { DEFAULT: 'aws_globalaccelerator' },
 
     // Integration
-    messaging_queue: { DEFAULT: 'aws_sqs' },
-    event_bus: { DEFAULT: 'aws_eventbridge' },
-    workflow_orchestration: { DEFAULT: 'aws_step_functions' },
+    messagequeue: { DEFAULT: 'aws_sqs' },
+    eventbus: { DEFAULT: 'aws_eventbridge' },
+    workfloworchestration: { DEFAULT: 'aws_step_functions' },
     notification: { DEFAULT: 'aws_sns' },
+    pushnotificationservice: { DEFAULT: 'aws_sns' },
+    emailnotification: { DEFAULT: 'aws_ses' },
 
     // Security
-    identity_auth: { DEFAULT: 'aws_cognito' },
-    secrets_management: { DEFAULT: 'aws_secrets_manager' },
-    key_management: { DEFAULT: 'aws_kms' },
-    certificate_management: { DEFAULT: 'aws_acm' },
+    identityauth: { DEFAULT: 'aws_cognito' },
+    secretsmanagement: { DEFAULT: 'aws_secrets_manager' },
+    keymanagement: { DEFAULT: 'aws_kms' },
+    certificatemanagement: { DEFAULT: 'aws_acm' },
     waf: { DEFAULT: 'aws_waf' },
-    ddos_protection: { DEFAULT: 'aws_shield' },
-    policy_governance: { DEFAULT: 'aws_organizations' },
+    ddosprotection: { DEFAULT: 'aws_shield' },
+    policygovernance: { DEFAULT: 'aws_organizations' },
 
     // Observability
     monitoring: { DEFAULT: 'aws_cloudwatch' },
@@ -72,155 +76,190 @@ const AWS_SERVICE_MAP = {
     siem: { DEFAULT: 'aws_security_hub' },
 
     // DevOps
-    container_registry: { DEFAULT: 'aws_ecr' },
-    ci_cd: { DEFAULT: 'aws_codepipeline' },
-    artifact_repository: { DEFAULT: 'aws_codeartifact' },
+    containerregistry: { DEFAULT: 'aws_ecr' },
+    cicd: { DEFAULT: 'aws_codepipeline' },
+    artifactrepository: { DEFAULT: 'aws_codeartifact' },
 
     // IoT
-    iot_core: { DEFAULT: 'aws_iot_core' },
-    time_series_database: { DEFAULT: 'aws_timestream' },
-    event_stream: { DEFAULT: 'aws_kinesis_streams' },
+    iotcore: { DEFAULT: 'aws_iot_core' },
+    timeseriesdatabase: { DEFAULT: 'aws_timestream' },
+    eventstream: { DEFAULT: 'aws_kinesis_streams' },
+    iotedgegateway: { DEFAULT: 'aws_greengrass' },
+    deviceregistry: { DEFAULT: 'aws_iot_core' },
+    digitaltwin: { DEFAULT: 'aws_iottwinmaker' },
+    otaupdates: { DEFAULT: 'aws_iot_jobs' },
 
     // Analytics
-    data_warehouse: { DEFAULT: 'aws_redshift' },
-    stream_processor: { DEFAULT: 'aws_kinesis_analytics' },
+    datawarehouse: { DEFAULT: 'aws_redshift' },
+    streamprocessor: { DEFAULT: 'aws_kinesis_analytics' },
 
     // ML
-    ml_training: { DEFAULT: 'aws_sagemaker_training' },
-    ml_inference: { DEFAULT: 'aws_sagemaker_endpoint' },
-    feature_store: { DEFAULT: 'aws_sagemaker_feature_store' }
+    mltraining: { DEFAULT: 'aws_sagemaker_training' },
+    mlinference: { DEFAULT: 'aws_sagemaker_endpoint' },
+    featurestore: { DEFAULT: 'aws_sagemaker_feature_store' },
+    modelregistry: { DEFAULT: 'aws_sagemaker_domain' },
+    experimenttracking: { DEFAULT: 'aws_sagemaker_domain' },
+    mlpipelineorchestration: { DEFAULT: 'aws_sagemaker_pipelines' },
+    vectordatabase: { DEFAULT: 'aws_opensearch' },
+    modelmonitoring: { DEFAULT: 'aws_sagemaker_model_monitor' }
 };
 
 const GCP_SERVICE_MAP = {
-    compute_container: { COST_EFFECTIVE: 'gcp_cloud_run', HIGH_PERFORMANCE: 'gcp_gke' },
-    compute_serverless: { DEFAULT: 'gcp_cloud_functions' },
-    compute_vm: { DEFAULT: 'gcp_compute_engine' },
-    compute_batch: { DEFAULT: 'gcp_batch' },
-    compute_edge: { DEFAULT: 'gcp_cloud_cdn_edge' },
+    computecontainer: { COST_EFFECTIVE: 'gcp_cloud_run', HIGH_PERFORMANCE: 'gcp_gke' },
+    computeserverless: { DEFAULT: 'gcp_cloud_functions' },
+    computevm: { DEFAULT: 'gcp_compute_engine' },
+    computebatch: { DEFAULT: 'gcp_batch' },
+    computeedge: { DEFAULT: 'gcp_cloud_cdn_edge' },
 
-    relational_database: {
+    relationaldatabase: {
         POSTGRES_COST: 'gcp_cloud_sql_postgres',
         POSTGRES_PERF: 'gcp_cloud_sql_postgres_ha',
         MYSQL_COST: 'gcp_cloud_sql_mysql',
         DEFAULT: 'gcp_cloud_sql_postgres'
     },
-    nosql_database: { DEFAULT: 'gcp_firestore' },
+    nosqldatabase: { DEFAULT: 'gcp_firestore' },
     cache: { DEFAULT: 'gcp_memorystore_redis' },
-    search_engine: { DEFAULT: 'gcp_elastic_cloud' },
-    object_storage: { DEFAULT: 'gcp_cloud_storage' },
-    block_storage: { DEFAULT: 'gcp_persistent_disk' },
-    file_storage: { DEFAULT: 'gcp_filestore' },
+    searchengine: { DEFAULT: 'gcp_elastic_cloud' },
+    objectstorage: { DEFAULT: 'gcp_cloud_storage' },
+    blockstorage: { DEFAULT: 'gcp_persistent_disk' },
+    filestorage: { DEFAULT: 'gcp_filestore' },
     backup: { DEFAULT: 'gcp_backup_and_dr' },
 
-    load_balancer: { DEFAULT: 'gcp_cloud_load_balancing' },
-    api_gateway: { DEFAULT: 'gcp_api_gateway' },
+    loadbalancer: { DEFAULT: 'gcp_cloud_load_balancing' },
+    apigateway: { DEFAULT: 'gcp_api_gateway' },
     cdn: { DEFAULT: 'gcp_cloud_cdn' },
     dns: { DEFAULT: 'gcp_cloud_dns' },
-    vpc_networking: { DEFAULT: 'gcp_vpc' },
-    nat_gateway: { DEFAULT: 'gcp_cloud_nat' },
+    vpcnetworking: { DEFAULT: 'gcp_vpc' },
+    natgateway: { DEFAULT: 'gcp_cloud_nat' },
     vpn: { DEFAULT: 'gcp_cloud_vpn' },
-    private_link: { DEFAULT: 'gcp_private_service_connect' },
-    service_discovery: { DEFAULT: 'gcp_service_directory' },
-    service_mesh: { DEFAULT: 'gcp_anthos_service_mesh' },
+    privatelink: { DEFAULT: 'gcp_private_service_connect' },
+    servicediscovery: { DEFAULT: 'gcp_service_directory' },
+    servicemesh: { DEFAULT: 'gcp_anthos_service_mesh' },
+    websocketgateway: { DEFAULT: 'gcp_api_gateway' }, // Limited support
+    globalloadbalancer: { DEFAULT: 'gcp_cloud_load_balancing' },
 
-    messaging_queue: { DEFAULT: 'gcp_pubsub' },
-    event_bus: { DEFAULT: 'gcp_eventarc' },
-    workflow_orchestration: { DEFAULT: 'gcp_workflows' },
+    messagequeue: { DEFAULT: 'gcp_pubsub' },
+    eventbus: { DEFAULT: 'gcp_eventarc' },
+    workfloworchestration: { DEFAULT: 'gcp_workflows' },
     notification: { DEFAULT: 'gcp_pubsub_notifications' },
+    pushnotificationservice: { DEFAULT: 'gcp_firebase' },
+    emailnotification: { DEFAULT: 'gcp_sendgrid_integration' },
 
-    identity_auth: { DEFAULT: 'gcp_identity_platform' },
-    secrets_management: { DEFAULT: 'gcp_secret_manager' },
-    key_management: { DEFAULT: 'gcp_cloud_kms' },
-    certificate_management: { DEFAULT: 'gcp_certificate_manager' },
+    identityauth: { DEFAULT: 'gcp_identity_platform' },
+    secretsmanagement: { DEFAULT: 'gcp_secret_manager' },
+    keymanagement: { DEFAULT: 'gcp_cloud_kms' },
+    certificatemanagement: { DEFAULT: 'gcp_certificate_manager' },
     waf: { DEFAULT: 'gcp_cloud_armor' },
-    ddos_protection: { DEFAULT: 'gcp_cloud_armor_ddos' },
-    policy_governance: { DEFAULT: 'gcp_org_policy' },
+    ddosprotection: { DEFAULT: 'gcp_cloud_armor_ddos' },
+    policygovernance: { DEFAULT: 'gcp_org_policy' },
 
     monitoring: { DEFAULT: 'gcp_cloud_monitoring' },
     logging: { DEFAULT: 'gcp_cloud_logging' },
     tracing: { DEFAULT: 'gcp_cloud_trace' },
     siem: { DEFAULT: 'gcp_security_command_center' },
 
-    container_registry: { DEFAULT: 'gcp_artifact_registry' },
-    ci_cd: { DEFAULT: 'gcp_cloud_build' },
-    artifact_repository: { DEFAULT: 'gcp_artifact_registry' },
+    containerregistry: { DEFAULT: 'gcp_artifact_registry' },
+    cicd: { DEFAULT: 'gcp_cloud_build' },
+    artifactrepository: { DEFAULT: 'gcp_artifact_registry' },
 
-    iot_core: { DEFAULT: 'gcp_iot_registry_legacy' },
-    time_series_database: { DEFAULT: 'gcp_bigquery_timeseries' },
-    event_stream: { DEFAULT: 'gcp_pubsub' },
+    iotcore: { DEFAULT: 'gcp_iot_registry_legacy' },
+    timeseriesdatabase: { DEFAULT: 'gcp_bigquery_timeseries' },
+    eventstream: { DEFAULT: 'gcp_pubsub' },
+    deviceregistry: { DEFAULT: 'gcp_iot_registry_legacy' }, // Legacy/retired
+    iotedgegateway: { DEFAULT: 'gcp_iot_edge' },
+    digitaltwin: { DEFAULT: 'gcp_virtual_twin' },
+    otaupdates: { DEFAULT: 'gcp_iot_jobs' },
 
-    data_warehouse: { DEFAULT: 'gcp_bigquery' },
-    stream_processor: { DEFAULT: 'gcp_dataflow' },
+    datawarehouse: { DEFAULT: 'gcp_bigquery' },
+    streamprocessor: { DEFAULT: 'gcp_dataflow' },
 
-    ml_training: { DEFAULT: 'gcp_vertex_ai_training' },
-    ml_inference: { DEFAULT: 'gcp_vertex_ai_endpoint' },
-    feature_store: { DEFAULT: 'gcp_vertex_feature_store' }
+    mltraining: { DEFAULT: 'gcp_vertex_ai_training' },
+    mlinference: { DEFAULT: 'gcp_vertex_ai_endpoint' },
+    featurestore: { DEFAULT: 'gcp_vertex_feature_store' },
+    modelregistry: { DEFAULT: 'gcp_vertex_model_registry' },
+    experimenttracking: { DEFAULT: 'gcp_vertex_experiments' },
+    mlpipelineorchestration: { DEFAULT: 'gcp_vertex_pipelines' },
+    vectordatabase: { DEFAULT: 'gcp_vertex_vector_search' },
+    modelmonitoring: { DEFAULT: 'gcp_vertex_model_monitoring' }
 };
 
 const AZURE_SERVICE_MAP = {
-    compute_container: { COST_EFFECTIVE: 'az_container_apps', HIGH_PERFORMANCE: 'az_aks' },
-    compute_serverless: { DEFAULT: 'az_functions' },
-    compute_vm: { DEFAULT: 'az_virtual_machines' },
-    compute_batch: { DEFAULT: 'az_batch' },
-    compute_edge: { DEFAULT: 'az_front_door_edge' },
+    computecontainer: { COST_EFFECTIVE: 'az_container_apps', HIGH_PERFORMANCE: 'az_aks' },
+    computeserverless: { DEFAULT: 'az_functions' },
+    computevm: { DEFAULT: 'az_virtual_machines' },
+    computebatch: { DEFAULT: 'az_batch' },
+    computeedge: { DEFAULT: 'az_front_door_edge' },
 
-    relational_database: {
+    relationaldatabase: {
         POSTGRES_COST: 'az_postgresql_flexible',
         POSTGRES_PERF: 'az_postgresql_flexible_ha',
         MYSQL_COST: 'az_mysql_flexible',
         DEFAULT: 'az_postgresql_flexible'
     },
-    nosql_database: { DEFAULT: 'az_cosmosdb' },
+    nosqldatabase: { DEFAULT: 'az_cosmosdb' },
     cache: { DEFAULT: 'az_redis' },
-    search_engine: { DEFAULT: 'az_ai_search' },
-    object_storage: { DEFAULT: 'az_blob_storage' },
-    block_storage: { DEFAULT: 'az_managed_disks' },
-    file_storage: { DEFAULT: 'az_files' },
+    searchengine: { DEFAULT: 'az_ai_search' },
+    objectstorage: { DEFAULT: 'az_blob_storage' },
+    blockstorage: { DEFAULT: 'az_managed_disks' },
+    filestorage: { DEFAULT: 'az_files' },
     backup: { DEFAULT: 'az_recovery_services' },
 
-    load_balancer: { DEFAULT: 'az_application_gateway' },
-    api_gateway: { DEFAULT: 'az_api_management' },
+    loadbalancer: { DEFAULT: 'az_application_gateway' },
+    apigateway: { DEFAULT: 'az_api_management' },
     cdn: { COST_EFFECTIVE: 'az_cdn', HIGH_PERFORMANCE: 'az_front_door', DEFAULT: 'az_cdn' },
     dns: { DEFAULT: 'az_dns' },
-    vpc_networking: { DEFAULT: 'az_virtual_network' },
-    nat_gateway: { DEFAULT: 'az_nat_gateway' },
+    vpcnetworking: { DEFAULT: 'az_virtual_network' },
+    natgateway: { DEFAULT: 'az_nat_gateway' },
     vpn: { DEFAULT: 'az_vpn_gateway' },
-    private_link: { DEFAULT: 'az_private_endpoint' },
-    service_discovery: { DEFAULT: 'az_private_dns' },
-    service_mesh: { DEFAULT: 'az_service_mesh_aks' },
+    privatelink: { DEFAULT: 'az_private_endpoint' },
+    servicediscovery: { DEFAULT: 'az_private_dns' },
+    servicemesh: { DEFAULT: 'az_service_mesh_aks' },
+    websocketgateway: { DEFAULT: 'az_web_pubsub' },
+    globalloadbalancer: { DEFAULT: 'az_front_door' },
 
-    messaging_queue: { DEFAULT: 'az_service_bus' },
-    event_bus: { DEFAULT: 'az_event_grid' },
-    workflow_orchestration: { DEFAULT: 'az_logic_apps' },
+    messagequeue: { DEFAULT: 'az_service_bus' },
+    eventbus: { DEFAULT: 'az_event_grid' },
+    workfloworchestration: { DEFAULT: 'az_logic_apps' },
     notification: { DEFAULT: 'az_notification_hubs' },
+    pushnotificationservice: { DEFAULT: 'az_notification_hubs' },
+    emailnotification: { DEFAULT: 'az_communication_services' },
 
-    identity_auth: { DEFAULT: 'az_ad_b2c' },
-    secrets_management: { DEFAULT: 'az_key_vault_secrets' },
-    key_management: { DEFAULT: 'az_key_vault_keys' },
-    certificate_management: { DEFAULT: 'az_key_vault_certs' },
+    identityauth: { DEFAULT: 'az_ad_b2c' },
+    secretsmanagement: { DEFAULT: 'az_key_vault_secrets' },
+    keymanagement: { DEFAULT: 'az_key_vault_keys' },
+    certificatemanagement: { DEFAULT: 'az_key_vault_certs' },
     waf: { DEFAULT: 'az_waf' },
-    ddos_protection: { DEFAULT: 'az_ddos_protection' },
-    policy_governance: { DEFAULT: 'az_azure_policy' },
+    ddosprotection: { DEFAULT: 'az_ddos_protection' },
+    policygovernance: { DEFAULT: 'az_azure_policy' },
 
     monitoring: { DEFAULT: 'az_monitor' },
     logging: { DEFAULT: 'az_log_analytics' },
     tracing: { DEFAULT: 'az_app_insights' },
     siem: { DEFAULT: 'az_sentinel' },
 
-    container_registry: { DEFAULT: 'az_acr' },
-    ci_cd: { DEFAULT: 'az_devops' },
-    artifact_repository: { DEFAULT: 'az_artifacts' },
+    containerregistry: { DEFAULT: 'az_acr' },
+    cicd: { DEFAULT: 'az_devops' },
+    artifactrepository: { DEFAULT: 'az_artifacts' },
 
-    iot_core: { DEFAULT: 'az_iot_hub' },
-    time_series_database: { DEFAULT: 'az_data_explorer' },
-    event_stream: { DEFAULT: 'az_event_hubs' },
+    iotcore: { DEFAULT: 'az_iot_hub' },
+    timeseriesdatabase: { DEFAULT: 'az_data_explorer' },
+    eventstream: { DEFAULT: 'az_event_hubs' },
+    deviceregistry: { DEFAULT: 'az_iot_hub_dps' },
+    iotedgegateway: { DEFAULT: 'az_iot_edge' },
+    digitaltwin: { DEFAULT: 'az_digital_twins' },
+    otaupdates: { DEFAULT: 'az_device_update' },
 
-    data_warehouse: { DEFAULT: 'az_synapse' },
-    stream_processor: { DEFAULT: 'az_stream_analytics' },
+    datawarehouse: { DEFAULT: 'az_synapse' },
+    streamprocessor: { DEFAULT: 'az_stream_analytics' },
 
-    ml_training: { DEFAULT: 'az_ml_training' },
-    ml_inference: { DEFAULT: 'az_ml_endpoint' },
-    feature_store: { DEFAULT: 'az_ml_feature_store' }
+    mltraining: { DEFAULT: 'az_ml_training' },
+    mlinference: { DEFAULT: 'az_ml_endpoint' },
+    featurestore: { DEFAULT: 'az_ml_feature_store' },
+    modelregistry: { DEFAULT: 'az_ml_registry' },
+    experimenttracking: { DEFAULT: 'az_ml_experiments' },
+    mlpipelineorchestration: { DEFAULT: 'az_ml_pipelines' },
+    vectordatabase: { DEFAULT: 'az_ai_search_vector' },
+    modelmonitoring: { DEFAULT: 'az_monitor' }
 };
 
 const CLOUD_SERVICE_MAP = {
@@ -289,6 +328,16 @@ const SERVICE_DISPLAY_NAMES = {
     aws_sagemaker_endpoint: 'SageMaker Endpoint',
     aws_sagemaker_feature_store: 'SageMaker Feature Store',
 
+    // Additional AWS display names for coverage
+    aws_greengrass: 'IoT Greengrass',
+    aws_iottwinmaker: 'IoT TwinMaker',
+    aws_iot_jobs: 'IoT Device Management',
+    aws_sagemaker_domain: 'SageMaker Domain',
+    aws_sagemaker_pipelines: 'SageMaker Pipelines',
+    aws_sagemaker_model_monitor: 'SageMaker Model Monitor',
+    aws_globalaccelerator: 'Global Accelerator',
+    aws_ses: 'Simple Email Service (SES)',
+
     // GCP
     gcp_cloud_run: 'Cloud Run',
     gcp_gke: 'GKE',
@@ -340,6 +389,17 @@ const SERVICE_DISPLAY_NAMES = {
     gcp_vertex_ai_training: 'Vertex AI Training',
     gcp_vertex_ai_endpoint: 'Vertex AI Endpoint',
     gcp_vertex_feature_store: 'Vertex Feature Store',
+    gcp_firebase: 'Firebase Cloud Messaging',
+    gcp_sendgrid_integration: 'SendGrid (via Marketplace)',
+    gcp_iot_edge: 'IoT Edge (Solution)',
+    gcp_virtual_twin: 'Virtual Twin (Solution)',
+    gcp_iot_jobs: 'IoT Jobs (Solution)',
+    gcp_vertex_model_registry: 'Vertex Model Registry',
+    gcp_vertex_experiments: 'Vertex Experiments',
+    gcp_vertex_pipelines: 'Vertex Pipelines',
+    gcp_vertex_vector_search: 'Vertex AI Vector Search',
+    gcp_vertex_model_monitoring: 'Vertex Model Monitoring',
+
 
     // Azure
     az_container_apps: 'Container Apps',
@@ -394,7 +454,17 @@ const SERVICE_DISPLAY_NAMES = {
     az_stream_analytics: 'Stream Analytics',
     az_ml_training: 'Azure ML Training',
     az_ml_endpoint: 'Azure ML Endpoint',
-    az_ml_feature_store: 'Azure ML Feature Store'
+    az_ml_feature_store: 'Azure ML Feature Store',
+    az_web_pubsub: 'Web PubSub',
+    az_communication_services: 'Communication Services',
+    az_iot_hub_dps: 'Device Provisioning Service',
+    az_iot_edge: 'IoT Edge',
+    az_digital_twins: 'Digital Twins',
+    az_device_update: 'Device Update for IoT Hub',
+    az_ml_registry: 'Azure ML Registry',
+    az_ml_experiments: 'Azure ML Experiments',
+    az_ml_pipelines: 'Azure ML Pipelines',
+    az_ai_search_vector: 'AI Search (Vector)',
 };
 
 function mapServiceToCloud(provider, serviceId, costProfile = 'COST_EFFECTIVE', options = {}) {
@@ -405,7 +475,7 @@ function mapServiceToCloud(provider, serviceId, costProfile = 'COST_EFFECTIVE', 
     if (!mapping) return null;
 
     // Special handling for SQL engines
-    if (serviceId === 'relational_database') {
+    if (serviceId === 'relationaldatabase') {
         const raw = String(options.engine || 'postgres').toLowerCase();
         const engine = raw.includes('mysql') ? 'MYSQL' : 'POSTGRES';
         const perfKey = (String(costProfile).toUpperCase() === 'HIGH_PERFORMANCE') ? 'PERF' : 'COST';
@@ -426,8 +496,8 @@ function getServiceDisplayName(productId) {
 /**
  * Map a list of canonical services to provider products.
  * Accepts:
- * - infraSpec.deployable_services = ['api_gateway','compute_serverless',...]
- * - or infraSpec.service_classes.required_services = [{service_class:'api_gateway'}] legacy shape
+ * - infraSpec.deployable_services = ['apigateway','computeserverless',...]
+ * - or infraSpec.service_classes.required_services = [{service_class:'apigateway'}] legacy shape
  */
 function mapAllServices(provider, infraSpec, costProfile = 'COST_EFFECTIVE') {
     const mapped = [];
@@ -443,7 +513,7 @@ function mapAllServices(provider, infraSpec, costProfile = 'COST_EFFECTIVE') {
 
     for (const serviceId of serviceIds) {
         const cloudProduct = mapServiceToCloud(provider, serviceId, costProfile, {
-            engine: infraSpec?.components?.[serviceId]?.engine || infraSpec?.components?.relational_database?.engine
+            engine: infraSpec?.components?.[serviceId]?.engine || infraSpec?.components?.relationaldatabase?.engine
         });
 
         if (!cloudProduct) continue;

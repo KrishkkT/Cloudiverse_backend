@@ -11,6 +11,7 @@ const ARCHITECTURE_PATTERNS = require('../catalog/patterns/index');
 const { validateServiceSelection } = require('../catalog/terraform/utils');
 const integrityService = require('../services/core/integrityService');
 const terraformService = require('../services/infrastructure/terraformService');
+const terraformExecutor = require('../services/infrastructure/terraformExecutor');
 const costResultModel = require('../services/cost/costResultModel');
 const canonicalValidator = require('../services/core/canonicalValidator');
 const { generateServiceDisplay, groupServicesByCategory, getCategoryDisplayName, SERVICE_DISPLAY } = require('../services/shared/serviceDisplay');
@@ -3074,18 +3075,21 @@ router.post('/architecture', authMiddleware, async (req, res) => {
             console.log('[FIX 1] Using stored canonical architecture from Step 2');
             canonicalArchitecture = infraSpec.canonical_architecture;
         } else {
-            // Fallback: reconstruct from infraSpec services (legacy compatibility)
+            // Fallback: reconstruct from infraSpec services (legacy compatibility or diagram data recovery)
             console.warn('[FIX 1] No stored canonical architecture - reconstructing from infraSpec');
+
+            const sourceServices = infraSpec.service_classes?.required_services || infraSpec.services || [];
+
             canonicalArchitecture = {
                 pattern: infraSpec.architecture_pattern || infraSpec.service_classes?.pattern,
                 pattern_name: infraSpec.service_classes?.pattern_name || 'Unknown Pattern',
-                services: (infraSpec.service_classes?.required_services || []).map(s => ({
-                    name: s.service_class,
-                    canonical_type: s.service_class,
+                services: sourceServices.map(s => ({
+                    name: s.name || s.service_class || s.canonical_type,
+                    canonical_type: s.canonical_type || s.service_class,
                     description: s.description,
-                    category: getCategoryForService(s.service_class)
+                    category: s.category || getCategoryForService(s.service_class || s.canonical_type)
                 })),
-                total_services: infraSpec.service_classes?.required_services?.length || 0
+                total_services: sourceServices.length || 0
             };
         }
 
@@ -3114,11 +3118,21 @@ router.post('/architecture', authMiddleware, async (req, res) => {
             );
         }
 
+
+        // Load full catalog to find remaining services
+        const servicesCatalog = require('../catalog/new_services.json');
+        const allServices = servicesCatalog.services || [];
+
+        // precise filtering
+        const includedIds = new Set(services.map(s => s.canonical_type || s.name));
+        const remainingServices = allServices.filter(s => !includedIds.has(s.service_id) && s.terraform_supported);
+
         res.json({
             success: true,
             data: {
                 architecture: providerArchitecture,
                 services,
+                remaining_services: remainingServices,
                 notes,
                 provider,
                 profile,
@@ -3159,13 +3173,24 @@ router.post('/terraform', authMiddleware, async (req, res) => {
         }
 
         // 🔒 INVARIANT CHECK: Step 2 region resolution must complete
+        // 🔒 INVARIANT CHECK: Step 2 region resolution
+        // 🔥 FIX: Default to India if region is missing (User Requirement)
         if (!infraSpec?.region?.resolved_region && !requirements?.region?.primary_region) {
-            return res.status(400).json({
-                error: 'Step-to-Step Invariant Violation',
-                message: 'Step 5 requires Step 2 region resolution. infraSpec.region.resolved_region must exist.',
-                step_required: 'Step 2 (Infrastructure Specification)',
-                current_step: 'Step 5 (Terraform Generation)'
-            });
+            console.warn('[TERRAFORM] Region not resolved in Step 2. Defaulting to India.');
+
+            if (!infraSpec.region) infraSpec.region = {};
+
+            const providerKey = provider.toLowerCase();
+            if (providerKey === 'aws') infraSpec.region.resolved_region = 'ap-south-1';
+            else if (providerKey === 'gcp') infraSpec.region.resolved_region = 'asia-south1';
+            else if (providerKey === 'azure') infraSpec.region.resolved_region = 'centralindia';
+            else infraSpec.region.resolved_region = 'ap-south-1'; // Default Fallback
+
+            console.log(`[TERRAFORM] Auto-resolved region to: ${infraSpec.region.resolved_region}`);
+        } else if (!infraSpec.region.resolved_region && requirements?.region?.primary_region) {
+            // Use requirements region if available
+            if (!infraSpec.region) infraSpec.region = {};
+            infraSpec.region.resolved_region = requirements.region.primary_region;
         }
 
         console.log(`[INVARIANT CHECK] ✓ Step 3 completed: sizing.tier=${infraSpec.sizing.tier}`);
@@ -3190,25 +3215,18 @@ router.post('/terraform', authMiddleware, async (req, res) => {
                 const serviceName = typeof service === 'string' ? service :
                     (service?.service_class || service?.name || service?.canonical_type || 'unknown');
 
-                // Normalize service name for module lookup
-                const moduleFolderName = terraformServiceLocal.getModuleFolderName(serviceName);
-                const lookupName = moduleFolderName === 'relational_db' ? 'relational_database' :
-                    moduleFolderName === 'auth' ? 'identity_auth' :
-                        moduleFolderName === 'ml_inference' ? 'ml_inference_service' :
-                            moduleFolderName === 'websocket' ? 'websocket_gateway' :
-                                moduleFolderName === 'serverless_compute' ? 'serverless_compute' :
-                                    moduleFolderName === 'analytical_db' ? 'analytical_database' :
-                                        moduleFolderName === 'push_notification' ? 'push_notification_service' :
-                                            moduleFolderName;
+                // Normalize service name for module lookup using SSOT from generator
+                const moduleFolderName = terraformServiceLocal.getModuleName(serviceName);
 
-                const module = terraformModules.getModule(lookupName, providerLower);
+                // Check if this service (or its canonical type) has a module
+                const module = terraformModules.getModule(serviceName, providerLower);
                 if (module) {
                     // 🔥 FIX: Push the original service (string or objectified form)
                     availableServices.push(serviceName);
                 } else {
                     missingModules.push({
                         service: serviceName,
-                        normalized: lookupName,
+                        normalized: moduleFolderName,
                         provider: providerLower,
                         reason: 'MODULE_NOT_IMPLEMENTED'
                     });
@@ -3486,11 +3504,259 @@ This configuration uses **local state** (\`terraform.tfstate\`). For team collab
 
         archive.finalize();
 
-    } catch (err) {
-        console.error("Export error:", err);
-        res.status(500).json({ error: "Failed to export Terraform code" });
+    } catch (error) {
+        console.error('[EXPORT] Error:', error);
+        res.status(500).json({ error: 'Failed to export Terraform' });
     }
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// DEPLOYMENT V2 ENDPOINTS (Split Flow)
+// ═══════════════════════════════════════════════════════════════════
+
+// Step 6: Trigger Infrastructure Provisioning (Terraform Apply)
+router.post('/deploy/terraform', authMiddleware, async (req, res) => {
+    try {
+        const { workspace_id, provider } = req.body;
+        console.log(`[DEPLOY:TF] Starting job for workspace ${workspace_id}`);
+
+        // Fetch workspace to get actual services and connection data
+        const wsResult = await pool.query(
+            `SELECT w.state_json 
+             FROM workspaces w 
+             JOIN projects p ON w.project_id = p.id 
+             WHERE w.id = $1 AND p.owner_id = $2`,
+            [workspace_id, req.user.id]
+        );
+
+        if (!wsResult.rows.length) {
+            return res.status(404).json({ error: 'Workspace not found' });
+        }
+
+        const stateJson = wsResult.rows[0].state_json || {};
+        const infraSpec = stateJson.infraSpec || {};
+        const connectionData = stateJson.connection || {};
+
+        // Extract deployable services
+        const deployableServices = (
+            infraSpec.canonical_architecture?.deployable_services ||
+            infraSpec.services ||
+            []
+        ).filter(s => s.terraform_supported !== false);
+
+        console.log(`[DEPLOY:TF] Deploying ${deployableServices.length} services for ${provider}`);
+
+        const job = terraformExecutor.createJob('terraform', workspace_id, { provider, services: deployableServices });
+
+        // ─── REAL TERRAFORM EXECUTION ───────────────────────────────────────────
+        if (terraformExecutor.isRealExecutionEnabled()) {
+            console.log('[DEPLOY:TF] ⚡ REAL TERRAFORM EXECUTION ENABLED');
+
+            // Verify cloud connection exists
+            if (!connectionData.status || connectionData.status !== 'connected') {
+                return res.status(400).json({
+                    error: 'Cloud connection required. Please connect to your cloud provider first.',
+                    connectionRequired: true
+                });
+            }
+
+            // ⚠️ HARD GATE: Cloud Identity Contract Enforcement
+            const providerLower = provider.toLowerCase();
+            console.log(`[DEPLOY:TF] Verifying identity contract for ${providerLower}...`);
+
+            if (providerLower === 'azure') {
+                const subId = connectionData.subscription_id || connectionData.account_id;
+                if (!subId || subId === "YOUR_AZURE_SUBSCRIPTION_ID") {
+                    console.error('[DEPLOY:TF] ❌ Azure contract failed: Missing subscription_id', connectionData);
+                    return res.status(400).json({
+                        error: 'Azure connection incomplete: Missing Subscription context.',
+                        details: 'Please re-connect your Azure account to select a subscription.',
+                        azureSubscriptionMissing: true
+                    });
+                }
+            } else if (providerLower === 'aws') {
+                if (!connectionData.role_arn || !connectionData.external_id) {
+                    console.error('[DEPLOY:TF] ❌ AWS contract failed: Missing role_arn/external_id', connectionData);
+                    return res.status(400).json({
+                        error: 'AWS connection incomplete: Missing Role ARN or External ID.',
+                        details: 'Please complete the AWS Trust Relationship setup first.'
+                    });
+                }
+            } else if (providerLower === 'gcp') {
+                const projectId = connectionData.project_id || connectionData.GOOGLE_PROJECT;
+                if (!projectId || projectId === "YOUR_GCP_PROJECT_ID") {
+                    console.error('[DEPLOY:TF] ❌ GCP contract failed: Missing project_id', connectionData);
+                    return res.status(400).json({
+                        error: 'GCP connection incomplete: Missing Project ID.',
+                        details: 'Please re-connect your GCP account to resolve the project context.'
+                    });
+                }
+            }
+
+            console.log(`[DEPLOY:TF] ✅ Identity contract satisfied for ${providerLower}`);
+
+            // Generate fresh Terraform files
+            const terraformGenerator = require('../services/infrastructure/terraformGeneratorV2');
+
+            // FIX: Normalize Region (Handle 'ap-south1' typo) at source
+            let region = infraSpec.resolved_region?.resolved || infraSpec.region?.logical || 'ap-south-1';
+            if (region && /^[a-z]+-[a-z]+\d$/.test(region) === false && region.match(/[a-z]+[a-z]+\d/)) {
+                region = region.replace(/([a-z]+)-?([a-z]+)(\d)/, "$1-$2-$3");
+            }
+            console.log(`[DEPLOY:TF] Using normalized region: ${region}`);
+            const projectName = stateJson.projectData?.name || 'cloudiverse-project';
+
+            console.log('[DEPLOY:TF] Generating Terraform files for real execution...');
+            const tfResult = await terraformGenerator.generateTerraform(
+                infraSpec.canonical_architecture,
+                provider,
+                region,
+                projectName,
+                { connectionData }
+            );
+
+            // Start async real execution
+            terraformExecutor.startRealTerraformExecution(
+                job.id,
+                provider,
+                workspace_id,
+                tfResult.files,  // Pass the generated files object
+                connectionData   // Pass cloud credentials
+            );
+
+            console.log('[DEPLOY:TF] Real Terraform execution started');
+        } else {
+            // ─── SIMULATION MODE ────────────────────────────────────────────────────
+            console.log('[DEPLOY:TF] 🔄 Running in SIMULATION mode');
+            terraformExecutor.startTerraformSimulation(job.id, provider, deployableServices);
+        }
+
+        res.json({
+            success: true,
+            jobId: job.id,
+            mode: terraformExecutor.isRealExecutionEnabled() ? 'real' : 'simulation'
+        });
+    } catch (error) {
+        console.error('[DEPLOY:TF] Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Step 7: Trigger Application Deployment
+router.post('/deploy/resources', authMiddleware, async (req, res) => {
+    try {
+        const { workspace_id, provider, source_type, repo_url, docker_image } = req.body;
+        console.log(`[DEPLOY:APP] Starting app deploy for ${workspace_id}`);
+
+        const target = source_type === 'github' ? repo_url : docker_image;
+        const job = terraformExecutor.createJob('app', workspace_id, { provider, source_type, target });
+
+        // Start async
+        terraformExecutor.startAppDeploySimulation(job.id, source_type, target);
+
+        res.json({ success: true, jobId: job.id });
+    } catch (error) {
+        console.error('[DEPLOY:APP] Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Poll Status
+router.get('/deploy/:jobId/status', authMiddleware, (req, res) => {
+    const job = terraformExecutor.getJob(req.params.jobId);
+    if (!job) return res.status(404).json({ error: "Job not found" });
+    res.json(job);
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// TERRAFORM DESTROY (Pro Plan Only)
+// ═══════════════════════════════════════════════════════════════════
+router.post('/deploy/terraform/destroy', authMiddleware, async (req, res) => {
+    try {
+        const { workspace_id, provider } = req.body;
+        console.log(`[DESTROY:TF] Starting destroy job for workspace ${workspace_id}`);
+
+        // 🔒 PRO PLAN CHECK
+        const userResult = await pool.query(
+            `SELECT u.id, s.plan_id FROM users u 
+             LEFT JOIN subscriptions s ON u.id = s.user_id AND s.status = 'active'
+             WHERE u.id = $1`,
+            [req.user.id]
+        );
+
+        const planId = userResult.rows[0]?.plan_id;
+        if (planId !== 'pro' && planId !== 'enterprise') {
+            return res.status(403).json({
+                error: 'Destroy Infrastructure is a Pro feature',
+                upgradeRequired: true,
+                requiredPlan: 'pro'
+            });
+        }
+
+        // Fetch workspace context
+        const wsResult = await pool.query(
+            `SELECT w.state_json 
+             FROM workspaces w 
+             JOIN projects p ON w.project_id = p.id 
+             WHERE w.id = $1 AND p.owner_id = $2`,
+            [workspace_id, req.user.id]
+        );
+
+        if (!wsResult.rows.length) {
+            return res.status(404).json({ error: 'Workspace not found' });
+        }
+
+        const stateJson = wsResult.rows[0].state_json || {};
+        const connectionData = stateJson.connection || {};
+        const infraSpec = stateJson.infraSpec || {};
+
+        // Verify cloud connection
+        if (!connectionData.status || connectionData.status !== 'connected') {
+            return res.status(400).json({
+                error: 'Cloud connection required for destroy operation.',
+                connectionRequired: true
+            });
+        }
+
+        // Create destroy job
+        const job = terraformExecutor.createJob('destroy', workspace_id, { provider });
+
+        if (terraformExecutor.isRealExecutionEnabled()) {
+            console.log('[DESTROY:TF] ⚡ REAL TERRAFORM DESTROY ENABLED');
+
+            // Get region
+            let region = infraSpec.resolved_region?.resolved || infraSpec.region?.logical || 'ap-south-1';
+            if (region && /^[a-z]+-[a-z]+\d$/.test(region) === false && region.match(/[a-z]+[a-z]+\d/)) {
+                region = region.replace(/([a-z]+)-?([a-z]+)(\d)/, "$1-$2-$3");
+            }
+
+            // Start destroy execution
+            terraformExecutor.startTerraformDestroy(
+                job.id,
+                provider,
+                workspace_id,
+                connectionData,
+                region
+            );
+
+            console.log('[DESTROY:TF] Terraform destroy started');
+        } else {
+            // Simulation mode for destroy
+            terraformExecutor.startDestroySimulation(job.id, provider);
+        }
+
+        res.json({
+            success: true,
+            jobId: job.id,
+            mode: terraformExecutor.isRealExecutionEnabled() ? 'real' : 'simulation'
+        });
+    } catch (error) {
+        console.error('[DESTROY:TF] Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+module.exports = router;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AI SERVICE SUGGESTIONS ENDPOINT
@@ -3624,5 +3890,37 @@ function generateFallbackSuggestions(domains, selectedServices) {
 
     return suggestions.slice(0, 5);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DEPLOYMENT V2 ENDPOINTS (Split Flow)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// [REMOVED DUPLICATE DEPLOY/TERRAFORM ROUTE]
+
+// Step 7: Trigger Application Deployment
+router.post('/deploy/resources', authMiddleware, async (req, res) => {
+    try {
+        const { workspace_id, provider, source_type, repo_url, docker_image, branch } = req.body;
+        console.log(`[DEPLOY:APP] Starting app deploy for ${workspace_id} (branch: ${branch})`);
+
+        const target = source_type === 'github' ? repo_url : docker_image;
+        const job = terraformExecutor.createJob('app', workspace_id, { provider, source_type, target, branch });
+
+        // Start async
+        terraformExecutor.startAppDeploySimulation(job.id, source_type, target, branch);
+
+        res.json({ success: true, jobId: job.id });
+    } catch (error) {
+        console.error('[DEPLOY:APP] Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Poll Job Status
+router.get('/deploy/:jobId/status', authMiddleware, (req, res) => {
+    const job = terraformExecutor.getJob(req.params.jobId);
+    if (!job) return res.status(404).json({ error: "Job not found" });
+    res.json(job);
+});
 
 module.exports = router;

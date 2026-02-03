@@ -22,12 +22,12 @@ const CAPABILITY_TO_SERVICE = {
 
   document_storage: {
     required: ['objectstorage'],
-    optional: ['cdn']
+    optional: ['cdn', 'blockstorage', 'filestorage']
   },
 
   static_content: {
     required: ['objectstorage', 'cdn', 'dns'],
-    optional: ['waf', 'certificatemanagement']
+    optional: ['waf', 'certificatemanagement', 'globalloadbalancer']
   },
 
   // Identity & roles
@@ -43,20 +43,40 @@ const CAPABILITY_TO_SERVICE = {
 
   // API & compute
   api_backend: {
-    required: ['apigateway', 'computeserverless'],
-    optional: ['logging', 'monitoring', 'tracing', 'waf']
+    required: ['apigateway', 'computeserverless', 'loadbalancer'],
+    optional: ['logging', 'monitoring', 'tracing', 'waf', 'servicediscovery']
+  },
+
+  compute_heavy: {
+    required: ['computevm', 'loadbalancer'],
+    optional: ['computebatch', 'blockstorage']
+  },
+
+  batch_processing: {
+    required: ['computebatch', 'objectstorage'],
+    optional: ['messagequeue']
+  },
+
+  global_delivery: {
+    required: ['globalloadbalancer', 'cdn'],
+    optional: ['computeedge', 'waf']
   },
 
   realtime: {
     // Keep it generic: realtime is usually eventing + compute.
     // If you later add websocket_gateway to catalog, add it here.
     required: ['eventbus', 'computeserverless'],
-    optional: ['messagequeue', 'cache']
+    optional: ['messagequeue', 'cache', 'websocketgateway']
   },
 
   scheduled_jobs: {
     required: ['workfloworchestration', 'computeserverless'],
     optional: ['messagequeue']
+  },
+
+  microservices_governance: {
+    required: ['servicediscovery', 'servicemesh'],
+    optional: ['tracing', 'monitoring']
   },
 
   // Messaging/events
@@ -73,7 +93,7 @@ const CAPABILITY_TO_SERVICE = {
   // Search
   search: {
     required: ['searchengine'],
-    optional: ['cache']
+    optional: ['cache', 'vectordatabase']
   },
 
   // Payments
@@ -85,7 +105,17 @@ const CAPABILITY_TO_SERVICE = {
   // Ops
   observability: {
     required: ['logging', 'monitoring'],
-    optional: ['tracing', 'siem']
+    optional: ['tracing', 'siem', 'modelmonitoring']
+  },
+
+  notifications_extended: {
+    required: ['notification'],
+    optional: ['emailnotification', 'pushnotificationservice']
+  },
+
+  user_engagement: {
+    required: ['pushnotificationservice', 'emailnotification'],
+    optional: ['analytics']
   },
 
   devops_automation: {
@@ -105,19 +135,29 @@ const CAPABILITY_TO_SERVICE = {
   },
 
   private_networking: {
-    required: ['vpcnetworking', 'privatelink'],
-    optional: ['vpn', 'natgateway']
+    required: ['vpcnetworking', 'privatelink', 'natgateway'],
+    optional: ['vpn', 'ddosprotection']
   },
 
   // Domains
   domain_iot: {
     required: ['iotcore', 'eventstream', 'timeseriesdatabase'],
-    optional: ['streamprocessor', 'objectstorage']
+    optional: ['streamprocessor', 'objectstorage', 'deviceregistry', 'digitaltwin', 'iotedgegateway', 'otaupdates']
+  },
+
+  iot_management: {
+    required: ['deviceregistry', 'otaupdates'],
+    optional: ['digitaltwin', 'iotedgegateway']
   },
 
   domain_ml_heavy: {
     required: ['mlinference'],  // 🔥 FIX: Only inference required, training is optional for LLM API apps
-    optional: ['mltraining', 'featurestore', 'datawarehouse', 'objectstorage', 'vectordatabase', 'cache']
+    optional: ['mltraining', 'featurestore', 'datawarehouse', 'objectstorage', 'vectordatabase', 'cache', 'mlpipelineorchestration', 'modelregistry', 'experimenttracking', 'modelmonitoring']
+  },
+
+  ml_ops: {
+    required: ['modelregistry', 'experimenttracking', 'mlpipelineorchestration'],
+    optional: ['modelmonitoring', 'featurestore']
   },
 
   domain_analytics: {

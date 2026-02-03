@@ -97,7 +97,35 @@ pool.query('SELECT NOW()', async (err, res) => {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
-      -- 4. Create Indexes for Analytics Tables
+      -- 4. Create deployments table for Application Deployment Phase
+      CREATE TABLE IF NOT EXISTS deployments (
+          id SERIAL PRIMARY KEY,
+          workspace_id INTEGER REFERENCES workspaces(id),
+          source_type VARCHAR(20) NOT NULL, -- 'github' | 'docker'
+          status VARCHAR(20) DEFAULT 'pending', -- pending, running, success, failed
+          url TEXT,
+          commit_hash VARCHAR(100),
+          image_tag VARCHAR(100),
+          logs JSONB DEFAULT '[]',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- 5. Create GitHub Installations table (now used for OAuth)
+      CREATE TABLE IF NOT EXISTS github_installations (
+          id SERIAL PRIMARY KEY,
+          user_id VARCHAR(255) NOT NULL UNIQUE,
+          installation_id VARCHAR(255), -- Keep for backward compatibility if needed, but make nullable
+          access_token TEXT,
+          refresh_token TEXT,
+          expires_at TIMESTAMP,
+          account_name VARCHAR(255),
+          account_avatar TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- 6. Create Indexes for Analytics Tables
       CREATE INDEX IF NOT EXISTS idx_templates_category ON infrastructure_templates(category);
       CREATE INDEX IF NOT EXISTS idx_cost_history_workspace ON cost_history(workspace_id);
       CREATE INDEX IF NOT EXISTS idx_cost_history_provider ON cost_history(provider);
@@ -162,6 +190,35 @@ pool.query('SELECT NOW()', async (err, res) => {
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='workspaces' AND column_name='save_count') THEN
               ALTER TABLE workspaces ADD COLUMN save_count INTEGER DEFAULT 0;
           END IF;
+          -- REPAIR GITHUB_INSTALLATIONS TABLE
+          IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='github_installations') THEN
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='github_installations' AND column_name='access_token') THEN
+                  ALTER TABLE github_installations ADD COLUMN access_token TEXT;
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='github_installations' AND column_name='refresh_token') THEN
+                  ALTER TABLE github_installations ADD COLUMN refresh_token TEXT;
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='github_installations' AND column_name='expires_at') THEN
+                  ALTER TABLE github_installations ADD COLUMN expires_at TIMESTAMP;
+              END IF;
+              -- Make installation_id nullable if it was required
+              ALTER TABLE github_installations ALTER COLUMN installation_id DROP NOT NULL;
+              -- Ensure UNIQUE(user_id) exists specifically for user_id
+              IF NOT EXISTS (
+                  SELECT 1 
+                  FROM information_schema.table_constraints tc 
+                  JOIN information_schema.key_column_usage kcu 
+                    ON tc.constraint_name = kcu.constraint_name 
+                    AND tc.table_schema = kcu.table_schema
+                  WHERE tc.constraint_type = 'UNIQUE' 
+                    AND tc.table_name = 'github_installations' 
+                    AND kcu.column_name = 'user_id'
+              ) THEN
+                  -- Optional: Clean up duplicates if they exists before adding constraint
+                  -- DELETE FROM github_installations WHERE id NOT IN (SELECT MIN(id) FROM github_installations GROUP BY user_id);
+                  ALTER TABLE github_installations ADD CONSTRAINT github_installations_user_id_key UNIQUE (user_id);
+              END IF;
+          END IF;
       END $$;
     `;
 
@@ -200,6 +257,7 @@ const projectRoutes = require('./routes/projects'); // New import
 const billingRoutes = require('./routes/billing'); // New import
 const settingsRoutes = require('./routes/settings'); // New import
 const cloudRoutes = require('./routes/cloud'); // New import
+const githubRoutes = require('./routes/github');
 const aiRoutes = require('./routes/ai');
 
 // Routes
@@ -224,6 +282,8 @@ app.use('/api/projects', projectRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/cloud', cloudRoutes);
+app.use('/api/github', githubRoutes);
+app.use('/api/deploy', require('./routes/deploy')); // New Deployment Route
 app.use('/api/ai', aiRoutes);
 
 app.use('/api', require('./routes/feedback'));

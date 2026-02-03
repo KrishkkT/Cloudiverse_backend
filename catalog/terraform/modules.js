@@ -372,7 +372,8 @@ function module_object_storage(provider) {
     return {
       mainTf: `
 resource "aws_s3_bucket" "main" {
-  bucket = "\${var.project_name}-storage"
+  bucket_prefix = "\${var.project_name}-"
+  force_destroy = true
   tags   = { Name = "\${var.project_name}-storage" }
 }
 

@@ -1342,6 +1342,7 @@ class PatternResolver {
 
       // 🆕 NEW: Split services for different purposes
       architecture_services: architecture_services,   // All services (diagram, cost, scoring)
+      services: architecture_services,                // 🔥 COMPATIBILITY: Alias for architectureDiagramService
       deployable_services: deployable_services,       // Only terraform_supported=true (Terraform)
       logical_services: logical_services,             // Architecture-only (no Terraform)
 
@@ -1719,6 +1720,30 @@ class PatternResolver {
       const target = services.find(s => s.id === action.serviceId);
       if (target) {
         target.state = 'OPTIONAL';
+      }
+    }
+    else if (action.type === 'ADD_SERVICE') {
+      const existing = services.find(s => s.canonical_type === action.serviceId || s.id === action.serviceId);
+      if (existing) {
+        existing.state = 'OPTIONAL';
+      } else {
+        // New service from catalog
+        const def = getServiceDefinition(action.serviceId);
+        if (def) {
+          services.push({
+            id: `${action.serviceId}_user_${Date.now()}`,
+            canonical_type: action.serviceId,
+            category: def.category || 'other', // Fallback
+            description: def.description,
+            kind: 'deployable',
+            pricing_class: def.pricing_class || 'DIRECT',
+            state: 'OPTIONAL',
+            terraform_supported: true,
+            pattern_enforced: false
+          });
+        } else {
+          console.warn(`[RECONCILE] Unknown service ID for ADD_SERVICE: ${action.serviceId}`);
+        }
       }
     }
 

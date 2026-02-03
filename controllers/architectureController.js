@@ -56,6 +56,26 @@ class ArchitectureController {
             return res.status(500).json({ error: 'Internal server error' });
         }
     }
+
+    /**
+     * AI-Driven Validation of Completeness
+     */
+    async validateCompleteness(req, res) {
+        try {
+            const { description, current_services, catalog } = req.body;
+            if (!description || !current_services) {
+                return res.status(400).json({ error: 'Missing description or current_services' });
+            }
+
+            const validation = await aiService.validateServiceCompleteness(description, current_services, catalog || {});
+            return res.json(validation);
+
+        } catch (error) {
+            console.error('[ArchController] Validation error:', error);
+            // Fallback to empty suggestions on AI failure
+            return res.json({ suggestions: [] });
+        }
+    }
 }
 
 module.exports = new ArchitectureController();
