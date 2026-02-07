@@ -27,7 +27,14 @@ router.post('/save', authMiddleware, async (req, res) => {
     if (currentWorkspaceId) {
       const updateRes = await pool.query(
         `UPDATE workspaces 
-                 SET step = $1, state_json = $2, name = COALESCE($3, name), updated_at = NOW(), save_count = save_count + 1
+                 SET step = $1, 
+                     state_json = (
+                       -- Merge incoming state with preserved infra_outputs
+                       $2::jsonb || jsonb_build_object('infra_outputs', COALESCE(state_json->'infra_outputs', 'null'::jsonb))
+                     ),
+                     name = COALESCE($3, name), 
+                     updated_at = NOW(), 
+                     save_count = save_count + 1
                  WHERE id = $4 
                  RETURNING id, project_id, updated_at`,
         [step, state, name, currentWorkspaceId]

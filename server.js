@@ -34,8 +34,24 @@ pool.query('SELECT NOW()', async (err, res) => {
           step VARCHAR(50) NOT NULL,
           state_json JSONB NOT NULL,
           save_count INTEGER DEFAULT 0,
+          deployment_status VARCHAR(20) DEFAULT 'DRAFT', -- DRAFT, INFRA_READY, DEPLOYED, DESTROYING, DESTROYED
+          deployed_at TIMESTAMP,
+          deployment_history JSONB DEFAULT '[]'::jsonb, -- Audit log of deploy/destroy actions
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      -- Add columns if they don't exist (for existing databases)
+      ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS deployment_status VARCHAR(20) DEFAULT 'DRAFT';
+      ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS deployed_at TIMESTAMP;
+      ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS deployment_history JSONB DEFAULT '[]'::jsonb;
+
+      -- Auto-detect existing deployed workspaces (one-time migration)
+      UPDATE workspaces 
+      SET deployment_status = 'DEPLOYED', 
+          deployed_at = COALESCE(deployed_at, updated_at)
+      WHERE deployment_status = 'DRAFT' 
+        AND state_json->'infra_outputs'->'deployment_target' IS NOT NULL
+        AND state_json->'infra_outputs'->'deployment_target'->>'type' IS NOT NULL;
 
       CREATE TABLE IF NOT EXISTS password_resets (
           email VARCHAR(255) PRIMARY KEY,

@@ -220,6 +220,23 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
     const conceptualServices = [];
 
     normalizedServices.forEach(svcId => {
+        // 🔥 FIX: Check for explicit user exclusion (User Disabled)
+        // We need to look up the original object if possible, or trust that normalizedServices 
+        // should have been filtered. IF normalizedServices implies we lost the metadata, 
+        // we must rely on the upstream filter. 
+        // HOWEVER, we can check if the input `services` array had state.
+
+        // Lookup the original service object from the input array to check state
+        const originalSvc = services.find(s => {
+            if (typeof s === 'string') return s === svcId;
+            return (s.service_id === svcId || s.service_class === svcId || s.name === svcId || s.canonical_type === svcId);
+        });
+
+        if (originalSvc && (originalSvc.state === 'USER_DISABLED' || originalSvc.state === 'EXCLUDED')) {
+            console.log(`[TERRAFORM V2] 🚫 Skipping User-Disabled Service: ${svcId}`);
+            return;
+        }
+
         const serviceDef = catalog[svcId];
 
         // 1. Must exist in catalog

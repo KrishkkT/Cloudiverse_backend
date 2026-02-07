@@ -2,16 +2,23 @@ const { STSClient, AssumeRoleCommand } = require("@aws-sdk/client-sts");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const { CloudFrontClient, CreateInvalidationCommand } = require("@aws-sdk/client-cloudfront");
 const { ECSClient, RegisterTaskDefinitionCommand, UpdateServiceCommand, DescribeTaskDefinitionCommand } = require("@aws-sdk/client-ecs");
+const { CodeBuildClient, StartBuildCommand, BatchGetBuildsCommand } = require("@aws-sdk/client-codebuild");
+const { Storage } = require('@google-cloud/storage');
+const { BlobServiceClient, BlockBlobClient } = require("@azure/storage-blob");
+const { ClientSecretCredential } = require("@azure/identity");
+const { ContainerAppsAPIClient } = require("@azure/arm-appcontainers");
+const { ContainerRegistryManagementClient } = require("@azure/arm-containerregistry");
+const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
 const pool = require('../../config/db');
-const { ClientSecretCredential } = require("@azure/identity");
-const { ContainerAppsAPIClient } = require("@azure/arm-appcontainers");
-const { google } = require('googleapis');
 const githubService = require('./githubService');
+const archiver = require('archiver');
+const axios = require('axios');
+const { detectProjectType } = require('../../utils/projectDetector');
 
 // Helper to create AWS Clients with Assumed Role
 const createAwsClient = async (ClientClass, region, roleArn, externalId) => {
@@ -54,58 +61,6 @@ const createDeployment = async (workspaceId, sourceType, config) => {
     return result.rows[0].id;
 };
 
-// Helper: Docker Build and Push
-async function dockerBuildAndPush(deploymentId, repoPath, workspaceId) {
-    const isDockerAvailable = await checkDocker();
-    if (!isDockerAvailable) {
-        throw new Error("Docker is not installed or not running on the server. Please install Docker Desktop to use container-based deployments.");
-    }
-
-    const ecrRegistry = `${process.env.AWS_ACCOUNT_ID}.dkr.ecr.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com`;
-    const repoName = `cloudiverse-ws-${workspaceId}`;
-    const imageTag = `v${Date.now()}`;
-    const fullImageUri = `${ecrRegistry}/${repoName}:${imageTag}`;
-
-    await appendLog(deploymentId, `🐳 Starting Docker build: ${fullImageUri}`);
-
-    // 1. ECR Login
-    await appendLog(deploymentId, "🔑 Logging into Amazon ECR...");
-    try {
-        const loginCmd = `aws ecr get-login-password --region ${process.env.AWS_REGION || 'ap-south-1'} | docker login --username AWS --password-stdin ${ecrRegistry}`;
-        await execPromise(loginCmd);
-    } catch (err) {
-        throw new Error(`ECR Login failed: ${err.message}`);
-    }
-
-    // 2. Ensure ECR Repo exists (Cloudiverse-owned)
-    await appendLog(deploymentId, `📦 Ensuring ECR repository '${repoName}' exists...`);
-    try {
-        await execPromise(`aws ecr describe-repositories --repository-names ${repoName} || aws ecr create-repository --repository-name ${repoName}`);
-    } catch (err) {
-        // Ignore if error is just repository already exists
-    }
-
-    // 3. Docker Build (BuildKit for amd64)
-    await appendLog(deploymentId, "🏗️ Building Docker image (linux/amd64)...");
-    try {
-        // Use buildx if available for cross-platform, else standard build
-        await execPromise(`docker build --platform linux/amd64 -t ${repoName} .`, { cwd: repoPath });
-    } catch (err) {
-        throw { ...DEPLOY_ERRORS.BUILD_FAILED, details: err.message };
-    }
-
-    // 4. Tag & Push
-    await appendLog(deploymentId, "🚀 Pushing image to registry...");
-    try {
-        await execPromise(`docker tag ${repoName} ${fullImageUri}`);
-        await execPromise(`docker push ${fullImageUri}`);
-    } catch (err) {
-        throw new Error(`Docker push failed: ${err.message}`);
-    }
-
-    await appendLog(deploymentId, "✅ Docker image pushed successfully.");
-    return fullImageUri;
-}
 
 // Helper: Target Provider Update (ECS, AppService, CloudRun, ContainerApps)
 async function deployImageToProvider(deploymentId, workspace, conn, provider, image) {
@@ -129,7 +84,6 @@ async function deployImageToProvider(deploymentId, workspace, conn, provider, im
     const cc = infraOutputs.computecontainer || {};
 
     if (provider === 'aws') {
-        const { ECSClient, DescribeTaskDefinitionCommand, RegisterTaskDefinitionCommand, UpdateServiceCommand, DescribeServicesCommand } = require("@aws-sdk/client-ecs");
         const { role_arn, external_id } = conn;
 
         const clusterName = cc.ecs_cluster_name?.value || cc.cluster_name?.value || cc.cluster_name;
@@ -190,37 +144,54 @@ async function deployImageToProvider(deploymentId, workspace, conn, provider, im
         return rawUrl ? (rawUrl.startsWith('http') ? rawUrl : `http://${rawUrl}`) : null;
     }
 
-    if (provider === 'azure') {
-        const { ContainerAppsAPIClient } = require("@azure/arm-appcontainers");
-        const { ClientSecretCredential } = require("@azure/identity");
-
+    if (provider === 'azure' || provider === 'azurerm') {
         const { client_id, client_secret, tenant_id, subscription_id } = conn.credentials;
-        const containerAppName = cc.container_app_name?.value || cc.container_app_name;
+        const containerAppName = cc.container_app_name?.value || cc.container_app_name || cc.service_name;
         const resourceGroupName = cc.resource_group_name?.value || cc.resource_group_name;
 
         if (!containerAppName || !resourceGroupName) {
             throw new Error(`Missing Azure Infrastructure Outputs (Container App Name/Resource Group).`);
         }
 
-        const credential = new ClientSecretCredential(tenant_id, client_id, client_secret);
-        const client = new ContainerAppsAPIClient(credential, subscription_id);
+        await appendLog(deploymentId, `🔍 Updating Azure Container App: ${containerAppName} in ${resourceGroupName}...`);
+
+        // Use administrative credentials if available
+        const aid = process.env.ARM_CLIENT_ID || client_id;
+        const secret = process.env.ARM_CLIENT_SECRET || client_secret;
+        const tid = process.env.ARM_TENANT_ID || tenant_id;
+        const sid = process.env.ARM_SUBSCRIPTION_ID || subscription_id;
+
+        const credential = new ClientSecretCredential(tid, aid, secret);
+        const client = new ContainerAppsAPIClient(credential, sid);
 
         const currentApp = await client.containerApps.get(resourceGroupName, containerAppName);
         currentApp.template.containers[0].image = image;
 
         const updateOp = await client.containerApps.beginUpdateAndWait(resourceGroupName, containerAppName, currentApp);
         const fqdn = updateOp.configuration?.ingress?.fqdn;
-        return fqdn ? `https://${fqdn}` : null;
+        const liveUrl = fqdn ? `https://${fqdn}` : cc.service_endpoint?.value;
+        await appendLog(deploymentId, `✅ Azure Container App updated: ${liveUrl}`);
+        return liveUrl;
     }
 
     if (provider === 'gcp') {
-        const { google } = require('googleapis');
-        const auth = new google.auth.OAuth2();
-        auth.setCredentials(conn.tokens);
+        let auth;
+        if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+            const keys = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+            auth = google.auth.fromJSON(keys);
+            auth.scopes = ['https://www.googleapis.com/auth/cloud-platform'];
+        } else {
+            auth = conn.credentials; // Fallback to user credentials (injected during connection setup)
+        }
         const run = google.run({ version: 'v1', auth });
 
-        const serviceName = cc.container_service_name?.value || cc.service_name?.value || cc.service_name;
-        const name = `projects/${conn.project_id}/locations/${region}/services/${serviceName}`;
+        const serviceName = cc.service_name?.value || cc.service_name || workspace.name;
+        const region = cc.region?.value || cc.region || workspace.state_json.region;
+        const project = cc.project_id?.value || cc.project_id || conn.project_id;
+
+        const name = `projects/${project}/locations/${region}/services/${serviceName}`;
+        await appendLog(deploymentId, `🔍 Fetching Cloud Run service: ${name}...`);
+
         const serviceRes = await run.projects.locations.services.get({ name });
         const serviceData = serviceRes.data;
 
@@ -230,7 +201,10 @@ async function deployImageToProvider(deploymentId, workspace, conn, provider, im
             name,
             requestBody: serviceData
         });
-        return op.data.status?.url || cc.service_endpoint?.value;
+
+        const liveUrl = op.data.status?.url || cc.service_endpoint?.value;
+        await appendLog(deploymentId, `✅ Cloud Run service updated: ${liveUrl}`);
+        return liveUrl;
     }
 
     throw new Error(`Provider ${provider} not supported for container deployment yet.`);
@@ -253,6 +227,38 @@ const updateDeploymentStatus = async (deploymentId, status, url = null, logs = [
 
     query += ` WHERE id = $1`;
     await pool.query(query, params);
+
+    // If deploy succeeded, update workspace deployment_status to DEPLOYED
+    if (status === 'success') {
+        try {
+            // Get workspace_id from deployment
+            const deployResult = await pool.query('SELECT workspace_id FROM deployments WHERE id = $1', [deploymentId]);
+            if (deployResult.rows.length > 0) {
+                const workspaceId = deployResult.rows[0].workspace_id;
+
+                // Update workspace to DEPLOYED status with history
+                await pool.query(
+                    `UPDATE workspaces 
+                     SET deployment_status = 'DEPLOYED',
+                         deployed_at = NOW(),
+                         deployment_history = COALESCE(deployment_history, '[]'::jsonb) || $1::jsonb,
+                         updated_at = NOW()
+                     WHERE id = $2`,
+                    [JSON.stringify([{
+                        action: 'DEPLOY_SUCCESS',
+                        timestamp: new Date().toISOString(),
+                        deployment_id: deploymentId,
+                        live_url: url
+                    }]), workspaceId]
+                );
+
+                console.log(`[DEPLOY] Workspace ${workspaceId} marked as DEPLOYED`);
+            }
+        } catch (wsErr) {
+            console.error(`[DEPLOY] Failed to update workspace status:`, wsErr);
+            // Non-fatal: deployment succeeded, workspace status update is secondary
+        }
+    }
 };
 
 const appendLog = async (id, message) => {
@@ -275,7 +281,6 @@ const DEPLOY_ERRORS = {
     UNKNOWN_ERROR: { code: 'UNKNOWN_ERROR', message: 'An unexpected error occurred' }
 };
 
-const axios = require('axios'); // For Verification
 
 // Helper: Retry Wrapper
 async function retryOperation(fn, retries = 3, delayMs = 1000) {
@@ -342,6 +347,237 @@ function findBuildArtifacts(baseDir) {
 
 // Helper: Detect Project Type
 /**
+ * Helper: Zip a directory into a buffer
+ */
+async function zipDirectory(dirPath) {
+    return new Promise((resolve, reject) => {
+        const archive = archiver('zip', { zlib: { level: 9 } });
+        const chunks = [];
+        archive.on('data', chunk => chunks.push(chunk));
+        archive.on('end', () => resolve(Buffer.concat(chunks)));
+        archive.on('error', err => reject(err));
+        archive.directory(dirPath, false);
+        archive.finalize();
+    });
+}
+
+/**
+ * Helper: Trigger AWS CodeBuild and wait for completion
+ */
+async function triggerCodeBuild(deploymentId, codebuildClient, projectName, s3Bucket, s3Key, ecrUrl) {
+    await appendLog(deploymentId, `🚀 Starting AWS CodeBuild project: ${projectName}...`);
+
+    // 1. Start build
+    const startResponse = await codebuildClient.send(new StartBuildCommand({
+        projectName: projectName,
+        sourceLocationOverride: `${s3Bucket}/${s3Key}`,
+        environmentVariablesOverride: [
+            { name: 'IMAGE_REPO_URL', value: ecrUrl },
+            { name: 'IMAGE_TAG', value: 'latest' }
+        ]
+    }));
+
+    const buildId = startResponse.build.id;
+    await appendLog(deploymentId, `🏗️ Build started. ID: ${buildId}`);
+
+    // 2. Poll for status
+    let status = 'IN_PROGRESS';
+    while (status === 'IN_PROGRESS') {
+        await new Promise(r => setTimeout(r, 5000)); // Poll every 5s
+        const statusResponse = await codebuildClient.send(new BatchGetBuildsCommand({
+            ids: [buildId]
+        }));
+
+        const build = statusResponse.builds[0];
+        status = build.buildStatus;
+
+        if (status === 'SUCCEEDED') {
+            await appendLog(deploymentId, "✅ CodeBuild SUCCEEDED.");
+            break;
+        } else if (status === 'FAILED' || status === 'STOPPED' || status === 'TIMED_OUT') {
+            const phaseWithErr = build.phases.find(p => p.phaseStatus === 'FAILED');
+            const errMsg = phaseWithErr ? `FAILED in phase ${phaseWithErr.phaseType}` : "Phase unknown";
+            throw new Error(`CodeBuild failed with status ${status}: ${errMsg}. Check CloudWatch Logs for details.`);
+        }
+
+        await appendLog(deploymentId, `⏳ Build status: ${status}...`);
+    }
+    return true; // AWS Image is usually just ecrUrl:latest
+}
+
+/**
+ * Helper: Trigger GCP Cloud Build and wait for completion
+ */
+async function triggerGcpCloudBuild(deploymentId, credentials, projectId, bucketName, gcsKey, imageTag, region) {
+    await appendLog(deploymentId, `🚀 Starting GCP Cloud Build for ${projectId}...`);
+    let auth;
+    if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+        const keys = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+        auth = google.auth.fromJSON(keys);
+        auth.scopes = ['https://www.googleapis.com/auth/cloud-platform'];
+    } else {
+        auth = credentials; // Fallback to user credentials
+    }
+    const cb = google.cloudbuild({ version: 'v1', auth });
+
+    const [response] = await cb.projects.builds.create({
+        projectId: projectId,
+        requestBody: {
+            source: { storageSource: { bucket: bucketName, object: gcsKey } },
+            steps: [
+                { name: 'gcr.io/cloud-builders/docker', args: ['build', '-t', imageTag, '.'] },
+                { name: 'gcr.io/cloud-builders/docker', args: ['push', imageTag] }
+            ],
+            images: [imageTag]
+        }
+    });
+
+    const buildId = response.data.id || response.data.metadata?.build?.id;
+    await appendLog(deploymentId, `🏗️ Build started. ID: ${buildId}`);
+
+    // Poll for completion
+    let status = 'QUEUED';
+    while (status === 'QUEUED' || status === 'WORKING') {
+        await new Promise(r => setTimeout(r, 5000));
+        const res = await cb.projects.builds.get({ projectId, id: buildId });
+        status = res.data.status;
+        if (status === 'SUCCESS') {
+            await appendLog(deploymentId, "✅ Cloud Build SUCCEEDED.");
+            break;
+        } else if (['FAILURE', 'INTERNAL_ERROR', 'TIMEOUT', 'CANCELLED'].includes(status)) {
+            throw new Error(`Cloud Build failed with status ${status}. Check GCP Console for logs.`);
+        }
+        await appendLog(deploymentId, `⏳ Build status: ${status}...`);
+    }
+    return imageTag;
+}
+
+/**
+ * Helper: Sync a folder to GCS
+ */
+async function syncFolderToGcs(deploymentId, credentials, projectId, bucketName, localPath) {
+    const files = [];
+    const walk = (dir) => {
+        fs.readdirSync(dir).forEach(file => {
+            const filePath = path.join(dir, file);
+            if (fs.statSync(filePath).isDirectory()) walk(filePath);
+            else files.push(filePath);
+        });
+    };
+    walk(localPath);
+    await appendLog(deploymentId, `📤 Uploading ${files.length} files to GCS (${bucketName})...`);
+
+    let storageOptions = { projectId };
+    if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+        storageOptions.credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+    } else {
+        storageOptions.credentials = credentials;
+    }
+
+    const storage = new Storage(storageOptions);
+    const bucket = storage.bucket(bucketName);
+
+    for (const filePath of files) {
+        const relativePath = path.relative(localPath, filePath).replace(/\\/g, '/');
+        const ext = path.extname(filePath).toLowerCase();
+        const contentType = {
+            '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript',
+            '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
+            '.svg': 'image/svg+xml', '.ico': 'image/x-icon'
+        }[ext] || 'application/octet-stream';
+
+        await bucket.upload(filePath, {
+            destination: relativePath,
+            metadata: { contentType }
+        });
+    }
+    await appendLog(deploymentId, `✅ Successfully synced to GCS.`);
+}
+
+/**
+ * Helper: Sync a folder to Azure Blob Storage ($web)
+ */
+async function syncFolderToAzureBlob(deploymentId, blobServiceClient, containerName, localPath) {
+    const files = [];
+    const walk = (dir) => {
+        fs.readdirSync(dir).forEach(file => {
+            const filePath = path.join(dir, file);
+            if (fs.statSync(filePath).isDirectory()) walk(filePath);
+            else files.push(filePath);
+        });
+    };
+    walk(localPath);
+    await appendLog(deploymentId, `📤 Uploading ${files.length} files to Azure Blob Storage (${containerName})...`);
+
+    const containerClient = blobServiceClient.getContainerClient(containerName);
+    for (const filePath of files) {
+        const relativePath = path.relative(localPath, filePath).replace(/\\/g, '/');
+        const blockBlobClient = containerClient.getBlockBlobClient(relativePath);
+        const ext = path.extname(filePath).toLowerCase();
+        const contentType = {
+            '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript',
+            '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
+            '.svg': 'image/svg+xml', '.ico': 'image/x-icon'
+        }[ext] || 'application/octet-stream';
+
+        await blockBlobClient.uploadFile(filePath, { blobHTTPHeaders: { blobContentType: contentType } });
+    }
+    await appendLog(deploymentId, `✅ Successfully synced to Azure Blob.`);
+}
+
+/**
+ * Helper: Trigger Azure ACR Build
+ */
+async function triggerAzureAcrBuild(deploymentId, credentials, subscriptionId, resourceGroup, acrName, imageTag, localZipPath) {
+
+    // Use administrative credentials if available
+    const aid = process.env.ARM_CLIENT_ID || credentials.client_id;
+    const secret = process.env.ARM_CLIENT_SECRET || credentials.client_secret;
+    const tid = process.env.ARM_TENANT_ID || credentials.tenant_id;
+    const sid = process.env.ARM_SUBSCRIPTION_ID || subscriptionId;
+
+    const credential = new ClientSecretCredential(tid, aid, secret);
+    const client = new ContainerRegistryManagementClient(credential, sid);
+
+    await appendLog(deploymentId, `🚀 Starting Azure ACR Build for ${acrName}...`);
+
+    // 1. Get Build Source Upload URL
+    const sourceUpload = await client.registries.getBuildSourceUploadUrl(resourceGroup, acrName);
+
+    // 2. Upload Zip to the provided URL (Shared Access Signature)
+    const blobClient = new BlockBlobClient(sourceUpload.uploadUrl);
+    await blobClient.uploadFile(localZipPath);
+
+    // 3. Queue the Build
+    const buildRequest = {
+        type: "DockerBuildRequest",
+        imageNames: [imageTag],
+        isPushEnabled: true,
+        sourceLocation: sourceUpload.uploadUrl,
+        platform: { os: "Linux", architecture: "amd64" },
+        dockerFilePath: "Dockerfile"
+    };
+
+    const poller = await client.registries.beginQueueBuildAndWait(resourceGroup, acrName, buildRequest);
+    await appendLog(deploymentId, `🏗️ Build queued. ID: ${poller.runId}`);
+
+    // 4. Poll for completion
+    let status = 'Queued';
+    while (['Queued', 'Started', 'Running'].includes(status)) {
+        await new Promise(r => setTimeout(r, 10000));
+        const runRes = await client.runs.get(resourceGroup, acrName, poller.runId);
+        status = runRes.status;
+        if (status === 'Succeeded') {
+            await appendLog(deploymentId, "✅ ACR Build SUCCEEDED.");
+            break;
+        } else if (['Failed', 'Canceled', 'Error', 'Timeout'].includes(status)) {
+            throw new Error(`ACR Build failed with status ${status}.`);
+        }
+        await appendLog(deploymentId, `⏳ Build status: ${status}...`);
+    }
+}
+
+/**
  * Helper: Sync a folder to S3 with recursive traversal
  */
 async function syncFolderToS3(deploymentId, s3Client, bucketName, localPath) {
@@ -391,12 +627,75 @@ async function syncFolderToS3(deploymentId, s3Client, bucketName, localPath) {
 }
 
 
-const detectProjectType = (repoPath) => {
-    if (fs.existsSync(path.join(repoPath, 'package.json'))) return "node";
-    if (fs.existsSync(path.join(repoPath, 'Dockerfile'))) return "docker";
-    if (fs.existsSync(path.join(repoPath, 'index.html'))) return "static";
-    return "unknown";
+// detectProjectType imported from utils
+
+/**
+ * Helper: Generate Cloud-Native Artifacts (Dockerfile, buildspec.yml)
+ * Ensures that Node/Python/Java projects have a Dockerfile for cloud builders.
+ */
+function ensureCloudNativeArtifacts(dir, runtime, provider) {
+    const dockerfilePath = path.join(dir, 'Dockerfile');
+    const hasDockerfile = fs.existsSync(dockerfilePath);
+
+    // 1. Generate Dockerfile if missing (and runtime is known)
+    if (!hasDockerfile) {
+        let content = "";
+        if (runtime === 'node') {
+            content = `FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --production
+COPY . .
+EXPOSE 80 8080 3000
+CMD ["npm", "start"]`;
+        } else if (runtime === 'python') {
+            content = `FROM python:3.9-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 80 8080 5000
+CMD ["python", "app.py"]`; // Best guess, user should provide Dockerfile for complex apps
+        } else if (runtime === 'java') {
+            content = `FROM openjdk:17-jdk-slim
+WORKDIR /app
+COPY . .
+RUN ./mvnw package -DskipTests
+CMD ["java", "-jar", "target/app.jar"]`;
+        }
+
+        if (content) {
+            fs.writeFileSync(dockerfilePath, content);
+            console.log(`[INFO] Generated default Dockerfile for ${runtime}`);
+        }
+    }
+
+    // 2. Generate buildspec.yml for AWS (if missing)
+    if (provider === 'aws') {
+        const buildspecPath = path.join(dir, 'buildspec.yml');
+        if (!fs.existsSync(buildspecPath)) {
+            const buildspec = `version: 0.2
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $IMAGE_REPO_URL
+  build:
+    commands:
+      - echo Build started on \`date\`
+      - echo Building the Docker image...
+      - docker build -t $IMAGE_REPO_URL:$IMAGE_TAG .
+  post_build:
+    commands:
+      - echo Build completed on \`date\`
+      - echo Pushing the Docker image...
+      - docker push $IMAGE_REPO_URL:$IMAGE_TAG`;
+            fs.writeFileSync(buildspecPath, buildspec);
+            console.log(`[INFO] Generated default buildspec.yml for AWS`);
+        }
+    }
 }
+
 
 
 const deployFromGithub = async (deploymentId, workspace, config) => {
@@ -406,11 +705,34 @@ const deployFromGithub = async (deploymentId, workspace, config) => {
         await updateDeploymentStatus(deploymentId, 'running');
         validateRepoUrl(config.repo);
 
-        await appendLog(deploymentId, `🚀 Starting unified deployment from GitHub: ${config.repo}`);
+        await appendLog(deploymentId, `🚀 Starting Canonical Deployment from GitHub: ${config.repo}`);
 
         const conn = workspace.state_json.connection;
+        const infraOutputs = workspace.state_json.infra_outputs || {};
+        const region = workspace.state_json.region || 'ap-south-1';
 
-        // 1. Clone Repo
+        // 1. Contract Check: Deployment Target (Strict Object Parsing)
+        // Check for both raw Terraform output (with .value) and flattened output
+        let deploymentTarget = infraOutputs.deployment_target?.value || infraOutputs.deployment_target;
+
+        // 🔍 DIAGNOSTIC: Log the actual infraOutputs keys and deploymentTarget
+        console.log('[DEPLOY DEBUG] infraOutputs keys:', Object.keys(infraOutputs || {}));
+        console.log('[DEPLOY DEBUG] deploymentTarget:', JSON.stringify(deploymentTarget, null, 2));
+
+        // Handle legacy string case (if any old states persist)
+        if (typeof deploymentTarget === 'string') {
+            await appendLog(deploymentId, `⚠️ Legacy Deployment Target detected: ${deploymentTarget}. Attempting to normalize...`);
+            // Minimal shim for backward compatibility during dev
+            deploymentTarget = { type: 'UNKNOWN', provider: conn.provider };
+        }
+
+        if (!deploymentTarget || !deploymentTarget.type || deploymentTarget.type === 'UNKNOWN') {
+            throw new Error("No valid deployment target found in infrastructure outputs. Please ensure Terraform has provisioned the workspace correctly.");
+        }
+
+        await appendLog(deploymentId, `🔍 Infra Target: ${deploymentTarget.type} (${deploymentTarget.provider})`);
+
+        // 2. Clone Repo
         await appendLog(deploymentId, "📦 Cloning repository...");
         if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
         try {
@@ -419,135 +741,169 @@ const deployFromGithub = async (deploymentId, workspace, config) => {
             throw { ...DEPLOY_ERRORS.INVALID_REPO_URL, details: "Branch not found or repo inaccessible." };
         }
 
-        // 2. Identify Infrastructure Type & Project Type
-        await appendLog(deploymentId, "🔍 Analyzing infrastructure and project type...");
-        const infraOutputs = workspace.state_json.infra_outputs || {};
+        // 3. Detect Project Type (Strict)
+        const projectInfo = detectProjectType(tempDir);
+        await appendLog(deploymentId, `ℹ️ Project Type Detected: ${projectInfo.type} (${projectInfo.reason})`);
 
-        // Broaden static infra matching (Step 5 often outputs storage_bucket or s3_bucket_id)
-        const bucketName = infraOutputs.s3_bucket_name?.value ||
-            infraOutputs.static_site?.bucket_name?.value ||
-            infraOutputs.storage_bucket?.value ||
-            infraOutputs.s3_bucket_id?.value;
+        // 4. Strict Deployment Routing
+        // Map infra types to project types
+        const targetType = deploymentTarget.type; // STATIC_STORAGE or CONTAINER_SERVICE
 
-        const isStaticInfra = !!bucketName;
-        const projectType = detectProjectType(tempDir);
-
-        await appendLog(deploymentId, `ℹ️ Infrastructure: ${isStaticInfra ? 'Static (S3/CDN)' : 'Container (ECS/AppService)'}, Project: ${projectType.toUpperCase()}`);
-
-        let liveUrl = null;
-
-        if (isStaticInfra && (projectType === 'static' || projectType === 'node')) {
-            // --- STATIC DEPLOYMENT PATH (No Docker Required) ---
-            await appendLog(deploymentId, "🏗️ Infrastructure supports direct static hosting. Bypassing Docker build...");
-
-            // 2a. Run Build if node project
-            if (projectType === 'node') {
-                await appendLog(deploymentId, `🔨 Running build command: ${config.build_command || 'npm install && npm run build'}`);
-                try {
-                    await execPromise(config.build_command || 'npm install && npm run build', { cwd: tempDir, maxBuffer: 1024 * 1024 * 20 });
-                } catch (err) {
-                    throw { ...DEPLOY_ERRORS.BUILD_FAILED, details: err.message };
-                }
+        if (targetType === 'STATIC_STORAGE') {
+            // For static sites, we allow both plain HTML and framework projects
+            if (projectInfo.type !== 'STATIC') {
+                throw new Error(`Architectural Mismatch: Project detected as ${projectInfo.type} (${projectInfo.reason}) but Infrastructure is STATIC_STORAGE.`);
             }
 
-            // 2b. Find artifacts
-            const artifactDir = findBuildArtifacts(tempDir);
-            if (!artifactDir) {
-                throw { ...DEPLOY_ERRORS.MISSING_INDEX_HTML, details: "Could not find index.html in the project or build output." };
-            }
+            const staticMeta = deploymentTarget.static;
+            if (!staticMeta.bucket_name) throw new Error("Contract Violation: STATIC_STORAGE target missing 'bucket_name'.");
 
-            // 2c. Upload to S3
-            if (conn.provider === 'aws') {
-                const { S3Client } = require("@aws-sdk/client-s3");
-                const s3Client = await createAwsClient(S3Client, workspace.state_json.region || 'ap-south-1', conn.role_arn, conn.external_id);
+            await appendLog(deploymentId, `🏗️ Deploying to Static Storage: ${staticMeta.bucket_name}`);
 
-                await appendLog(deploymentId, `📤 Syncing artifacts from '${path.basename(artifactDir)}' to S3 bucket '${bucketName}'...`);
-                await syncFolderToS3(deploymentId, s3Client, bucketName, artifactDir);
+            // Handle projects that need build (React, Vite, Vue, etc.)
+            let artifactDir;
+            if (projectInfo.needsBuild) {
+                await appendLog(deploymentId, `📦 Installing dependencies...`);
+                await execPromise(`npm install`, { cwd: tempDir });
 
-                // 2d. Invalidate CDN if exists
-                const cloudfrontId = infraOutputs.cdn?.distribution_id?.value || infraOutputs.cdn_id?.value;
-                if (cloudfrontId) {
-                    await appendLog(deploymentId, "⚡ Refreshing CloudFront cache...");
-                    const { CloudFrontClient, CreateInvalidationCommand } = require("@aws-sdk/client-cloudfront");
-                    const cfClient = await createAwsClient(CloudFrontClient, "us-east-1", conn.role_arn, conn.external_id);
-                    await cfClient.send(new CreateInvalidationCommand({
-                        DistributionId: cloudfrontId,
-                        InvalidationBatch: {
-                            CallerReference: `cloudiverse-${Date.now()}`,
-                            Paths: { Quantity: 1, Items: ["/*"] }
-                        }
-                    }));
+                await appendLog(deploymentId, `🔨 Building project (${projectInfo.runtime}): ${projectInfo.buildCmd}`);
+                await execPromise(projectInfo.buildCmd, { cwd: tempDir });
+
+                // Use the framework's output directory
+                artifactDir = path.join(tempDir, projectInfo.outputDir || 'dist');
+                if (!fs.existsSync(artifactDir)) {
+                    throw new Error(`Build succeeded but output directory '${projectInfo.outputDir}' not found.`);
                 }
-
-                liveUrl = infraOutputs.cdn?.endpoint?.value || infraOutputs.cdn_endpoint?.value || `http://${bucketName}.s3-website-${workspace.state_json.region || 'ap-south-1'}.amazonaws.com`;
             } else {
-                throw new Error(`Static deployment for provider ${conn.provider} not yet supported.`);
+                // Pure static site - find artifacts directly
+                artifactDir = findBuildArtifacts(tempDir);
             }
-        } else {
-            // --- CONTAINER DEPLOYMENT PATH ---
-            await appendLog(deploymentId, "🏗️ Infrastructure requires a container. Proceeding with Docker build...");
 
-            // 2e. Ensure Dockerfile exists
-            if (!fs.existsSync(path.join(tempDir, 'Dockerfile'))) {
-                await appendLog(deploymentId, "ℹ️ No Dockerfile found. Attempting auto-generation...");
-                const generated = await githubService.generateDockerfile(tempDir);
-                if (!generated) {
-                    throw new Error("Unable to auto-detect project type. Please provide a Dockerfile in your repository.");
+            if (!artifactDir) throw { ...DEPLOY_ERRORS.MISSING_INDEX_HTML };
+
+            // Upload Logic
+            let liveUrl = "";
+            if (deploymentTarget.provider === 'aws') {
+                const s3Client = await createAwsClient(S3Client, region, conn.role_arn, conn.external_id);
+                await syncFolderToS3(deploymentId, s3Client, staticMeta.bucket_name, artifactDir);
+
+                if (staticMeta.cdn_domain) {
+                    // Check for CDN ID in static block or global fallback
+                    const cdnId = staticMeta.cdn_id || infraOutputs.cdn_id?.value || infraOutputs.cloudfront_distribution_id?.value;
+                    if (cdnId) {
+                        await appendLog(deploymentId, "⚡ Refreshing AWS CDN cache...");
+                        const cfClient = await createAwsClient(CloudFrontClient, "us-east-1", conn.role_arn, conn.external_id);
+                        await cfClient.send(new CreateInvalidationCommand({
+                            DistributionId: cdnId,
+                            InvalidationBatch: { CallerReference: `cloudiverse-${Date.now()}`, Paths: { Quantity: 1, Items: ["/*"] } }
+                        }));
+                    }
                 }
+                liveUrl = `https://${staticMeta.cdn_domain || staticMeta.bucket_name}`;
+            } else if (deploymentTarget.provider === 'gcp') {
+                await syncFolderToGcs(deploymentId, conn.credentials, conn.project_id, staticMeta.bucket_name, artifactDir);
+                liveUrl = `https://${staticMeta.cdn_domain || 'storage.googleapis.com/' + staticMeta.bucket_name}`;
+            } else if (deploymentTarget.provider === 'azure') {
+                const blobServiceClient = BlobServiceClient.fromConnectionString(conn.connection_string);
+                await syncFolderToAzureBlob(deploymentId, blobServiceClient, "$web", artifactDir);
+                liveUrl = `https://${staticMeta.cdn_domain || staticMeta.bucket_name}`;
             }
 
-            // 3. Docker Build & Push
-            const imageUri = await dockerBuildAndPush(deploymentId, tempDir, workspace.id);
+            await updateDeploymentStatus(deploymentId, 'success', liveUrl, [{ message: `🚀 Static deployment successful!` }]);
 
-            // 4. Update Infrastructure
-            liveUrl = await deployImageToProvider(deploymentId, workspace, conn, conn.provider || 'aws', imageUri);
+        } else if (targetType === 'CONTAINER_SERVICE') {
+            if (projectInfo.type !== 'CONTAINER') {
+                throw new Error(`Architectural Mismatch: Project detected as ${projectInfo.type} but Infrastructure is CONTAINER_SERVICE.`);
+            }
+
+            // 🔥 Critical: Ensure Dockerfile/buildspec exists before zipping
+            ensureCloudNativeArtifacts(tempDir, projectInfo.runtime || 'unknown', deploymentTarget.provider);
+
+            await appendLog(deploymentId, `🏗️ Orchestrating Cloud-Native Container Build for ${deploymentTarget.provider.toUpperCase()}...`);
+            const containerMeta = deploymentTarget.container;
+            if (!containerMeta) throw new Error("Contract Violation: CONTAINER_SERVICE target missing 'container' metadata.");
+
+            let imageTag = "";
+
+            if (deploymentTarget.provider === 'aws') {
+                if (!containerMeta.cluster_name || !containerMeta.service_name || !containerMeta.registry_url) {
+                    throw new Error("Missing AWS Container Metadata.");
+                }
+
+                // Use build_project_name from contract, or fallback to global outputs if old state
+                const cbProject = containerMeta.build_project_name || infraOutputs.codebuild_name?.value;
+                // Need build bucket too. If not in contract, check globals.
+                const buildBucket = infraOutputs.build_bucket?.value || infraOutputs.computecontainer?.value?.build_bucket;
+
+                if (!cbProject || !buildBucket) {
+                    throw new Error("Missing AWS Build Infrastructure (connection to CodeBuild Project/Bucket). Ensure Terraform state is recent.");
+                }
+
+                const s3Key = `sources/source-${deploymentId}.zip`;
+                const zipBuffer = await zipDirectory(tempDir);
+                const s3Client = await createAwsClient(S3Client, region, conn.role_arn, conn.external_id);
+
+                await appendLog(deploymentId, "📤 Uploading source to Build Bucket...");
+                await s3Client.send(new PutObjectCommand({ Bucket: buildBucket, Key: s3Key, Body: zipBuffer }));
+
+                const cbClient = await createAwsClient(CodeBuildClient, region, conn.role_arn, conn.external_id);
+                await triggerCodeBuild(deploymentId, cbClient, cbProject, buildBucket, s3Key, containerMeta.registry_url);
+                imageTag = `${containerMeta.registry_url}:latest`;
+
+            } else if (deploymentTarget.provider === 'gcp') {
+                // Existing GCP Cloud Build Logic
+                const buildBucket = `cloudiverse-builds-${conn.project_id}`;
+                const gcsKey = `source-${deploymentId}.zip`;
+                const zipPath = path.join(tempDir, `../${gcsKey}`);
+                const zipBuffer = await zipDirectory(tempDir);
+                fs.writeFileSync(zipPath, zipBuffer);
+
+                await appendLog(deploymentId, "📤 Uploading source to GCS Build Bucket...");
+
+                let storageOptions = { projectId: conn.project_id };
+                if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+                    storageOptions.credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+                } else {
+                    storageOptions.credentials = conn.credentials;
+                }
+                const storageClient = new Storage(storageOptions);
+                await storageClient.bucket(buildBucket).upload(zipPath, { destination: gcsKey });
+
+                imageTag = await triggerGcpCloudBuild(deploymentId, conn.credentials, conn.project_id, buildBucket, gcsKey, containerMeta.registry_url, region);
+
+            } else if (deploymentTarget.provider === 'azure') {
+                // Existing Azure ACR Build Logic
+                const zipPath = path.join(tempDir, `../source-${deploymentId}.zip`);
+                const zipBuffer = await zipDirectory(tempDir);
+                fs.writeFileSync(zipPath, zipBuffer);
+
+                imageTag = `${containerMeta.registry_url}/app:latest`;
+                await triggerAzureAcrBuild(deploymentId, conn.credentials, conn.credentials.subscription_id, containerMeta.resource_group_name, containerMeta.container_app_name, imageTag, zipPath);
+            }
+
+            const appUrl = await deployImageToProvider(deploymentId, workspace, conn, deploymentTarget.provider, imageTag);
+            await updateDeploymentStatus(deploymentId, 'success', appUrl, [{ message: `🚀 Cloud-Native Container Build & Deploy successful!` }]);
+
+        } else {
+            throw new Error(`Deployment target ${targetType} is not supported or automated yet.`);
         }
-
-        if (!liveUrl) {
-            throw new Error("Deployment completed but no live URL could be determined. Check your cloud provider console.");
-        }
-
-        await updateDeploymentStatus(deploymentId, 'success', liveUrl, [{ message: '🚀 Deployment successful!' }]);
 
     } catch (err) {
-        console.error("GitHub Deploy Error:", err);
+        console.error("Deploy Error:", err);
         const errorObj = err.code ? err : { ...DEPLOY_ERRORS.UNKNOWN_ERROR, details: err.message };
         await updateDeploymentStatus(deploymentId, 'failed', null, [
             { message: `❌ Deployment Failed: ${errorObj.message}` },
-            { message: `Details: ${errorObj.details || 'Check logs for more info.'}` }
+            { message: `Details: ${errorObj.details || 'Check logs.'}` }
         ]);
     } finally {
-        // Fail-safe cleanup with retries to avoid EBUSY crashes on Windows
         const cleanup = async (attempt = 1) => {
-            try {
-                if (fs.existsSync(tempDir)) {
-                    fs.rmSync(tempDir, { recursive: true, force: true });
-                    console.log(`[DEPLOY] Successfully cleaned up ${tempDir}`);
-                }
-            } catch (e) {
-                if (attempt < 5) {
-                    console.warn(`[DEPLOY] Cleanup attempt ${attempt} failed (EBUSY). Retrying in 3s...`);
-                    setTimeout(() => cleanup(attempt + 1), 3000);
-                } else {
-                    console.warn(`[DEPLOY] Final cleanup warning: ${e.message}. Manual deletion may be required for ${tempDir}`);
-                }
-            }
+            try { if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true }); }
+            catch (e) { if (attempt < 5) setTimeout(() => cleanup(attempt + 1), 3000); }
         };
         cleanup();
     }
 };
 
-/**
- * Helper: Check if Docker is installed and running
- */
-async function checkDocker() {
-    try {
-        await execPromise('docker --version');
-        return true;
-    } catch (err) {
-        return false;
-    }
-}
 
 const getDeploymentStatus = async (id) => {
     const result = await pool.query('SELECT * FROM deployments WHERE id = $1', [id]);
@@ -571,13 +927,26 @@ const deployFromDocker = async (deploymentId, workspace, config) => {
         const image = config.image || config.docker_image;
         validateDockerImage(image);
 
-        await appendLog(deploymentId, `🐳 Starting Docker deployment for image: ${image}`);
+        await appendLog(deploymentId, `🐳 Starting Docker Image Deployment: ${image}`);
 
         const conn = workspace.state_json.connection;
-        const provider = conn.provider || 'aws';
+        const infraOutputs = workspace.state_json.infra_outputs || {};
+        const target = infraOutputs.deployment_target?.value || "unknown";
 
+        // 1. Strict infra matching for Docker choice
+        const allowedTargets = ["ecs", "cloud_run", "app_service", "container", "app_runner", "lambda"];
+        if (!allowedTargets.includes(target)) {
+            throw new Error(`Architectural Mismatch: Direct Docker deployment is not compatible with ${target.toUpperCase()} infrastructure. Use GitHub path for static sites.`);
+        }
+
+        await appendLog(deploymentId, `✅ Infra compatibility verified. Updating running service...`);
+
+        const provider = conn.provider || 'aws';
         const liveUrl = await deployImageToProvider(deploymentId, workspace, conn, provider, image);
-        await updateDeploymentStatus(deploymentId, 'success', liveUrl, [{ message: '🚀 Deployment successful!' }]);
+
+        if (!liveUrl) throw new Error("Service updated but live URL could not be retrieved.");
+
+        await updateDeploymentStatus(deploymentId, 'success', liveUrl, [{ message: '🚀 Container service updated successfully!' }]);
 
     } catch (err) {
         console.error("Docker Deploy Error:", err);

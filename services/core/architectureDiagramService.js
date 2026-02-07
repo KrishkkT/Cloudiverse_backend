@@ -150,7 +150,7 @@ function mapToProvider(canonicalArchitecture, provider) {
 
     // 🔥 FIX: Filter out services that were removed (USER_DISABLED)
     // The canonical architecture preserves them for undo, but diagram must ignore them.
-    services = services.filter(s => s.state !== 'USER_DISABLED');
+    services = services.filter(s => s.state !== 'USER_DISABLED' && s.state !== 'EXCLUDED');
 
     if (services.length === 0) {
         console.error('[MAP TO PROVIDER] No services in canonical architecture (after filtering disabled)');
@@ -210,7 +210,7 @@ function mapToProvider(canonicalArchitecture, provider) {
     // Map each canonical service to provider-specific node
     services.forEach((service, idx) => {
         // 🔥 CRITICAL FIX: Skip services marked as disabled by user
-        if (service.state === 'USER_DISABLED' || service.state === 'REMOVED' || service.excluded === true) {
+        if (service.state === 'USER_DISABLED' || service.state === 'REMOVED' || service.state === 'EXCLUDED' || service.excluded === true) {
             console.log(`[MAP TO PROVIDER] Skipping disabled service: ${service.name}`);
             return;
         }

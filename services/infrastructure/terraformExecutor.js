@@ -537,16 +537,37 @@ class TerraformExecutor {
 
             // ─── STAGE 7: PERSIST STATE ─────────────────────────────────────────────
             try {
-                await pool.query(
+                console.log(`[TF PERSIST DEBUG] Saving infra_outputs to workspace ${workspaceId}:`, JSON.stringify(cleanOutputs, null, 2));
+                const updateResult = await pool.query(
                     `UPDATE workspaces 
                      SET state_json = jsonb_set(
                         COALESCE(state_json, '{}'), 
                         '{infra_outputs}', 
                         $1
-                     ) 
-                     WHERE id = $2`,
-                    [JSON.stringify(cleanOutputs), workspaceId]
+                     ),
+                     deployment_status = CASE 
+                        WHEN deployment_status = 'DRAFT' THEN 'INFRA_READY'
+                        ELSE deployment_status 
+                     END,
+                     deployment_history = COALESCE(deployment_history, '[]'::jsonb) || $3::jsonb
+                     WHERE id = $2
+                     RETURNING id, state_json->'infra_outputs' as saved_outputs, deployment_status`,
+                    [
+                        JSON.stringify(cleanOutputs),
+                        workspaceId,
+                        JSON.stringify([{
+                            action: 'TERRAFORM_APPLY_SUCCESS',
+                            timestamp: new Date().toISOString(),
+                            job_id: jobId,
+                            outputs_keys: Object.keys(cleanOutputs)
+                        }])
+                    ]
                 );
+                if (updateResult.rowCount === 0) {
+                    console.error(`[TF PERSIST DEBUG] WARNING: No rows updated! workspaceId=${workspaceId} not found.`);
+                } else {
+                    console.log(`[TF PERSIST DEBUG] Successfully updated workspace ${updateResult.rows[0].id}, status=${updateResult.rows[0].deployment_status}, saved_outputs keys:`, Object.keys(updateResult.rows[0].saved_outputs || {}));
+                }
                 this.addLog(jobId, 'Infrastructure state persisted to database.', 'SUCCESS');
             } catch (dbErr) {
                 console.error("DB Persist Error:", dbErr);

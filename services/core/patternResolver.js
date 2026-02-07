@@ -154,10 +154,21 @@ function extractExplicitServicesFromText(text) {
     'searching': 'search'
   };
 
+  // Helper regex for negative lookbehind simulation
+  const isNegated = (str, index) => {
+    const prefix = str.substring(Math.max(0, index - 15), index);
+    return /\b(no|without|do not need|don't need)\s+(\w+\s+)?$/.test(prefix);
+  };
+
   // Check for service keywords (longest match first for multi-word phrases)
   const sortedKeywords = Object.keys(serviceKeywords).sort((a, b) => b.length - a.length);
   for (const keyword of sortedKeywords) {
-    if (lowerText.includes(keyword)) {
+    const idx = lowerText.indexOf(keyword);
+    if (idx !== -1) {
+      if (isNegated(lowerText, idx)) {
+        console.log(`[EXPLICIT SERVICE] Skipping '${keyword}' due to negative context`);
+        continue;
+      }
       const service = serviceKeywords[keyword];
       if (!detected.data_stores.includes(service)) {
         detected.data_stores.push(service);
@@ -168,7 +179,12 @@ function extractExplicitServicesFromText(text) {
 
   // Check for capability keywords
   for (const [keyword, capability] of Object.entries(capabilityKeywords)) {
-    if (lowerText.includes(keyword)) {
+    const idx = lowerText.indexOf(keyword);
+    if (idx !== -1) {
+      if (isNegated(lowerText, idx)) {
+        console.log(`[EXPLICIT CAPABILITY] Skipping '${keyword}' due to negative context`);
+        continue;
+      }
       detected.capabilities[capability] = true;
       console.log(`[EXPLICIT CAPABILITY] Detected '${keyword}' → ${capability}`);
     }
@@ -887,9 +903,9 @@ class PatternResolver {
           const entry = selected.get(svc);
 
           // 🔥 FIX 2: Pattern mandatory services CANNOT be removed
-          // 🔥 FIX 3: Requirement-enforced non-removable services CANNOT be removed
-          if (entry.removable === false || patternMandatory.has(svc)) {
-            console.log(`[SERVICE RESOLUTION] ⚠️ CANNOT REMOVE ${svc} (required by pattern ${pattern} or strict rule)`);
+          // Requirement rules should be overridable by explicit user exclusions
+          if (patternMandatory.has(svc)) {
+            console.log(`[SERVICE RESOLUTION] ⚠️ CANNOT REMOVE ${svc} (strictly required by pattern ${pattern})`);
             return;
           }
 

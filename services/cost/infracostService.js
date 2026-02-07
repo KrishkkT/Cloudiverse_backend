@@ -483,8 +483,8 @@ async function calculateInfrastructureCost(infraSpec, intent, costProfile, usage
     const usage = buildUsageProfile(infraSpec, intent, usageProfile);
 
     // Get deployable services
-    const deployableServices = infraSpec.canonical_architecture?.deployable_services ||
-      infraSpec.service_classes?.required_services?.map(s => s.service_class) || [];
+    // Get deployable services using the centralized, filtering helper
+    const deployableServices = extractDeployableServices(infraSpec);
 
     console.log(`[INFRA COST] Calling generateCostEstimate for ${deployableServices.length} services`);
 
@@ -3533,6 +3533,12 @@ function extractDeployableServices(infraSpec) {
   console.log(`[DEPLOYABLE] Extracting from ${list.length} raw services`);
 
   const result = list.reduce((acc, svc) => {
+    // 🔥 FIX: Check for explicit user exclusion (User Disabled)
+    if (svc && (svc.state === 'USER_DISABLED' || svc.state === 'EXCLUDED')) {
+      console.log(`[DEPLOYABLE] Skipping User-Disabled Service: ${svc.service_id || svc.name}`);
+      return acc;
+    }
+
     // Resolve ID using the central normalization
     const rawId = typeof svc === 'string' ? svc : (svc.service_id || svc.id || svc.service_class || svc.name);
     if (!rawId) {

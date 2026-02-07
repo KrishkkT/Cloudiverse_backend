@@ -11,9 +11,8 @@
                 "identity_access"
             ],
             "services": [
-                "loadbalancer",
-                "cdn",
-                "computecontainer"
+                "objectstorage",
+                "cdn"
             ],
             "score_weights": {
                 "static_content": 1,
@@ -36,7 +35,7 @@
             "services": [
                 "loadbalancer",
                 "cdn",
-                "computecontainer",
+                "objectstorage",
                 "identityauth"
             ],
             "score_weights": {

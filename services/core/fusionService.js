@@ -46,20 +46,48 @@ class FusionService {
 
         // Source A: Keyword Extraction (Improved with negative lookahead logic)
         for (const [cap, keywords] of Object.entries(capabilitiesConfig.keywords)) {
-            if (keywords.some(k => {
-                const index = normDesc.indexOf(k);
-                if (index === -1) return false;
+            const hasPositiveMatch = keywords.some(k => {
+                // Use regex word boundaries to prevent substring matches (e.g. "delivery" matching "live")
+                const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`\\b${escapeRegExp(k)}\\b`, 'i');
+                const match = normDesc.match(regex);
+
+                if (!match) return false;
+
+                const index = match.index;
 
                 // Check if preceded by "no " or "without "
-                const prefix = normDesc.substring(Math.max(0, index - 10), index);
-                if (prefix.includes("no ") || prefix.includes("without ") || prefix.includes("don't need") || prefix.includes("do not need")) {
+                // Look back a reasonable amount (e.g. 15 chars) to catch "no user authentication"
+                const prefix = normDesc.substring(Math.max(0, index - 15), index);
+
+                // Stricter negative check: must match "no <word> <keyword>" or "no <keyword>"
+                if (/\b(no|without|do not need|don't need)\s+(\w+\s+)?$/.test(prefix)) {
                     console.log(`[FUSION] Skipping capability ${cap} due to negative prefix for keyword ${k}`);
                     return false;
                 }
                 return true;
-            })) {
+            });
+
+            if (hasPositiveMatch) {
                 detectedCapabilities.add(cap);
             }
+        }
+
+        // 0.5 Explicit Exclusion Detection (Auth)
+        const noAuthPatterns = ["no auth", "no authentication", "without auth", "no login", "public only", "no users"];
+        if (noDbPatterns.some(p => normDesc.includes(p))) { // Ensure DB exclusion persists
+            exclusions.database = true;
+        }
+
+        if (noAuthPatterns.some(p => normDesc.includes(p))) {
+            console.log("[FUSION] Detected explicit 'No Authentication' constraint in text.");
+            exclusions.auth = true;
+            exclusions.authentication = true; // Handle both keys
+
+            // 🔥 CRITICAL: Remove any falsely detected capabilities if explicit exclusion exists
+            detectedCapabilities.delete('authentication');
+            detectedCapabilities.delete('auth');
+            detectedCapabilities.delete('identity_access');
         }
 
         // Source B: Domain Hints

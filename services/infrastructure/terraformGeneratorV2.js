@@ -2624,29 +2624,74 @@ function generateTfvars(provider, region, projectName, sizing = {}, connectionDa
 /**
  * Generate outputs.tf
  */
+/**
+ * Generate outputs.tf
+ */
 function generateOutputsTf(provider, pattern, services) {
-  let outputs = `# Infrastructure Outputs\n\n`;
+  let outputs = `# 🏰 Canonical Deployment Contract\n\n`;
+
+  // 1. Determine Deployment Target (Strict Contract)
+  let targetType = "UNKNOWN";
+  if (services.includes('computecontainer')) {
+    targetType = "CONTAINER_SERVICE";
+  } else if (services.includes('objectstorage') && services.includes('cdn')) { // Must have CDN for production static
+    targetType = "STATIC_STORAGE";
+  } else if (services.includes('computeserverless')) {
+    targetType = "SERVERLESS_FUNCTION";
+  } else if (services.includes('computevm')) {
+    targetType = "VM";
+  }
+
+  outputs += `output "deployment_target" {
+  description = "The authoritative deployment contract. Deploy service MUST read this."
+  value = {
+    type     = "${targetType}"
+    provider = "${provider}"
+    region   = var.${provider === 'azure' ? 'location' : 'region'}
+
+    static = {
+      bucket_name   = ${services.includes('objectstorage') ? 'try(module.object_storage.bucket_name, null)' : 'null'}
+      bucket_region = var.${provider === 'azure' ? 'location' : 'region'}
+      cdn_domain    = ${services.includes('cdn') ? 'try(module.cdn.endpoint, null)' : 'null'}
+    }
+
+    container = {
+      cluster_name        = ${services.includes('computecontainer') ? 'try(module.app_container.cluster_name, null)' : 'null'}
+      service_name        = ${services.includes('computecontainer') ? 'try(module.app_container.service_name, null)' : 'null'}
+      container_app_name  = ${services.includes('computecontainer') ? 'try(module.app_container.container_app_name, null)' : 'null'}
+      resource_group_name = ${services.includes('computecontainer') ? 'try(module.app_container.resource_group_name, null)' : 'null'}
+      registry_url        = ${services.includes('computecontainer') ? 'try(module.app_container.ecr_url, module.app_container.acr_login_server, null)' : 'null'}
+      build_project_name  = ${services.includes('computecontainer') ? 'try(module.app_container.codebuild_name, null)' : 'null'}
+    }
+  }
+}
+
+`;
 
   const outputMap = {
-    // Basic Services
+    // Basic Services (Standardized Aliases)
     cdn: { name: 'cdn_endpoint', field: 'endpoint', desc: 'CDN endpoint URL' },
     cdn_id: { name: 'cdn_id', field: 'id', desc: 'CDN Distribution ID' },
     apigateway: { name: 'api_endpoint', field: 'endpoint', desc: 'API Gateway endpoint URL' },
     relationaldatabase: { name: 'database_endpoint', field: 'endpoint', desc: 'Database connection endpoint', sensitive: true },
-    objectstorage: { name: 'storage_bucket', field: 'bucket_name', desc: 'Object storage bucket name' },
+    objectstorage: { name: 'bucket_name', field: 'bucket_name', desc: 'The Storage bucket name' },
 
-    // Compute (Standardized for Container-First)
+    // Compute (Standardized Metadata)
     computecontainer: {
-      name: 'computecontainer', // This will be an object in root outputs
+      name: 'computecontainer',
       fields: {
         service_endpoint: 'url',
-        load_balancer_dns: 'dns_name',
-        container_service_name: 'service_name',
-        ecs_cluster_name: 'cluster_name',
-        container_app_name: 'container_app_name', // Azure specific but mapped
-        resource_group_name: 'resource_group_name' // Azure specific
+        service_name: 'service_name',
+        cluster_name: 'cluster_name',
+        container_app_name: 'container_app_name',
+        resource_group_name: 'resource_group_name',
+        container_registry: ['ecr_url', 'artifact_registry', 'acr_login_server'],
+        codebuild_name: 'codebuild_name',
+        build_bucket: 'build_bucket',
+        project_id: 'project_id',
+        region: 'region'
       },
-      desc: 'Container-first deployment identifiers'
+      desc: 'Container deployment metadata'
     },
     computeserverless: { name: 'serverless_url', field: 'url', desc: 'Serverless function URL' },
     computevm: { name: 'vm_ip', field: 'public_ip', desc: 'VM Public IP' },
@@ -2663,7 +2708,7 @@ function generateOutputsTf(provider, pattern, services) {
     secretsmanagement: { name: 'secrets_arn', field: 'arn', desc: 'Secrets manager ARN' },
 
     // Networking
-    loadbalancer: { name: 'lb_dns_name', field: 'dns_name', desc: 'Load balancer DNS name' },
+    loadbalancer: { name: 'lb_dns_dns', field: 'dns_name', desc: 'Load balancer DNS name' },
     globalloadbalancer: { name: 'global_lb_endpoint', field: 'endpoint', desc: 'Global LB endpoint' },
     dns: { name: 'name_servers', field: 'name_servers', desc: 'DNS Name Servers' },
 
@@ -2678,45 +2723,34 @@ function generateOutputsTf(provider, pattern, services) {
       if (conf) {
         const moduleName = getModuleName(service);
         if (service === 'cdn') {
-          // Special case: Output both endpoint and ID
-          outputs += `output "cdn_endpoint" {
-        description = "CDN endpoint URL"
-        value = module.cdn.endpoint
-      }
-
-      output "cdn_id" {
-        description = "CDN Distribution ID"
-        value = module.cdn.id
-      }
-
-      `;
+          outputs += `output "cdn_endpoint" { value = module.cdn.endpoint }\noutput "cdn_id" { value = module.cdn.id }\n\n`;
         } else if (conf.fields) {
-          // Special case: Nested object output (e.g., computecontainer)
           outputs += `output "${conf.name}" {\n  description = "${conf.desc}"\n  value = {\n`;
-          Object.entries(conf.fields).forEach(([key, field]) => {
-            outputs += `    ${key} = try(module.${moduleName}.${field}, null)\n`;
+          Object.entries(conf.fields).forEach(([key, fields]) => {
+            const fieldList = Array.isArray(fields) ? fields : [fields];
+            const valueExpr = fieldList.map(f => `try(module.${moduleName}.${f}, null)`).join(', ');
+            outputs += `    ${key} = coalesce(${valueExpr}, null)\n`;
           });
           outputs += `  }\n}\n\n`;
         } else {
           outputs += `output "${conf.name}" {
-        description = "${conf.desc}"
-        value = module.${moduleName}.${conf.field}
-        ${conf.sensitive ? 'sensitive = true' : ''}
-      }\n\n`;
+  description = "${conf.desc}"
+  value       = module.${moduleName}.${conf.field}
+  ${conf.sensitive ? 'sensitive = true' : ''}
+}\n\n`;
         }
       }
     });
   }
 
-  // Networking is special
+  // Common aliases for Phase 2 code
+  if (services.includes('cdn')) {
+    outputs += `output "cloudfront_distribution_id" { value = module.cdn.id }\n\n`;
+  }
+
   if (services.includes('networking') || services.includes('vpcnetworking')) {
     const nwModule = getModuleName(services.includes('networking') ? 'networking' : 'vpcnetworking');
-    outputs += `output "vpc_id" {
-  description = "The ID of the VPC"
-  value       = module.${nwModule}.vpc_id
-}
-
-`;
+    outputs += `output "vpc_id" { value = module.${nwModule}.vpc_id }\n\n`;
   }
 
   return outputs;
@@ -2765,19 +2799,26 @@ function generateMainTf(provider, pattern, services) {
     project_name = var.project_name
     ${regionLabel} = var.${regionLabel}\n`;
 
-      // 🔥 FIX: Inject CDN Dependency (Intelligent Origin)
+      // 🔥 FIX: Inject CDN Dependency (Intelligent Origin + OAC Variables)
       if (moduleName === 'cdn') {
         const hasObjectStorage = services.includes('objectstorage');
         const hasLoadBalancer = services.includes('loadbalancer');
         const hasComputeContainer = services.includes('computecontainer');
 
         if (hasObjectStorage && !hasComputeContainer) {
+          // Static site: S3 bucket origin with OAC (requires bucket_name and bucket_arn for policy)
           mainTf += `    bucket_domain_name = module.object_storage.bucket_domain_name\n`;
+          mainTf += `    bucket_name        = module.object_storage.bucket_name\n`;
+          mainTf += `    bucket_arn         = module.object_storage.bucket_arn\n`;
         } else if (hasLoadBalancer) {
-          mainTf += `    bucket_domain_name = module.loadbalancer.dns_name\n`;
+          mainTf += `    bucket_domain_name = module.load_balancer.dns_name\n`;
+          mainTf += `    bucket_name        = ""\n`;
+          mainTf += `    bucket_arn         = ""\n`;
         } else if (hasComputeContainer && pLower !== 'aws') {
           // GCP/Azure containers have stable URLs directly
-          mainTf += `    bucket_domain_name = module.computecontainer.url\n`;
+          mainTf += `    bucket_domain_name = module.app_container.url\n`;
+          mainTf += `    bucket_name        = ""\n`;
+          mainTf += `    bucket_arn         = ""\n`;
         } else {
           // Fallback or skip if no clear origin
           mainTf += `    # bucket_domain_name injection skipped: No objectstorage or loadbalancer found\n`;
@@ -3067,25 +3108,31 @@ function getModuleConfig(service, provider) {
     cdn: `module "cdn" {
     source = "./modules/cdn"
 
-    project_name = var.project_name
-    ${regionLabel} = var.${regionLabel}
+    project_name       = var.project_name
+    ${regionLabel}     = var.${regionLabel}
     bucket_domain_name = module.object_storage.bucket_domain_name
+    bucket_name        = module.object_storage.bucket_name
+    bucket_arn         = module.object_storage.bucket_arn
   } `,
 
     contentdeliverynetwork: `module "cdn" {
     source = "./modules/cdn"
 
-    project_name = var.project_name
-    ${regionLabel} = var.${regionLabel}
+    project_name       = var.project_name
+    ${regionLabel}     = var.${regionLabel}
     bucket_domain_name = module.object_storage.bucket_domain_name
+    bucket_name        = module.object_storage.bucket_name
+    bucket_arn         = module.object_storage.bucket_arn
   } `,
 
     cloudfront: `module "cdn" {
     source = "./modules/cdn"
 
-    project_name = var.project_name
-    ${regionLabel} = var.${regionLabel}
+    project_name       = var.project_name
+    ${regionLabel}     = var.${regionLabel}
     bucket_domain_name = module.object_storage.bucket_domain_name
+    bucket_name        = module.object_storage.bucket_name
+    bucket_arn         = module.object_storage.bucket_arn
   } `,
 
     // 🔥 FIX: Ensure VPC services map to 'networking' module name for cross-module referencing
@@ -3111,14 +3158,16 @@ function getModuleConfig(service, provider) {
   } `
   };
 
-  // 🔥 HARD GUARD: Bypass map lookup for CDN to ensure argument is passed
+  // 🔥 HARD GUARD: Bypass map lookup for CDN to ensure arguments are passed (including OAC variables)
   if (service === 'cdn' || service === 'contentdeliverynetwork' || service === 'cloudfront') {
     return `module "cdn" {
     source = "./modules/cdn"
 
-    project_name = var.project_name
-    ${regionLabel} = var.${regionLabel}
+    project_name       = var.project_name
+    ${regionLabel}     = var.${regionLabel}
     bucket_domain_name = module.object_storage.bucket_domain_name
+    bucket_name        = module.object_storage.bucket_name
+    bucket_arn         = module.object_storage.bucket_arn
   }`;
   }
 
@@ -3498,6 +3547,14 @@ resource "aws_security_group" "redis_sg" {
   force_destroy = true
 }
 
+resource "aws_s3_bucket_public_access_block" "main" {
+  bucket                  = aws_s3_bucket.main.id
+  block_public_acls       = true
+  block_public_policy     = false  # Allow bucket policies (for CloudFront OAC)
+  ignore_public_acls      = true
+  restrict_public_buckets = false  # Allow CloudFront access via policy
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "main" {
   bucket = aws_s3_bucket.main.id
   rule {
@@ -3508,6 +3565,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "main" {
 }`,
           variables: getRequiredVars('objectstorage', meta.args),
           outputs: `output "bucket_name" { value = aws_s3_bucket.main.id }
+output "bucket_arn" { value = aws_s3_bucket.main.arn }
 output "bucket_domain_name" { value = aws_s3_bucket.main.bucket_regional_domain_name }`
         };
 
@@ -3531,8 +3589,59 @@ output "bucket_domain_name" { value = aws_s3_bucket.main.bucket_regional_domain_
   name = "\${var.project_name}-cluster"
 }
 
+resource "aws_ecr_repository" "repo" {
+  name                 = "\${var.project_name}-repo"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+}
+
+resource "aws_s3_bucket" "builds" {
+  bucket_prefix = "\${var.project_name}-builds-"
+  force_destroy = true
+}
+
+resource "aws_iam_role" "codebuild_role" {
+  name = "\${var.project_name}-codebuild-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{ Action = "sts:AssumeRole", Effect = "Allow", Principal = { Service = "codebuild.amazonaws.com" } }]
+  })
+}
+
+resource "aws_iam_role_policy" "codebuild_policy" {
+  name = "\${var.project_name}-codebuild-policy"
+  role = aws_iam_role.codebuild_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      { Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"], Effect = "Allow", Resource = "*" },
+      { Action = ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject"], Effect = "Allow", Resource = "\${aws_s3_bucket.builds.arn}/*" },
+      { Action = ["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage", "ecr:PutImage", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload"], Effect = "Allow", Resource = "*" }
+    ]
+  })
+}
+
+resource "aws_codebuild_project" "build" {
+  name          = "\${var.project_name}-build"
+  service_role  = aws_iam_role.codebuild_role.arn
+
+  artifacts { type = "NO_ARTIFACTS" }
+
+  environment {
+    compute_type                = "BUILD_GENERAL1_SMALL"
+    image                       = "aws/codebuild/amazonlinux2-x86_64-standard:4.0"
+    type                        = "LINUX_CONTAINER"
+    privileged_mode             = true
+    image_pull_credentials_type = "CODEBUILD"
+  }
+
+  source {
+    type      = "S3"
+    location  = "\${aws_s3_bucket.builds.bucket}/builds/latest.zip"
+  }
+}
+
 resource "aws_iam_role" "execution_role" {
-  nameString = "\${var.project_name}-execution-role"
   name = "\${var.project_name}-execution-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -3554,10 +3663,23 @@ resource "aws_ecs_task_definition" "app" {
   execution_role_arn       = aws_iam_role.execution_role.arn
   container_definitions    = jsonencode([{
     name  = "app"
-    image = "nginx:latest"
+    image = "\${aws_ecr_repository.repo.repository_url}:latest"
     essential = true
     portMappings = [{ containerPort = 80, hostPort = 80 }]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = "/ecs/\${var.project_name}"
+        "awslogs-region"        = "\${var.region}"
+        "awslogs-stream-prefix" = "ecs"
+      }
+    }
   }])
+}
+
+resource "aws_cloudwatch_log_group" "logs" {
+  name              = "/ecs/\${var.project_name}"
+  retention_in_days = 7
 }
 
 resource "aws_ecs_service" "app" {
@@ -3593,22 +3715,45 @@ resource "aws_security_group" "app_sg" {
           variables: getRequiredVars('computecontainer', meta.args),
           outputs: `output "cluster_name" { value = aws_ecs_cluster.main.name }
 output "service_name" { value = aws_ecs_service.app.name }
+output "ecr_url" { value = aws_ecr_repository.repo.repository_url }
+output "codebuild_name" { value = aws_codebuild_project.build.name }
+output "build_bucket" { value = aws_s3_bucket.builds.bucket }
 output "region" { value = var.region }`
         };
 
       case 'cdn':
         return {
-          main: `resource "aws_cloudfront_distribution" "cdn" {
-  enabled = true
+          main: `# ═══════════════════════════════════════════════════════════════════════════
+# CloudFront CDN with Origin Access Control (OAC) - Production Grade
+# ═══════════════════════════════════════════════════════════════════════════
+
+# 1. Origin Access Control (OAC) - Modern replacement for OAI
+resource "aws_cloudfront_origin_access_control" "oac" {
+  name                              = "\${var.project_name}-oac"
+  description                       = "OAC for static site S3 bucket"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+# 2. CloudFront Distribution
+resource "aws_cloudfront_distribution" "cdn" {
+  enabled             = true
+  default_root_object = "index.html"
+  comment             = "\${var.project_name} Static Site CDN"
+
   origin {
-    domain_name = var.bucket_domain_name
-    origin_id   = "site"
+    domain_name              = var.bucket_domain_name
+    origin_id                = "site"
+    origin_access_control_id = aws_cloudfront_origin_access_control.oac.id
   }
+
   default_cache_behavior {
-    allowed_methods  = ["GET", "HEAD"]
-    cached_methods   = ["GET", "HEAD"]
-    target_origin_id = "site"
-    viewer_protocol_policy = "allow-all"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "site"
+    viewer_protocol_policy = "redirect-to-https"
+    compress               = true
 
     forwarded_values {
       query_string = false
@@ -3616,19 +3761,82 @@ output "region" { value = var.region }`
         forward = "none"
       }
     }
+
+    min_ttl     = 0
+    default_ttl = 3600
+    max_ttl     = 86400
   }
+
+  # SPA Support: Handle 403/404 with index.html for client-side routing
+  custom_error_response {
+    error_code         = 403
+    response_code      = 200
+    response_page_path = "/index.html"
+  }
+  custom_error_response {
+    error_code         = 404
+    response_code      = 200
+    response_page_path = "/index.html"
+  }
+
   restrictions {
     geo_restriction {
       restriction_type = "none"
     }
   }
+
   viewer_certificate {
     cloudfront_default_certificate = true
   }
+
+  tags = {
+    Name      = "\${var.project_name}-cdn"
+    ManagedBy = "Cloudiverse"
+  }
+}
+
+# 3. S3 Bucket Policy - CRITICAL: Allows ONLY this CloudFront distribution
+resource "aws_s3_bucket_policy" "cloudfront_access" {
+  bucket = var.bucket_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AllowCloudFrontAccess"
+        Effect    = "Allow"
+        Principal = {
+          Service = "cloudfront.amazonaws.com"
+        }
+        Action   = "s3:GetObject"
+        Resource = "\${var.bucket_arn}/*"
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = aws_cloudfront_distribution.cdn.arn
+          }
+        }
+      }
+    ]
+  })
+
+  depends_on = [aws_cloudfront_distribution.cdn]
 }`,
-          variables: getRequiredVars('cdn', meta.args) + '\nvariable "bucket_domain_name" { type = string }',
+          variables: getRequiredVars('cdn', meta.args) + `
+variable "bucket_domain_name" { 
+  type        = string 
+  description = "S3 bucket regional domain name"
+}
+variable "bucket_name" { 
+  type        = string 
+  description = "S3 bucket name for policy attachment"
+}
+variable "bucket_arn" { 
+  type        = string 
+  description = "S3 bucket ARN for policy"
+}`,
           outputs: `output "endpoint" { value = aws_cloudfront_distribution.cdn.domain_name }
-output "id" { value = aws_cloudfront_distribution.cdn.id }`
+output "id" { value = aws_cloudfront_distribution.cdn.id }
+output "arn" { value = aws_cloudfront_distribution.cdn.arn }`
         };
 
       case 'apigateway':
@@ -3912,21 +4120,34 @@ resource "aws_apigatewayv2_stage" "default" {
 
       case 'computecontainer':
         return {
-          main: `resource "google_cloud_run_service" "app" {
+          main: `resource "google_artifact_registry_repository" "repo" {
+  location      = var.region
+  repository_id = "\${var.project_name}-repo"
+  format        = "DOCKER"
+}
+
+resource "google_cloud_run_service" "app" {
   name     = "\${var.project_name}-app"
   location = var.region
 
   template {
     spec {
       containers {
-        image = "gcr.io/google-samples/hello-app:1.0"
+        image = "\${var.region}-docker.pkg.dev/\${var.project_id}/\${google_artifact_registry_repository.repo.name}/app:latest"
       }
     }
   }
+
+  traffic {
+    percent         = 100
+    latest_revision = true
+  }
 }`,
-          variables: getRequiredVars('computecontainer', meta.args),
+          variables: getRequiredVars('computecontainer', meta.args) + '\nvariable "project_id" { type = string }',
           outputs: `output "url" { value = google_cloud_run_service.app.status[0].url }
 output "service_name" { value = google_cloud_run_service.app.name }
+output "artifact_registry" { value = google_artifact_registry_repository.repo.name }
+output "project_id" { value = var.project_id }
 output "region" { value = var.region }`
         };
 
@@ -4201,7 +4422,15 @@ resource "google_api_gateway_api_config" "api_cfg" {
     switch (service) {
       case 'computecontainer':
         return {
-          main: `resource "azurerm_log_analytics_workspace" "core" {
+          main: `resource "azurerm_container_registry" "acr" {
+  name                = replace("\${var.project_name}acr", "-", "")
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = var.location
+  sku                 = "Standard"
+  admin_enabled       = true
+}
+
+resource "azurerm_log_analytics_workspace" "core" {
   name                = "\${var.project_name}-logs"
   location            = var.location
   resource_group_name = azurerm_resource_group.rg.name
@@ -4247,8 +4476,10 @@ resource "azurerm_resource_group" "rg" {
 }`,
           variables: getRequiredVars('computecontainer', meta.args),
           outputs: `output "url" { value = azurerm_container_app.app.ingress[0].fqdn }
+output "service_name" { value = azurerm_container_app.app.name }
 output "container_app_name" { value = azurerm_container_app.app.name }
-output "resource_group_name" { value = azurerm_resource_group.rg.name }`
+output "resource_group_name" { value = azurerm_resource_group.rg.name }
+output "acr_login_server" { value = azurerm_container_registry.acr.login_server }`
         };
 
       case 'objectstorage':
