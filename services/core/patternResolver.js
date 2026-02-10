@@ -22,6 +22,7 @@ const { resolveServiceId } = require('../../config/aliases');
 const { patterns: patternsConfig, findBestPattern, getPattern: getPatternFromConfig } = require('../../config');
 const PATTERN_CATALOG = patternsConfig.patterns;
 const TruthGate = require('./truthGate');
+const { validateRuntimeContract } = require('../infrastructure/deploymentValidator');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NEW: Domain Config for Capability Hints
@@ -933,18 +934,28 @@ class PatternResolver {
     // ═════════════════════════════════════════════════════════════════
     // 6️⃣ CANONICAL REGISTRY VALIDATION
     // ═════════════════════════════════════════════════════════════════
-    for (const svc of selected.keys()) {
-      const serviceDef = getServiceDefinition(svc);
-      if (!serviceDef) {
-        throw new Error(`Unknown canonical service: ${svc}. Must be defined in CANONICAL_SERVICES registry.`);
+    const finalServices = Array.from(selected.entries()).map(([id, meta]) => {
+      // Logic for REQUIRED vs SUGGESTED
+      // 1. If it's pattern mandatory -> REQUIRED
+      // 2. If it's a hard requirement (removable: false) -> REQUIRED
+      // 3. If it's a capability hint or removable rule -> SUGGESTED (contextual)
+      let state = 'REQUIRED';
+      if (meta.removable && (meta.source === 'capability' || meta.source === 'requirement_rule')) {
+        state = 'SUGGESTED';
       }
-    }
 
-    const finalServices = Array.from(selected.keys());
-    console.log(`[SERVICE RESOLUTION] Final services (${finalServices.length}):`, finalServices);
+      return {
+        id,
+        ...meta,
+        state
+      };
+    });
+
+    console.log(`[SERVICE RESOLUTION] Final resolution (${finalServices.length}):`, finalServices.map(s => `${s.id}(${s.state})`).join(', '));
 
     return finalServices;
   }
+
 
 
   /**
@@ -1156,27 +1167,29 @@ class PatternResolver {
     // ═════════════════════════════════════════════════════════════════
     // 🆕 NEW: Use resolveServices() with proper precedence
     // ═════════════════════════════════════════════════════════════════
-    const serviceNames = this.resolveServices({
+    const resolvedServices = this.resolveServices({
       capabilities: requirements.capabilities || {},
       terminal_exclusions: requirements.terminal_exclusions || [],
       pattern: selectedPattern,
       requirements: requirements // 🔥 FIX: Passed requirements for rule enforcement
     });
 
-    console.log(`[CANONICAL ARCHITECTURE] Pattern: ${selectedPattern}, Services: ${serviceNames.length}`);
-    console.log(`[CANONICAL ARCHITECTURE] Service List: ${serviceNames.join(', ')}`);
+    console.log(`[CANONICAL ARCHITECTURE] Pattern: ${selectedPattern}, Services: ${resolvedServices.length}`);
 
     // Build services array with full metadata from canonical registry
-    const services = serviceNames.map(name => {
+    const services = resolvedServices.map(svc => {
+      const name = svc.id;
       const serviceDef = getServiceDefinition(name);
       return {
         name: name,
+        state: svc.state, // REQUIRED or SUGGESTED
         description: serviceDef.description,
         category: serviceDef.category,
         kind: serviceDef.kind,
         terraform_supported: serviceDef.terraform_supported
       };
     });
+
 
     // 🔥 VALIDATION: Fail if required services are missing for pattern
     // 🔒 Pass terminalExclusions to respect user authority
@@ -1192,10 +1205,12 @@ class PatternResolver {
       category: service.category,
       description: service.description,
       kind: service.kind,
+      state: service.state, // Pass through REQUIRED/SUGGESTED
       terraform_supported: service.terraform_supported,
-      required: true, // All services from resolveServices are required
-      pattern_enforced: true
+      required: service.state === 'REQUIRED',
+      pattern_enforced: service.state === 'REQUIRED'
     }));
+
 
     // Define nodes based on services
     let nodes = [];
@@ -1365,6 +1380,10 @@ class PatternResolver {
       // Graph representation for diagrams
       nodes,
       edges,
+
+      // 🔥 HARDENING: Explicit Runtime & Validation
+      runtime: this.resolveRuntime(selectedPattern, deployable_services),
+      validation: validateRuntimeContract({ requirements }, this.resolveRuntime(selectedPattern, deployable_services)),
 
       // Legacy compatibility (will be deprecated)
       services,
@@ -1990,6 +2009,33 @@ class PatternResolver {
       canonicalArchitecture,
       servicesContract: canonicalArchitecture.services_contract
     };
+  }
+  /**
+   * Resolve the explicit runtime capability object
+   */
+  resolveRuntime(patternName, services) {
+    // 1. Check for Container Service
+    if (services.some(s => s.canonical_type === 'computecontainer' || s.canonical_type === 'compute_container')) {
+      return { type: 'compute_container', reason: 'Explicit container service found' };
+    }
+
+    // 2. Check for Serverless
+    if (services.some(s => s.canonical_type === 'computeserverless')) {
+      return { type: 'compute_serverless', reason: 'Serverless function service found' };
+    }
+
+    // 3. Check for VM
+    if (services.some(s => s.canonical_type === 'computevm')) {
+      return { type: 'compute_vm', reason: 'Virtual machine service found' };
+    }
+
+
+    // 4. Fallback for Static Sites
+    if (services.some(s => s.canonical_type === 'objectstorage') && services.some(s => s.canonical_type === 'cdn')) {
+      return { type: 'static_site', reason: 'Storage + CDN detected' };
+    }
+
+    return { type: 'unknown', reason: 'No compute service detected' };
   }
 }
 

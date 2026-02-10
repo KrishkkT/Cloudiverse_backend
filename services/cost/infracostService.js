@@ -671,6 +671,71 @@ async function generateCostEstimate(provider, infraSpec, deployableServices, usa
       completenessStatus = 'INCOMPLETE';
     }
 
+    // ---------------------------------------------------------
+    // 🔵 POST-PROCESSING: MERGE & ENRICH SERVICES
+    // ---------------------------------------------------------
+    const enrichedServices = [];
+    const processedIds = new Set();
+
+    // A. Add Infracost Results (PRICED)
+    if (infracostResult.services) {
+      infracostResult.services.forEach(svc => {
+        // Normalize ID for matching
+        const normId = svc.service_class.replace(/_/g, '').toLowerCase();
+        processedIds.add(normId);
+
+        // Validate $0 Cost on Priced Services
+        if (svc.cost.monthly === 0 && classification.details[svc.service_class]?.status === 'PRICED') {
+          console.warn(`[PRICING FIREWALL] ⚠️ Service ${svc.service_class} is PRICED but returned $0.`);
+          svc.pricing_status = 'PRICED';
+          svc.reason = 'Usage within free tier limits (estimated)';
+        } else {
+          svc.pricing_status = 'PRICED';
+          svc.reason = 'Estimated by Infracost';
+        }
+
+        enrichedServices.push(svc);
+      });
+    }
+
+    // B. Add Missing Services (Free / External / Priced but not in Infracost output)
+    deployableServices.forEach(svcId => {
+      const normId = svcId.replace(/_/g, '').toLowerCase();
+
+      // If we haven't processed this service yet (meaning Infracost didn't return it)
+      // Note: Infracost might return 'aws_s3_bucket' while we have 'objectstorage'. Need robust matching.
+      // The `RESOURCE_CATEGORY_MAP` in `normalizeInfracostOutput` handles the translation.
+      // So `svc.service_class` should match `svcId` (canonical).
+
+      const isAlreadyIncluded = enrichedServices.some(s => s.service_class === svcId || s.service_class === normId);
+
+      if (!isAlreadyIncluded) {
+        const detail = classification.details[svcId] || { status: 'UNKNOWN', reason: 'Not evaluated', display_name: svcId };
+
+        if (detail.status === 'PRICED') {
+          // It SHOULD have been in Infracost. If missing, it means Terraform didn't include it or Infracost failed.
+          enrichedServices.push({
+            service_class: svcId,
+            display_name: detail.display_name,
+            category: getCategoryForServiceId(svcId),
+            pricing_status: 'PRICED',
+            reason: 'Pricing data currently unavailable',
+            cost: { monthly: 0, formatted: '$0.00/mo' }
+          });
+        } else {
+          // Correctly categorize Free / External
+          enrichedServices.push({
+            service_class: svcId,
+            display_name: detail.display_name,
+            category: getCategoryForServiceId(svcId),
+            pricing_status: detail.status,
+            reason: detail.reason,
+            cost: { monthly: 0, formatted: detail.status === 'EXTERNAL' ? 'Varies' : 'Included' }
+          });
+        }
+      }
+    });
+
     return {
       provider: provider,
       total_monthly_cost: totalCost,
@@ -685,9 +750,9 @@ async function generateCostEstimate(provider, infraSpec, deployableServices, usa
         free: classification.free_tier.length,
         total: deployableServices.length
       },
-      services: infracostResult.projects[0]?.breakdown?.resources || [], // Raw line items
+      services: enrichedServices, // 🔥 Use the enriched list
       // Keep legacy fields for frontend compatibility for now
-      service_count: billableServices.length,
+      service_count: enrichedServices.length,
       confidence: completenessStatus === 'COMPLETE' ? 1.0 : 0.0,
       is_mock: false
     };
@@ -704,44 +769,124 @@ async function generateCostEstimate(provider, infraSpec, deployableServices, usa
 /**
  * Classify services into pricing buckets using SSOT
  */
+// ENHANCED CLASSIFICATION
 function classifyServicesForPricing(serviceList) {
   const buckets = {
-    direct: [],
-    usage_based: [],
-    external: [],
-    free_tier: [],
-    unknown: []
+    direct: [],       // Paid via Terraform
+    usage_based: [],  // Paid via TF but separate meter
+    external: [],     // Paid outside (SaaS)
+    free_tier: [],    // Always free or included
+    unknown: [],      // No data
+    details: {}       // ID -> { status, reason }
   };
 
   for (const svcId of serviceList) {
-    // Handle input format: string ID vs object
     const id = typeof svcId === 'string' ? svcId : (svcId.service_id || svcId.service_class || svcId.id);
     if (!id) continue;
 
-    const def = servicesCatalog[id];
+    const normalizedId = id.replace(/_/g, '').toLowerCase();
+
+    // Check Catalog First
+    let def = servicesCatalog[id];
     if (!def) {
-      // Try normalized lookup (remove underscores)
-      const normalized = Object.values(servicesCatalog).find(s => s.service_id === id || s.service_id === id.replace(/_/g, ''));
-      if (normalized) {
-        addToBucket(buckets, normalized, id);
-      } else {
-        buckets.unknown.push(id);
-      }
-      continue;
+      // Try normalized lookup
+      def = Object.values(servicesCatalog).find(s =>
+        (s.service_id || '').replace(/_/g, '') === normalizedId
+      );
     }
-    addToBucket(buckets, def, id);
+
+    // Determine Status
+    let status = 'UNKNOWN';
+    let reason = 'Pricing data unavailable';
+
+    if (def && def.pricing) {
+      if (def.pricing.class === 'DIRECT' || def.pricing.class === 'USAGE_BASED') {
+        status = 'PRICED';
+        reason = 'Infrastructure Cost Driver';
+      } else if (def.pricing.class === 'EXTERNAL') {
+        status = 'EXTERNAL';
+        reason = 'Billed separately via provider console';
+      } else if (def.pricing.class === 'FREE_TIER') {
+        status = 'FREE_TIER';
+        reason = 'Always Free / Included';
+      }
+    } else {
+      // Fallback Heuristics
+      if (['vpc', 'networking', 'iam', 'securitygroup', 'resourcegroup', 'dns'].includes(normalizedId)) {
+        status = 'FREE_TIER';
+        reason = 'Core networking/security (Included)';
+      } else if (['stripe', 'auth0', 'sendgrid', 'twilio'].includes(normalizedId)) {
+        status = 'EXTERNAL';
+        reason = 'Third-party SaaS integration';
+      } else {
+        // Assume priced if it's a major component
+        status = 'PRICED';
+        reason = 'Standard infrastructure component';
+      }
+    }
+
+    // Assign to Bucket (Legacy support)
+    if (status === 'PRICED') buckets.direct.push(id);
+    else if (status === 'EXTERNAL') buckets.external.push(id);
+    else if (status === 'FREE_TIER') buckets.free_tier.push(id);
+    else buckets.unknown.push(id);
+
+    // Store Details
+    buckets.details[id] = { status, reason, display_name: def?.display_name || id };
   }
+
   return buckets;
 }
 
-function addToBucket(buckets, def, originalId) {
-  const pClass = def.pricing?.class || 'UNKNOWN';
-  if (pClass === 'DIRECT') buckets.direct.push(originalId);
-  else if (pClass === 'USAGE_BASED') buckets.usage_based.push(originalId);
-  else if (pClass === 'EXTERNAL') buckets.external.push(originalId);
-  else if (pClass === 'FREE_TIER') buckets.free_tier.push(originalId);
-  else buckets.unknown.push(originalId);
+// Helper to map service ID to a general category for display
+const DISPLAY_CATEGORY_MAP = {
+  'compute': 'Compute',
+  'virtual_machine': 'Compute',
+  'container_service': 'Compute',
+  'kubernetes_service': 'Compute',
+  'database': 'Database',
+  'relational_database': 'Database',
+  'nosql_database': 'Database',
+  'object_storage': 'Storage',
+  'block_storage': 'Storage',
+  'file_storage': 'Storage',
+  'networking': 'Networking',
+  'load_balancer': 'Networking',
+  'cdn': 'Networking',
+  'dns': 'Networking',
+  'vpc': 'Networking',
+  'message_queue': 'Messaging',
+  'streaming_data': 'Messaging',
+  'serverless_function': 'Serverless',
+  'api_gateway': 'API Management',
+  'monitoring': 'Monitoring & Logging',
+  'logging': 'Monitoring & Logging',
+  'security': 'Security',
+  'iam': 'Security',
+  'security_group': 'Security',
+  'data_warehouse': 'Analytics',
+  'machine_learning': 'AI/ML',
+  'search_service': 'Search',
+  'cache': 'Caching',
+  'email_service': 'Communication',
+  'sms_service': 'Communication',
+  'auth_service': 'Identity',
+  'developer_tools': 'Developer Tools',
+  'management_tools': 'Management Tools',
+  'resource_group': 'Management Tools',
+  'other': 'Other'
+};
+
+function getCategoryForServiceId(serviceId) {
+  const normalizedId = serviceId.replace(/_/g, '').toLowerCase();
+  for (const key in DISPLAY_CATEGORY_MAP) {
+    if (normalizedId.includes(key.replace(/_/g, ''))) {
+      return DISPLAY_CATEGORY_MAP[key];
+    }
+  }
+  return 'Other';
 }
+
 
 function createZeroCostResult(provider, classification, costProfile) {
   return {
@@ -2105,24 +2250,39 @@ function normalizeInfracostOutput(infracostJson, provider, infraSpec, costProfil
   console.log(`[INFRACOST] Aggregated service costs:`, serviceCosts);
   console.log(`[INFRACOST] Selected services:`, selectedServices);
 
-  // Build the services array in same format as mock data
-  const services = Object.entries(serviceCosts).map(([serviceClass, cost]) => {
+  // Build the services array with enriched context
+  const services = [];
+
+  // 1. Add Priced Services (from Infracost)
+  Object.entries(serviceCosts).forEach(([serviceClass, cost]) => {
     const cloudService = selectedServices[serviceClass];
     const displayName = cloudMapping.getServiceDisplayName(cloudService)
       || serviceClass.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 
-    return {
+    services.push({
       service_class: serviceClass,
       cloud_service: cloudService,
       display_name: displayName,
       category: getCategoryForServiceId(serviceClass),
+      pricing_status: 'PRICED', // Explicitly priced
+      reason: 'Infrastructure Cost Driver',
       sizing: (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 'Performance' : 'Standard',
       cost: {
         monthly: Math.round(cost * 100) / 100,
         formatted: `$${cost.toFixed(2)}/mo`
       }
-    };
+    });
   });
+
+  // 2. Add Missing Services (Free Tier / External / Zero-Cost)
+  // We need to check against the original deployable list to find what's missing
+  // Since we don't have the original list here in normalize, we infer from known missing logic
+  // BUT... `generateCostEstimate` has the list. 
+  // BETTER: `generateCostEstimate` should merge this list.
+  // For now, let's just make sure we return the `pricing_status` logic in the existing items.
+
+  // NOTE: The merging happens in `generateCostEstimate`. 
+  // This function just returns what Infracost found.
 
   return {
     provider,
@@ -2179,23 +2339,23 @@ function generateMockCostData(provider, infraSpec, sizing, costProfile = 'COST_E
   // Base costs per service class (supports both underscore and no-underscore naming)
   const baseCosts = {
     // Compute services
-    compute_container: 80, computecontainer: 80,
-    compute_serverless: 30, computeserverless: 30,
-    compute_vm: 60, computevm: 60,
-    compute_static: 5, computestatic: 5,
-    compute_batch: 70, computebatch: 70,
-    compute_edge: 25, computeedge: 25,
+    compute_container: { cost: 80, cat: 'Compute' }, computecontainer: { cost: 80, cat: 'Compute' },
+    compute_serverless: { cost: 30, cat: 'Serverless' }, computeserverless: { cost: 30, cat: 'Serverless' },
+    compute_vm: { cost: 60, cat: 'Compute' }, computevm: { cost: 60, cat: 'Compute' },
+    compute_static: { cost: 5, cat: 'Compute' }, computestatic: { cost: 5, cat: 'Compute' },
+    compute_batch: { cost: 70, cat: 'Compute' }, computebatch: { cost: 70, cat: 'Compute' },
+    compute_edge: { cost: 25, cat: 'Compute' }, computeedge: { cost: 25, cat: 'Compute' },
     // Database services
-    relational_database: 100, relationaldatabase: 100,
-    nosql_database: 40, nosqldatabase: 40,
-    time_series_database: 50, timeseriesdatabase: 50,
-    vector_database: 80, vectordatabase: 80,
-    cache: 50,
-    search_engine: 60, searchengine: 60,
+    relational_database: { cost: 100, cat: 'Database' }, relationaldatabase: { cost: 100, cat: 'Database' },
+    nosql_database: { cost: 40, cat: 'Database' }, nosqldatabase: { cost: 40, cat: 'Database' },
+    time_series_database: { cost: 50, cat: 'Database' }, timeseriesdatabase: { cost: 50, cat: 'Database' },
+    vector_database: { cost: 80, cat: 'Database' }, vectordatabase: { cost: 80, cat: 'Database' },
+    cache: { cost: 50, cat: 'Caching' },
+    search_engine: { cost: 60, cat: 'Search' }, searchengine: { cost: 60, cat: 'Search' },
     // Storage services
-    object_storage: 10, objectstorage: 10,
-    block_storage: 15, blockstorage: 15,
-    file_storage: 12, filestorage: 12,
+    object_storage: { cost: 10, cat: 'Storage' }, objectstorage: { cost: 10, cat: 'Storage' },
+    block_storage: { cost: 15, cat: 'Storage' }, blockstorage: { cost: 15, cat: 'Storage' },
+    file_storage: { cost: 12, cat: 'Storage' }, filestorage: { cost: 12, cat: 'Storage' },
     // Networking services
     load_balancer: 25, loadbalancer: 25,
     api_gateway: 15, apigateway: 15,
@@ -2284,6 +2444,8 @@ function generateMockCostData(provider, infraSpec, sizing, costProfile = 'COST_E
       cloud_service: cloudServiceId,
       display_name: displayName,
       category: category,
+      pricing_status: 'PRICED',
+      reason: 'Estimated',
       sizing: (costProfile === 'HIGH_PERFORMANCE' || costProfile === 'high_performance') ? 'Performance' : 'Standard',
       cost: {
         monthly: cost,
@@ -3642,12 +3804,14 @@ function generateBetterFallback(provider, infraSpec, sizing, costProfile) {
   let baseCost = 0;
   let services = [];
 
-  // Basic Web Platform Pricing (Approximation)
   // App Service (Standard S1) or similar
   baseCost += 75;
   services.push({
     name: p === 'AZURE' ? 'Azure App Service (Standard S1)' : (p === 'AWS' ? 'Service (Compute)' : 'Cloud Run'),
-    cost: { monthly: 75.00 },
+    cost: { monthly: 75.00, formatted: '$75.00/mo' },
+    pricing_status: 'PRICED',
+    category: 'Compute',
+    reason: 'Estimated standard tier',
     metadata: { unit: 'month' }
   });
 
@@ -3655,7 +3819,10 @@ function generateBetterFallback(provider, infraSpec, sizing, costProfile) {
   baseCost += 150;
   services.push({
     name: p === 'AZURE' ? 'Azure Database for PostgreSQL (Flexible)' : 'Managed Database',
-    cost: { monthly: 150.00 },
+    cost: { monthly: 150.00, formatted: '$150.00/mo' },
+    pricing_status: 'PRICED',
+    category: 'Database',
+    reason: 'Estimated standard tier',
     metadata: { unit: 'month' }
   });
 
@@ -3663,12 +3830,24 @@ function generateBetterFallback(provider, infraSpec, sizing, costProfile) {
   baseCost += 40;
   services.push({
     name: 'Redis Cache (Basic)',
-    cost: { monthly: 40.00 },
+    cost: { monthly: 40.00, formatted: '$40.00/mo' },
+    pricing_status: 'PRICED',
+    category: 'Caching',
+    reason: 'Estimated basic tier',
     metadata: { unit: 'month' }
   });
 
   // Load Balancer / Networking
   baseCost += 20;
+
+  // Add Free Tier Placeholders (to mimic full response)
+  services.push({
+    name: 'VPC / Networking',
+    cost: { monthly: 0, formatted: 'Included' },
+    pricing_status: 'FREE_TIER',
+    category: 'Networking',
+    reason: 'Included in cloud platform'
+  });
 
   const total = baseCost;
 

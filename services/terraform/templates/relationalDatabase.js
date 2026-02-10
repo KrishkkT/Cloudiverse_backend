@@ -3,11 +3,11 @@
 const { renderStandardVariables, generateMinimalModule } = require('./base');
 
 function relationalDatabaseModule(provider) {
-    const p = provider.toLowerCase();
+  const p = provider.toLowerCase();
 
-    if (p === 'aws') {
-        return {
-            mainTf: `
+  if (p === 'aws') {
+    return {
+      mainTf: `
 resource "aws_db_instance" "main" {
   identifier             = "\${var.project_name}-db"
   engine                 = "postgres"
@@ -20,15 +20,61 @@ resource "aws_db_instance" "main" {
   skip_final_snapshot    = true
   publicly_accessible    = false
   multi_az               = var.multi_az
+  db_subnet_group_name   = aws_db_subnet_group.default.name
+  vpc_security_group_ids = [aws_security_group.db.id]
   
   tags = {
     Environment = "production"
     ManagedBy   = "Cloudiverse"
   }
 }
+
+resource "aws_db_subnet_group" "default" {
+  name       = "\${var.project_name}-db-subnet-group"
+  subnet_ids = var.private_subnet_ids
+
+  tags = {
+    Name = "\${var.project_name}-db-subnet-group"
+  }
+}
+
+resource "aws_security_group" "db" {
+  name        = "\${var.project_name}-db-sg"
+  description = "Allow inbound traffic from application"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description = "PostgreSQL from VPC"
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"] # Should ideally be specific subnets or SG refs
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "\${var.project_name}-db-sg"
+  }
+}
 `.trim(),
-            variablesTf: `
+      variablesTf: `
 ${renderStandardVariables('aws')}
+
+variable "vpc_id" {
+  type        = string
+  description = "VPC ID where the database will be deployed"
+}
+
+variable "private_subnet_ids" {
+  type        = list(string)
+  description = "List of private subnet IDs for the DB subnet group"
+}
 
 variable "db_instance_class" {
   type    = string
@@ -47,16 +93,21 @@ variable "multi_az" {
   default = false
 }
 `.trim(),
-            outputsTf: `
+      outputsTf: `
 output "db_endpoint" { value = aws_db_instance.main.endpoint }
 output "db_name" { value = aws_db_instance.main.identifier }
-`.trim()
-        };
-    }
 
-    if (p === 'gcp') {
-        return {
-            mainTf: `
+# Standardized Outputs
+output "endpoint" { value = aws_db_instance.main.address }
+output "port" { value = aws_db_instance.main.port }
+output "name" { value = aws_db_instance.main.db_name }
+`.trim()
+    };
+  }
+
+  if (p === 'gcp') {
+    return {
+      mainTf: `
 resource "google_sql_database_instance" "main" {
   name             = "\${var.project_name}-db"
   database_version = "POSTGRES_15"
@@ -91,7 +142,7 @@ resource "google_sql_user" "users" {
   password = "placeholder_password"
 }
 `.trim(),
-            variablesTf: `
+      variablesTf: `
 ${renderStandardVariables('gcp')}
 
 variable "db_instance_class" {
@@ -106,16 +157,16 @@ variable "db_allocated_storage" {
   description = "Storage size in GB"
 }
 `.trim(),
-            outputsTf: `
+      outputsTf: `
 output "connection_name" { value = google_sql_database_instance.main.connection_name }
 output "public_ip" { value = google_sql_database_instance.main.public_ip_address }
 `.trim()
-        };
-    }
+    };
+  }
 
-    if (p === 'azure') {
-        return {
-            mainTf: `
+  if (p === 'azure') {
+    return {
+      mainTf: `
 resource "azurerm_postgresql_flexible_server" "main" {
   name                   = "\${var.project_name}-db-server"
   resource_group_name    = var.resource_group_name
@@ -143,7 +194,7 @@ resource "azurerm_postgresql_flexible_server_database" "main" {
   charset   = "utf8"
 }
 `.trim(),
-            variablesTf: `
+      variablesTf: `
 ${renderStandardVariables('azure')}
 
 variable "db_instance_class" {
@@ -158,14 +209,14 @@ variable "db_allocated_storage" {
   description = "Storage size in GB"
 }
 `.trim(),
-            outputsTf: `
+      outputsTf: `
 output "server_fqdn" { value = azurerm_postgresql_flexible_server.main.fqdn }
 output "server_name" { value = azurerm_postgresql_flexible_server.main.name }
 `.trim()
-        };
-    }
+    };
+  }
 
-    return generateMinimalModule(p, 'relationaldatabase');
+  return generateMinimalModule(p, 'relationaldatabase');
 }
 
 module.exports = { relationalDatabaseModule };

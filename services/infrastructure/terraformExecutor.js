@@ -39,6 +39,17 @@ class TerraformExecutor {
         return jobs.get(jobId);
     }
 
+    getActiveJobs(workspaceId) {
+        const activeJobs = [];
+        for (const job of jobs.values()) {
+            // Check if job belongs to workspace and is in a non-terminal state
+            if (job.workspaceId === workspaceId && ['init', 'running', 'queued'].includes(job.status)) {
+                activeJobs.push(job);
+            }
+        }
+        return activeJobs;
+    }
+
     addLog(jobId, message, type = 'INFO') {
         const job = jobs.get(jobId);
         if (job) {
@@ -423,13 +434,18 @@ class TerraformExecutor {
 
             // INJECT TF_VAR MAPPING FOR AZURE (Explicit Provider Flow)
             if (provider === 'azure') {
-                // Map ARM_* vars to TF_VAR_azure_* vars to match variables.tf definitions
-                if (envVars.ARM_SUBSCRIPTION_ID) envVars.TF_VAR_azure_subscription_id = envVars.ARM_SUBSCRIPTION_ID;
-                if (envVars.ARM_TENANT_ID) envVars.TF_VAR_azure_tenant_id = envVars.ARM_TENANT_ID;
-                if (envVars.ARM_CLIENT_ID) envVars.TF_VAR_azure_client_id = envVars.ARM_CLIENT_ID;
-                if (envVars.ARM_CLIENT_SECRET) envVars.TF_VAR_azure_client_secret = envVars.ARM_CLIENT_SECRET;
+                // Map ARM_* vars to standard TF_VAR_* vars
+                if (envVars.ARM_SUBSCRIPTION_ID) envVars.TF_VAR_subscription_id = envVars.ARM_SUBSCRIPTION_ID;
+                if (envVars.ARM_TENANT_ID) envVars.TF_VAR_tenant_id = envVars.ARM_TENANT_ID;
+                if (envVars.ARM_CLIENT_ID) envVars.TF_VAR_client_id = envVars.ARM_CLIENT_ID;
+                if (envVars.ARM_CLIENT_SECRET) envVars.TF_VAR_client_secret = envVars.ARM_CLIENT_SECRET;
 
-                this.addLog(jobId, 'Injected Azure credentials via TF_VAR environment variables', 'INFO');
+                // Inject Resource Group Name (Isolation)
+                // Naming convention: rg-cldv-ws-<workspace_id>
+                const rgName = `rg-cldv-ws-${workspaceId}`;
+                envVars.TF_VAR_resource_group_name = rgName;
+
+                this.addLog(jobId, `Injected Azure credentials & Resource Group: ${rgName}`, 'INFO');
             }
 
             this.addLog(jobId, 'Credentials obtained successfully', 'SUCCESS');
@@ -456,10 +472,23 @@ class TerraformExecutor {
 
             this.addLog(jobId, `Initializing Terraform for ${provider.toUpperCase()}...`, 'CMD');
 
+            const initArgs = ['-input=false', '-no-color'];
+
+            // 🔥 AZURE BACKEND CONFIGURATION
+            if (provider === 'azure') {
+                // These values should ideally come from env vars or config, hardcoding per plan for now
+                initArgs.push('-backend-config=resource_group_name=cloudiverse-tfstate-rg');
+                initArgs.push('-backend-config=storage_account_name=cloudiversetfstate');
+                initArgs.push('-backend-config=container_name=tfstate');
+                initArgs.push(`-backend-config=key=ws_${workspaceId}/terraform.tfstate`);
+
+                this.addLog(jobId, `Configuring Azure Backend: ws_${workspaceId}/terraform.tfstate`, 'INFO');
+            }
+
             const initResult = await this.runTerraformCommand(
                 jobId,
                 'init',
-                ['-input=false', '-no-color'],
+                initArgs,
                 workDir,
                 envVars
             );

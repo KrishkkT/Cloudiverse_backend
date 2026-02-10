@@ -84,6 +84,57 @@ output "private_subnet_ids" { value = [aws_subnet.private_a.id, aws_subnet.priva
     };
   }
 
+  if (p === 'azure') {
+    return {
+      mainTf: `
+# Virtual Network
+resource "azurerm_virtual_network" "main" {
+  name                = "\${var.project_name}-vnet"
+  address_space       = ["10.0.0.0/16"]
+  location            = var.location
+  resource_group_name = var.resource_group_name
+
+  tags = {
+    Environment = "production"
+    ManagedBy   = "Cloudiverse"
+  }
+}
+
+# Subnets
+resource "azurerm_subnet" "public" {
+  name                 = "\${var.project_name}-public-subnet"
+  resource_group_name  = var.resource_group_name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = ["10.0.1.0/24"]
+}
+
+resource "azurerm_subnet" "private" {
+  name                 = "\${var.project_name}-private-subnet"
+  resource_group_name  = var.resource_group_name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = ["10.0.2.0/24"]
+}
+`.trim(),
+      variablesTf: renderStandardVariables('azure'),
+      outputsTf: `
+output "vpc_id" {
+  value       = azurerm_virtual_network.main.id
+  description = "Azure Virtual Network ID"
+}
+
+output "public_subnet_ids" {
+  value       = [azurerm_subnet.public.id]
+  description = "Public Subnet IDs"
+}
+
+output "private_subnet_ids" {
+  value       = [azurerm_subnet.private.id]
+  description = "Private Subnet IDs"
+}
+`.trim()
+    };
+  }
+
   return generateMinimalModule(p, 'vpcnetworking');
 }
 

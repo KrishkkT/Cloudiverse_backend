@@ -53,8 +53,8 @@ async function initiateDestroy(workspaceId, userId, confirmation) {
     const workspace = wsResult.rows[0];
 
     // Validate state
-    if (workspace.deployment_status !== 'DEPLOYED' && workspace.deployment_status !== 'INFRA_READY') {
-        throw new Error(`Cannot destroy: workspace is in ${workspace.deployment_status} state. Only DEPLOYED or INFRA_READY workspaces can be destroyed.`);
+    if (workspace.deployment_status !== 'DEPLOYED' && workspace.deployment_status !== 'INFRA_READY' && workspace.deployment_status !== 'FAILED') {
+        throw new Error(`Cannot destroy: workspace is in ${workspace.deployment_status} state. Only DEPLOYED, INFRA_READY, or FAILED workspaces can be destroyed.`);
     }
 
     // Check for existing destroy job

@@ -9,7 +9,7 @@ function objectStorageModule(provider) {
     return {
       mainTf: `
 resource "aws_s3_bucket" "main" {
-  bucket_prefix = "\${var.project_name}-"
+  bucket_prefix = "\${substr(var.project_name, 0, min(length(var.project_name), 36))}-"
   force_destroy = true
   
   tags = {
@@ -44,6 +44,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "main" {
       outputsTf: `
 output "bucket_name" { value = aws_s3_bucket.main.id }
 output "bucket_arn"  { value = aws_s3_bucket.main.arn }
+output "bucket_domain_name" { value = aws_s3_bucket.main.bucket_regional_domain_name }
 `.trim()
     };
   }

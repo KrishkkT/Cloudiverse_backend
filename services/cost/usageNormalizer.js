@@ -503,8 +503,112 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // ML / AI SERVICES
+    // EMERGING TECH & PLATFORM SERVICES (Service Mesh, Discovery, etc.)
     // ═══════════════════════════════════════════════════════════════════
+
+    if (hasService('servicediscovery')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_service_discovery_private_dns_namespace.dns'] = {
+                    monthly_hosted_zones: 1,
+                    monthly_queries: monthlyRequests * 2 // internal DNS lookups
+                };
+                break;
+            case 'GCP':
+                usage['google_service_directory_namespace.dns'] = {
+                    monthly_endpoints: 10,
+                    monthly_lookups: monthlyRequests
+                };
+                break;
+            case 'AZURE':
+                usage['azurerm_private_dns_zone.dns'] = {
+                    monthly_hosted_zones: 1
+                };
+                break;
+        }
+    }
+
+    if (hasService('servicemesh')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_appmesh_mesh.mesh'] = {
+                    monthly_mesh_hours: 730
+                };
+                break;
+            case 'GCP':
+                // Traffic Director (Google Cloud Service Mesh)
+                usage['google_compute_global_forwarding_rule.mesh'] = {
+                    monthly_traffic_gb: transferGB
+                };
+                break;
+        }
+    }
+
+    if (hasService('globalloadbalancer')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_globalaccelerator_accelerator.global'] = {
+                    monthly_fixed_fee_hours: 730,
+                    monthly_data_transfer_premium_gb: transferGB
+                };
+                break;
+            case 'GCP':
+                usage['google_compute_global_forwarding_rule.global_lb'] = {
+                    monthly_data_processing_gb: transferGB
+                };
+                break;
+            case 'AZURE':
+                usage['azurerm_traffic_manager_profile.global'] = {
+                    monthly_dns_queries: monthlyRequests
+                };
+                break;
+        }
+    }
+
+    if (hasService('searchengine') || hasService('search_engine')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_opensearch_domain.search'] = {
+                    storage_gb: storageGB,
+                    monthly_master_node_hours: 730,
+                    monthly_data_node_hours: 730
+                };
+                break;
+            case 'GCP':
+                // Vector Search or similar
+                usage['google_vertex_ai_index.vector'] = {
+                    monthly_node_hours: 730
+                };
+                break;
+            case 'AZURE':
+                usage['azurerm_search_service.search'] = {
+                    monthly_hours: 730, // Basic tier
+                    storage_gb: storageGB
+                };
+                break;
+        }
+    }
+
+    if (hasService('experimenttracking') || hasService('modelregistry') || hasService('mlpipelineorchestration')) {
+        switch (provider) {
+            case 'AWS':
+                usage['aws_sagemaker_domain.studio'] = {
+                    monthly_studio_user_hours: 100 // estimated active hours
+                };
+                break;
+            case 'AZURE':
+                usage['azurerm_machine_learning_workspace.ml'] = {
+                    monthly_registry_storage_gb: storageGB
+                };
+                break;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // ML / AI SERVICES (UPDATED)
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ... (Existing logic for mlinference maintained below)
 
     if (hasService('mlinference') ||
         hasService('ml_inference_gpu') ||

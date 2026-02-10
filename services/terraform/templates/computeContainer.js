@@ -7,11 +7,11 @@ const { renderStandardVariables, generateMinimalModule } = require('./base');
  * Used for containerized workloads in stateful web platforms
  */
 function computeContainerModule(provider) {
-    const p = provider.toLowerCase();
+  const p = provider.toLowerCase();
 
-    if (p === 'aws') {
-        return {
-            mainTf: `
+  if (p === 'aws') {
+    return {
+      mainTf: `
 # ECS Cluster for container workloads
 resource "aws_ecs_cluster" "main" {
   name = "\${var.project_name}-cluster"
@@ -94,7 +94,7 @@ resource "aws_cloudwatch_log_group" "ecs" {
   }
 }
 `.trim(),
-            variablesTf: `
+      variablesTf: `
 ${renderStandardVariables('aws')}
 
 variable "container_cpu" {
@@ -120,8 +120,26 @@ variable "container_port" {
   default = 80
   description = "Port exposed by the container"
 }
+
+variable "vpc_id" {
+  type        = string
+  default     = ""
+  description = "VPC ID for container networking"
+}
+
+variable "private_subnet_ids" {
+  type        = list(string)
+  default     = []
+  description = "Private Subnet IDs for container networking"
+}
+
+variable "public_subnet_ids" {
+  type        = list(string)
+  default     = []
+  description = "Public Subnet IDs for container networking"
+}
 `.trim(),
-            outputsTf: `
+      outputsTf: `
 output "cluster_id" {
   value       = aws_ecs_cluster.main.id
   description = "ECS Cluster ID"
@@ -136,18 +154,23 @@ output "task_definition_arn" {
   value       = aws_ecs_task_definition.app.arn
   description = "ECS Task Definition ARN"
 }
-`.trim()
-        };
-    }
 
-    if (p === 'gcp') {
-        return {
-            mainTf: `
+output "url" {
+  value       = "" 
+  description = "URL (placeholder for Load Balancer integration)"
+}
+`.trim()
+    };
+  }
+
+  if (p === 'gcp') {
+    return {
+      mainTf: `
 # Cloud Run Service
 resource "google_cloud_run_service" "main" {
   name     = "\${var.project_name}-service"
   location = var.region
-
+  
   template {
     spec {
       containers {
@@ -161,13 +184,6 @@ resource "google_cloud_run_service" "main" {
             memory = var.container_memory
           }
         }
-      }
-    }
-
-    metadata {
-      annotations = {
-        "autoscaling.knative.dev/minScale" = "1"
-        "autoscaling.knative.dev/maxScale" = "10"
       }
     }
   }
@@ -187,7 +203,7 @@ resource "google_cloud_run_service_iam_member" "public" {
   member   = "allUsers"
 }
 `.trim(),
-            variablesTf: `
+      variablesTf: `
 ${renderStandardVariables('gcp')}
 
 variable "container_image" {
@@ -215,11 +231,28 @@ variable "allow_unauthenticated" {
   type    = bool
   default = false
 }
+
+variable "vpc_id" {
+  type        = string
+  default     = ""
+  description = "VPC ID (optional for Cloud Run)"
+}
+
+variable "private_subnet_ids" {
+  type        = list(string)
+  default     = []
+  description = "Private Subnet IDs (optional for Cloud Run)"
+}
 `.trim(),
-            outputsTf: `
+      outputsTf: `
 output "service_url" {
   value       = google_cloud_run_service.main.status[0].url
   description = "Cloud Run service URL"
+}
+
+output "url" {
+  value       = google_cloud_run_service.main.status[0].url
+  description = "Standardized URL output"
 }
 
 output "service_name" {
@@ -227,12 +260,12 @@ output "service_name" {
   description = "Cloud Run service name"
 }
 `.trim()
-        };
-    }
+    };
+  }
 
-    // Azure
-    return {
-        mainTf: `
+  // Azure
+  return {
+    mainTf: `
 # Container Apps Environment
 resource "azurerm_container_app_environment" "main" {
   name                = "\${var.project_name}-env"
@@ -284,7 +317,7 @@ resource "azurerm_container_app" "main" {
   }
 }
 `.trim(),
-        variablesTf: `
+    variablesTf: `
 ${renderStandardVariables('azure')}
 
 variable "container_image" {
@@ -306,11 +339,28 @@ variable "container_port" {
   type    = number
   default = 80
 }
+
+variable "vpc_id" {
+  type        = string
+  default     = ""
+  description = "VPC ID (optional)"
+}
+
+variable "private_subnet_ids" {
+  type        = list(string)
+  default     = []
+  description = "Private Subnet IDs (optional)"
+}
 `.trim(),
-        outputsTf: `
+    outputsTf: `
 output "app_fqdn" {
   value       = azurerm_container_app.main.latest_revision_fqdn
   description = "Container App FQDN"
+}
+
+output "url" {
+  value       = "https://\${azurerm_container_app.main.latest_revision_fqdn}"
+  description = "Standardized URL output"
 }
 
 output "app_name" {
@@ -318,7 +368,7 @@ output "app_name" {
   description = "Container App name"
 }
 `.trim()
-    };
+  };
 }
 
 module.exports = { computeContainerModule };

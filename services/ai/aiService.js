@@ -41,6 +41,7 @@ IMPORTANT PRINCIPLES:
 - You are allowed to infer reasonable defaults when the description strongly suggests them, but you must always track CONFIDENCE.
 - If something is not clearly specified, set its value to null and use low confidence.
 - Do NOT invent very specific numeric values; use the defined enums.- When in doubt between safety and convenience, prefer SAFETY: do not assume low data sensitivity or no compliance unless it is clearly implied.
+- AUTHORITATIVE SOURCE: If the user provides both a description and domain hints, the DESCRIPTION is the primary source of truth. Use domain hints only for general context; do not let them override explicit requirements in the description.
 - Do NOT assume 'ecommerce' unless explicitly stated (e.g. 'shop', 'store', 'sell'). For generic APIs, use 'api_backend' or 'saas'.
 - If user mentions 'app_compute', 'containers', or 'cluster', prefer 'managed_services_pref' or 'kubernetes_pref' for ops_model.
 
@@ -253,7 +254,8 @@ RULES:
 3. You DO NOT override hard assumptions provided in input.
 4. You MUST estimate values for all 50+ axes based on the description + domain hints.
 5. If an axis is ambiguous, use the "confidence" score to indicate uncertainty.
-6. basic "project_info": { "name": "Generate a creative, relevant name based on description", "description": "Generate a short 1-line summary of the architecture." }
+6. PRIORITIZATION: The user description is the authoritative source. Domain tags and other hints are secondary context. If they conflict, follow the description.
+7. basic "project_info": { "name": "Generate a creative, relevant name based on description", "description": "Generate a short 1-line summary of the architecture." }
 `;
 
 const normalizeIntentV2 = async (preIntentContext) => {

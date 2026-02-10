@@ -21,7 +21,8 @@ const EXTERNAL_SERVICES = ['paymentgateway', 'emailservice', 'auth0', 'auth', 'm
 const SERVICE_TO_MODULE_NAME = {
   // Compute
   computeserverless: 'serverless_compute',
-  computecontainer: 'app_container',
+  compute_container: 'app_container',
+  computecontainer: 'app_container', // Alias for compatibility
   computevm: 'vm_compute',
   computebatch: 'batch_compute',
   computeedge: 'edge_compute',
@@ -142,26 +143,75 @@ const SERVICE_METADATA = {
   cache: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
   vectordatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
   datawarehouse: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
+  searchengine: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
+  timeseriesdatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
 
   // Storage
   objectstorage: { args: ['encryption_at_rest'] },
   blockstorage: { deps: ['networking'], args: ['vpc_id', 'encryption_at_rest'] },
-  filestorage: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
   datalake: { args: ['encryption_at_rest'] },
 
   // Compute
-  computecontainer: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  computebatch: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  computeedge: { args: [] },
+  computeserverless: { args: [] },
+  compute_container: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  computevm: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  filestorage: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
+  datalake: { args: ['encryption_at_rest'] },
+  backup: { args: ['backup_retention_days'] },
+
+  // Compute
+  compute_container: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
   computevm: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
   computebatch: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  computeserverless: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  computecontainer: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'public_subnet_ids'] },
 
   // Network
   loadbalancer: { deps: ['networking'], args: ['vpc_id', 'public_subnet_ids'] },
   apigateway: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
   privatelink: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
   natgateway: { deps: ['networking'], args: ['vpc_id', 'public_subnet_ids'] },
+  vpngateway: { deps: ['networking'], args: ['vpc_id'] },
+  servicediscovery: { deps: ['networking'], args: ['vpc_id'] },
+  servicemesh: { deps: ['networking'], args: ['vpc_id'] },
+  vpn: { deps: ['networking'], args: ['vpc_id'] },
+  networkfirewall: { deps: ['networking'], args: ['vpc_id', 'public_subnet_ids'] },
+  transitgateway: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  websocketgateway: { deps: ['networking'], args: ['vpc_id'] },
+  graphdatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+
+  // Security
+  secretsmanagement: { args: ['encryption_at_rest'] },
+  keymanagement: { args: ['encryption_at_rest'] },
+  iampolicy: { args: [] },
+  vulnerabilityscanner: { args: [] },
+  datalossprevention: { args: ['encryption_at_rest'] },
+  securityposture: { args: [] },
+
+  // Integration & Messaging
+  messagequeue: { args: ['encryption_at_rest'] },
+  eventbus: { args: ['encryption_at_rest'] },
+  workfloworchestration: { args: [] },
 
   // Observability
-  monitoring: { args: ['monitoring_enabled'] }
+  monitoring: { args: ['monitoring_enabled'] },
+  logging: { args: ['monitoring_enabled'] },
+  apm: { args: ['monitoring_enabled'] },
+  tracing: { args: ['monitoring_enabled'] },
+
+  // ML & AI
+  mltraining: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
+  mlinference: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
+  featurestore: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
+  mlpipelineorchestration: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+
+  // IoT
+  iotcore: { args: ['encryption_at_rest'] },
+  streamprocessor: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  iotedgegateway: { deps: ['networking'], args: ['vpc_id'] }
+
 };
 
 const getModuleName = (id) => SERVICE_TO_MODULE_NAME[id] || id;
@@ -184,7 +234,7 @@ function generatePricingMainTf(provider, services, region, projectName, sizing =
 
   if (provider === 'aws') {
     // 1. AWS IMPLEMENTATION
-    if (has('computecontainer')) {
+    if (has('compute_container')) {
       tf += `
 resource "aws_ecs_service" "app" {
   name            = "${projectName}-ecs-service"
@@ -276,7 +326,7 @@ resource "aws_dynamodb_table" "main" {
     if (has('objectstorage')) {
       tf += `
 resource "aws_s3_bucket" "b" {
-  bucket_prefix = "${projectName.toLowerCase()}-"
+  bucket_prefix = "${projectName.toLowerCase().substring(0, 36)}-"
   force_destroy = true
 }
 `;
@@ -284,12 +334,18 @@ resource "aws_s3_bucket" "b" {
 
     if (has('mlinference')) {
       tf += `
-resource "aws_sagemaker_endpoint_config" "ec" {
+resource "aws_sagemaker_endpoint_configuration" "ec" {
+  name = "ml-endpoint-config"
   production_variants {
+    variant_name           = "variant-1"
     initial_instance_count = 1
     instance_type          = "ml.g4dn.xlarge" # GPU instance
   }
-  name = "ml-endpoint"
+}
+
+resource "aws_sagemaker_endpoint" "inference" {
+  name                 = "ml-endpoint"
+  endpoint_config_name = aws_sagemaker_endpoint_configuration.ec.name
 }
 `;
     }
@@ -327,7 +383,7 @@ resource "aws_elasticache_cluster" "c" {
     if (has('objectstorage')) {
       tf += `
 resource "aws_s3_bucket" "main" {
-  bucket_prefix = "${projectName}-assets-"
+  bucket_prefix = "${projectName.substring(0, 29)}-assets-"
   force_destroy = true
 }
 `;
@@ -412,7 +468,7 @@ resource "aws_cloudwatch_log_group" "logs" {
 
     if (has('monitoring')) {
       tf += `
-resource "aws_cloudwatch_metric_alarm" "cpu_alarm" {
+resource "aws_cloudwatch_metric_alarm" "monitoring" {
   alarm_name          = "${projectName}-cpu-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -583,7 +639,7 @@ resource "aws_redshift_cluster" "wh" {
     if (has('datalake')) {
       tf += `
 resource "aws_s3_bucket" "datalake" {
-  bucket_prefix = "${projectName}-datalake-"
+  bucket_prefix = "${projectName.substring(0, 27)}-datalake-"
   force_destroy = true
 }
 `;
@@ -680,7 +736,7 @@ resource "aws_sagemaker_feature_group" "fg" {
     if (has('vectordatabase')) {
       tf += `
 resource "aws_opensearch_domain" "vector" {
-  domain_name = "${projectName}-vector"
+  domain_name = "${projectName.toLowerCase().substring(0, 21)}-vector"
   cluster_config {
     instance_type = "t3.small.search"
     instance_count = 1
@@ -1247,7 +1303,7 @@ resource "aws_batch_job_definition" "job" {
     if (has('searchengine')) {
       tf += `
 resource "aws_opensearch_domain" "search" {
-  domain_name    = "${projectName}-search"
+  domain_name    = "${projectName.toLowerCase().substring(0, 21)}-search"
   engine_version = "OpenSearch_2.5"
   cluster_config {
     instance_type  = "t3.medium.search"
@@ -1369,6 +1425,21 @@ resource "google_compute_global_forwarding_rule" "lb" {
   target     = "all-apis"
   port_range = "80"
   ip_address = google_compute_global_address.lb_ip.address
+}
+`;
+    }
+
+    if (has('globalloadbalancer')) {
+      tf += `
+resource "google_compute_global_address" "global_lb_ip" {
+  name = "${projectName}-global-lb-ip"
+}
+
+resource "google_compute_global_forwarding_rule" "global_lb" {
+  name       = "${projectName}-global-lb"
+  target     = "all-apis-global"
+  port_range = "80"
+  ip_address = google_compute_global_address.global_lb_ip.address
 }
 `;
     }
@@ -1593,6 +1664,20 @@ resource "google_vertex_ai_endpoint" "endpoint" {
       tf += `
 resource "google_vertex_ai_index" "vector" {
   display_name = "${projectName}-vector"
+  metadata {
+    config {
+      dimensions = 2
+      approximate_neighbors_count = 150
+    }
+  }
+}
+`;
+    }
+
+    if (has('searchengine')) {
+      tf += `
+resource "google_vertex_ai_index" "search" {
+  display_name = "${projectName}-search"
   metadata {
     config {
       dimensions = 2
@@ -2019,6 +2104,45 @@ resource "azurerm_dns_zone" "zone" {
       `;
     }
 
+    if (has('servicediscovery')) {
+      tf += `
+resource "azurerm_private_dns_zone" "dns" {
+        name = "private.example.com"
+        resource_group_name = azurerm_resource_group.rg.name
+      }
+      `;
+    }
+
+    if (has('globalloadbalancer')) {
+      tf += `
+resource "azurerm_traffic_manager_profile" "global" {
+        name                   = "${projectName}-global"
+        resource_group_name    = azurerm_resource_group.rg.name
+        traffic_routing_method = "Performance"
+        dns_config {
+          relative_name = "${projectName}-global"
+          ttl           = 60
+        }
+        monitor_config {
+          protocol = "HTTP"
+          port     = 80
+          path     = "/"
+        }
+      }
+      `;
+    }
+
+    if (has('searchengine') || has('search_engine')) {
+      tf += `
+resource "azurerm_search_service" "search" {
+        name                = "${projectName}-search"
+        resource_group_name = azurerm_resource_group.rg.name
+        location            = azurerm_resource_group.rg.location
+        sku                 = "basic"
+      }
+      `;
+    }
+
     if (has('secretsmanagement')) {
       tf += `
 resource "azurerm_key_vault" "kv" {
@@ -2307,11 +2431,21 @@ provider "google-beta" {
 }
 `;
   } else if (provider === 'azure' || provider === 'azurerm') {
-    return `provider "azurerm" {
-  subscription_id = var.azure_subscription_id
-  tenant_id       = var.azure_tenant_id
-  client_id       = var.azure_client_id
-  client_secret   = var.azure_client_secret
+    return `terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
+    }
+  }
+  backend "azurerm" {} # Partial configuration
+}
+
+provider "azurerm" {
+  subscription_id = var.subscription_id
+  tenant_id       = var.tenant_id
+  client_id       = var.client_id
+  client_secret   = var.client_secret
   
   skip_provider_registration = true
   
@@ -2458,22 +2592,22 @@ variable "subnetwork_name" {
         type = string
       }
 
-variable "azure_subscription_id" {
+variable "subscription_id" {
         description = "Azure Subscription ID"
         type = string
       }
 
-variable "azure_tenant_id" {
+variable "tenant_id" {
         description = "Azure Tenant ID"
         type = string
       }
 
-variable "azure_client_id" {
+variable "client_id" {
         description = "Azure Client ID"
         type = string
       }
 
-variable "azure_client_secret" {
+variable "client_secret" {
         description = "Azure Client Secret"
         type = string
         sensitive = true
@@ -2494,18 +2628,6 @@ variable "environment" {
 
 variable "resource_group_name" {
         description = "Azure resource group name"
-        type = string
-        default     = ""
-      }
-
-variable "vnet_name" {
-        description = "Azure virtual network name"
-        type = string
-        default     = ""
-      }
-
-variable "subnet_name" {
-        description = "Azure subnet name"
         type = string
         default     = ""
       }
@@ -2632,13 +2754,18 @@ function generateOutputsTf(provider, pattern, services) {
 
   // 1. Determine Deployment Target (Strict Contract)
   let targetType = "UNKNOWN";
-  if (services.includes('computecontainer')) {
+
+  // Helper to check for service presence (handling snake_case mismatch)
+  const hasService = (s) => services.includes(s) || services.includes(s.replace(/_/g, '')) || services.includes(s.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase());
+
+  if (hasService('computecontainer') || hasService('compute_container')) {
     targetType = "CONTAINER_SERVICE";
-  } else if (services.includes('objectstorage') && services.includes('cdn')) { // Must have CDN for production static
+  } else if (hasService('objectstorage') || hasService('object_storage')) {
+    // Relaxed: Don't require CDN if it's disabled. 
     targetType = "STATIC_STORAGE";
-  } else if (services.includes('computeserverless')) {
+  } else if (hasService('computeserverless')) {
     targetType = "SERVERLESS_FUNCTION";
-  } else if (services.includes('computevm')) {
+  } else if (hasService('computevm')) {
     targetType = "VM";
   }
 
@@ -2650,9 +2777,9 @@ function generateOutputsTf(provider, pattern, services) {
     region   = var.${provider === 'azure' ? 'location' : 'region'}
 
     static = {
-      bucket_name   = ${services.includes('objectstorage') ? 'try(module.object_storage.bucket_name, null)' : 'null'}
+      bucket_name   = ${hasService('objectstorage') ? 'try(module.object_storage.bucket_name, null)' : 'null'}
       bucket_region = var.${provider === 'azure' ? 'location' : 'region'}
-      cdn_domain    = ${services.includes('cdn') ? 'try(module.cdn.endpoint, null)' : 'null'}
+      cdn_domain    = ${hasService('cdn') ? 'try(module.cdn.endpoint, null)' : 'null'}
     }
 
     container = {
@@ -2673,12 +2800,28 @@ function generateOutputsTf(provider, pattern, services) {
     cdn: { name: 'cdn_endpoint', field: 'endpoint', desc: 'CDN endpoint URL' },
     cdn_id: { name: 'cdn_id', field: 'id', desc: 'CDN Distribution ID' },
     apigateway: { name: 'api_endpoint', field: 'endpoint', desc: 'API Gateway endpoint URL' },
-    relationaldatabase: { name: 'database_endpoint', field: 'endpoint', desc: 'Database connection endpoint', sensitive: true },
-    objectstorage: { name: 'bucket_name', field: 'bucket_name', desc: 'The Storage bucket name' },
+    relationaldatabase: {
+      name: 'relationaldatabase',
+      fields: {
+        endpoint: 'endpoint',
+        port: 'port',
+        name: 'name'
+      },
+      desc: 'Relational Database connection details'
+    },
+    objectstorage: {
+      name: 'objectstorage',
+      fields: {
+        bucket_name: 'bucket_name',
+        bucket_arn: 'bucket_arn',
+        bucket_domain_name: 'bucket_domain_name'
+      },
+      desc: 'Object Storage details'
+    },
 
     // Compute (Standardized Metadata)
-    computecontainer: {
-      name: 'computecontainer',
+    compute_container: {
+      name: 'compute_container',
       fields: {
         service_endpoint: 'url',
         service_name: 'service_name',
@@ -2689,7 +2832,28 @@ function generateOutputsTf(provider, pattern, services) {
         codebuild_name: 'codebuild_name',
         build_bucket: 'build_bucket',
         project_id: 'project_id',
-        region: 'region'
+        region: 'region',
+        task_family: 'task_family',
+        vpc_id: 'vpc_id'
+      },
+      desc: 'Container deployment metadata'
+    },
+    // Alias for compute_container
+    computecontainer: {
+      name: 'compute_container',
+      fields: {
+        service_endpoint: 'url',
+        service_name: 'service_name',
+        cluster_name: 'cluster_name',
+        container_app_name: 'container_app_name',
+        resource_group_name: 'resource_group_name',
+        container_registry: ['ecr_url', 'artifact_registry', 'acr_login_server'],
+        codebuild_name: 'codebuild_name',
+        build_bucket: 'build_bucket',
+        project_id: 'project_id',
+        region: 'region',
+        task_family: 'task_family',
+        vpc_id: 'vpc_id'
       },
       desc: 'Container deployment metadata'
     },
@@ -2697,7 +2861,14 @@ function generateOutputsTf(provider, pattern, services) {
     computevm: { name: 'vm_ip', field: 'public_ip', desc: 'VM Public IP' },
 
     // Database & Cache
-    cache: { name: 'cache_endpoint', field: 'endpoint', desc: 'Cache connection endpoint' },
+    cache: {
+      name: 'cache',
+      fields: {
+        endpoint: 'endpoint',
+        port: 'port'
+      },
+      desc: 'Cache connection details'
+    },
     nosqldatabase: { name: 'nosql_endpoint', field: 'endpoint', desc: 'NoSQL database endpoint' },
     messagequeue: { name: 'mq_endpoint', field: 'endpoint', desc: 'Message queue endpoint' },
 
@@ -2727,17 +2898,18 @@ function generateOutputsTf(provider, pattern, services) {
         } else if (conf.fields) {
           outputs += `output "${conf.name}" {\n  description = "${conf.desc}"\n  value = {\n`;
           Object.entries(conf.fields).forEach(([key, fields]) => {
-            const fieldList = Array.isArray(fields) ? fields : [fields];
-            const valueExpr = fieldList.map(f => `try(module.${moduleName}.${f}, null)`).join(', ');
-            outputs += `    ${key} = coalesce(${valueExpr}, null)\n`;
+            // Handle array of fallback fields
+            if (Array.isArray(fields)) {
+              const valueExpr = fields.map(f => `try(module.${moduleName}.${f}, null)`).join(', ');
+              outputs += `    ${key} = coalesce(${valueExpr}, null)\n`;
+            } else {
+              // Direct mapping
+              outputs += `    ${key} = module.${moduleName}.${fields}\n`;
+            }
           });
           outputs += `  }\n}\n\n`;
         } else {
-          outputs += `output "${conf.name}" {
-  description = "${conf.desc}"
-  value       = module.${moduleName}.${conf.field}
-  ${conf.sensitive ? 'sensitive = true' : ''}
-}\n\n`;
+          outputs += `output "${conf.name}" {\n  description = "${conf.desc}"\n  value       = module.${moduleName}.${conf.field}\n  ${conf.sensitive ? 'sensitive = true' : ''}\n}\n\n`;
         }
       }
     });
@@ -2797,16 +2969,22 @@ function generateMainTf(provider, pattern, services) {
     source = "./modules/${moduleName}"
 
     project_name = var.project_name
-    ${regionLabel} = var.${regionLabel}\n`;
+    ${regionLabel} = var.${regionLabel}
+    ${pLower === 'azure' ? 'resource_group_name = var.resource_group_name' : ''}\n`;
 
       // 🔥 FIX: Inject CDN Dependency (Intelligent Origin + OAC Variables)
       if (moduleName === 'cdn') {
-        const hasObjectStorage = services.includes('objectstorage');
-        const hasLoadBalancer = services.includes('loadbalancer');
-        const hasComputeContainer = services.includes('computecontainer');
+        // Ensure services is an array before checking includes
+        const serviceList = Array.isArray(services) ? services : [];
+        const hasObjectStorage = serviceList.includes('objectstorage') || serviceList.includes('object_storage');
+        const hasContainer = serviceList.includes('computecontainer') || serviceList.includes('compute_container');
+        const hasLoadBalancer = serviceList.includes('loadbalancer') || serviceList.includes('load_balancer');
+        const hasComputeContainer = hasContainer; // Alias for backward compatibility in logic below
 
-        if (hasObjectStorage && !hasComputeContainer) {
-          // Static site: S3 bucket origin with OAC (requires bucket_name and bucket_arn for policy)
+        console.log(`[TF DEBUG] Generating CDN module. hasObjectStorage=\${hasObjectStorage}, hasContainer=\${hasContainer}, hasLoadBalancer=\${hasLoadBalancer}, services=\${JSON.stringify(serviceList)}`);
+
+        if (hasObjectStorage) {
+          // Static site OR Container with Asset Storage: Always prefer S3 bucket origin if available
           mainTf += `    bucket_domain_name = module.object_storage.bucket_domain_name\n`;
           mainTf += `    bucket_name        = module.object_storage.bucket_name\n`;
           mainTf += `    bucket_arn         = module.object_storage.bucket_arn\n`;
@@ -2841,6 +3019,7 @@ function generateMainTf(provider, pattern, services) {
       if (meta.args?.includes('backup_retention_days')) mainTf += `    backup_retention_days = var.backup_retention_days\n`;
       if (meta.args?.includes('deletion_protection')) mainTf += `    deletion_protection = var.deletion_protection\n`;
       if (meta.args?.includes('multi_az')) mainTf += `    multi_az = var.multi_az\n`;
+      if (meta.args?.includes('monitoring_enabled')) mainTf += `    monitoring_enabled = var.monitoring_enabled\n`;
 
       // 🔑 External Variable Injection (Compute Services)
       if (service === 'computeserverless' || service === 'computecontainer' || service === 'appcompute') {
@@ -3001,6 +3180,82 @@ function getModuleConfig(service, provider) {
 
     project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
+    vpc_id = module.networking.vpc_id
+    private_subnet_ids = module.networking.private_subnet_ids
+  } `,
+
+    mlinference: `module "ml_inference" {
+    source = "./modules/ml_inference"
+
+    project_name = var.project_name
+    ${regionLabel} = var.${regionLabel}
+    vpc_id = module.networking.vpc_id
+    private_subnet_ids = module.networking.private_subnet_ids
+  } `,
+
+    mltraining: `module "ml_training" {
+    source = "./modules/ml_training"
+
+    project_name = var.project_name
+    ${regionLabel} = var.${regionLabel}
+    vpc_id = module.networking.vpc_id
+    private_subnet_ids = module.networking.private_subnet_ids
+  } `,
+
+    // 🔥 AWS Missing Modules Implementation
+    searchengine: `module "search" {
+    source = "./modules/search"
+    project_name = var.project_name
+    ${regionLabel} = var.${regionLabel}
+    vpc_id = module.networking.vpc_id
+    private_subnet_ids = module.networking.private_subnet_ids
+    encryption_at_rest = var.encryption_at_rest
+  } `,
+
+    websocketgateway: `module "websocket" {
+    source = "./modules/websocket"
+    project_name = var.project_name
+    ${regionLabel} = var.${regionLabel}
+    vpc_id = module.networking.vpc_id
+    private_subnet_ids = module.networking.private_subnet_ids
+  } `,
+
+    modelregistry: `module "model_registry" {
+    source = "./modules/model_registry"
+    project_name = var.project_name
+    ${regionLabel} = var.${regionLabel}
+  } `,
+
+    experimenttracking: `module "experiment_tracking" {
+    source = "./modules/experiment_tracking"
+    project_name = var.project_name
+    ${regionLabel} = var.${regionLabel}
+  } `,
+
+    mlpipelineorchestration: `module "ml_pipeline" {
+    source = "./modules/ml_pipeline"
+    project_name = var.project_name
+    ${regionLabel} = var.${regionLabel}
+  } `,
+
+    globalloadbalancer: `module "global_lb" {
+    source = "./modules/global_lb"
+    project_name = var.project_name
+    ${regionLabel} = var.${regionLabel}
+  } `,
+
+    servicediscovery: `module "service_discovery" {
+    source = "./modules/service_discovery"
+    project_name = var.project_name
+    ${regionLabel} = var.${regionLabel}
+    vpc_id = module.networking.vpc_id
+  } `,
+
+    servicemesh: `module "service_mesh" {
+    source = "./modules/service_mesh"
+    project_name = var.project_name
+    ${regionLabel} = var.${regionLabel}
+    vpc_id = module.networking.vpc_id
   } `,
 
     batchcompute: `module "batch_compute" {
@@ -3265,6 +3520,9 @@ async function generateTerraform(canonicalArchitecture, provider, region, projec
   const pattern = canonicalArchitecture.pattern || 'custom';
 
   // 🔒 FILTER: Separate deployable services (infra) from external services (variables only)
+  // 🔥 TEMPORARY FIX: Filtering out CloudFront and OpenSearch due to unresolvable AWS Account restrictions
+  // 🔒 FILTER: Separate deployable services (infra) from external services (variables only)
+  // Re-enabled searchengine and cdn since generators are now implemented
   const deployableServices = services.filter(s => !EXTERNAL_SERVICES.includes(s));
 
   // 💉 INJECT: Setup module for GCP (APIs)
@@ -3273,7 +3531,7 @@ async function generateTerraform(canonicalArchitecture, provider, region, projec
   }
 
   // 💉 INJECT: Networking module when VPC-dependent services are present (AWS)
-  const vpcDependentServices = ['relationaldatabase', 'cache', 'computecontainer', 'computevm', 'loadbalancer'];
+  const vpcDependentServices = ['relationaldatabase', 'cache', 'computecontainer', 'computevm', 'loadbalancer', 'computeserverless', 'vectordatabase', 'nosqldatabase', 'searchengine', 'computebatch', 'analyticaldatabase', 'datawarehouse', 'privatelink', 'networkfirewall', 'transitgateway'];
   const needsNetworking = vpcDependentServices.some(s => deployableServices.includes(s));
   if (providerLower === 'aws' && needsNetworking && !deployableServices.includes('networking') && !deployableServices.includes('vpcnetworking') && !deployableServices.includes('vpc')) {
     deployableServices.unshift('networking');
@@ -3285,7 +3543,7 @@ async function generateTerraform(canonicalArchitecture, provider, region, projec
   files['providers.tf'] = generateProvidersTf(providerLower, region);
   files['variables.tf'] = generateVariablesTf(providerLower, pattern, services);
   files['terraform.tfvars'] = generateTfvars(providerLower, region, projectName, { ...canonicalArchitecture.sizing, connectionData: options.connectionData });
-  files['outputs.tf'] = generateOutputsTf(providerLower, pattern, deployableServices);
+  files['outputs.tf'] = generateOutputsTf(providerLower, deployableServices, projectName);
   files['main.tf'] = generateMainTf(providerLower, pattern, deployableServices);
   files['README.md'] = generateReadme(projectName, providerLower, pattern, deployableServices);
 
@@ -3470,7 +3728,7 @@ output "arn" { value = aws_lb.main.arn }`
   allocated_storage    = 20
   storage_type         = "gp2"
   engine               = "postgres"
-  engine_version       = "15.4"
+  engine_version       = "15"
   instance_class       = "db.t3.micro"
   db_name              = replace(var.project_name, "-", "_")
   username             = "dbadmin"
@@ -3504,7 +3762,7 @@ resource "aws_security_group" "db_sg" {
   }
 }`,
           variables: getRequiredVars('relationaldatabase', meta.args),
-          outputs: `output "endpoint" { value = aws_db_instance.default.endpoint }`
+          outputs: `output "endpoint" { value = aws_db_instance.default.address }`
         };
 
       case 'cache':
@@ -3543,16 +3801,16 @@ resource "aws_security_group" "redis_sg" {
       case 'objectstorage':
         return {
           main: `resource "aws_s3_bucket" "main" {
-  bucket_prefix = "\${var.project_name}-"
+  bucket_prefix = "\${substr(var.project_name, 0, min(length(var.project_name), 36))}-"
   force_destroy = true
 }
 
 resource "aws_s3_bucket_public_access_block" "main" {
   bucket                  = aws_s3_bucket.main.id
   block_public_acls       = true
-  block_public_policy     = false  # Allow bucket policies (for CloudFront OAC)
+  block_public_policy     = true
   ignore_public_acls      = true
-  restrict_public_buckets = false  # Allow CloudFront access via policy
+  restrict_public_buckets = true
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "main" {
@@ -3567,6 +3825,87 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "main" {
           outputs: `output "bucket_name" { value = aws_s3_bucket.main.id }
 output "bucket_arn" { value = aws_s3_bucket.main.arn }
 output "bucket_domain_name" { value = aws_s3_bucket.main.bucket_regional_domain_name }`
+        };
+
+      case 'searchengine':
+      case 'search':
+        return {
+          main: `resource "aws_opensearch_domain" "main" {
+  domain_name    = "\${substr(lower(var.project_name), 0, 20)}-search"
+  engine_version = "OpenSearch_2.5"
+
+  cluster_config {
+    instance_type = "t3.small.search"
+    instance_count = 1
+  }
+
+  ebs_options {
+    ebs_enabled = true
+    volume_size = 10
+  }
+
+  vpc_options {
+    subnet_ids = [var.private_subnet_ids[0]]
+    security_group_ids = [aws_security_group.search_sg.id]
+  }
+
+  encrypt_at_rest {
+    enabled = var.encryption_at_rest
+  }
+}
+
+resource "aws_security_group" "search_sg" {
+  name   = "\${var.project_name}-search-sg"
+  vpc_id = var.vpc_id
+  ingress {
+    from_port = 443
+    to_port = 443
+    protocol = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+}`,
+          variables: getRequiredVars('searchengine', meta.args),
+          outputs: `output "endpoint" { value = aws_opensearch_domain.main.endpoint }`
+        };
+
+      case 'websocketgateway':
+      case 'websocket':
+        return {
+          main: `resource "aws_apigatewayv2_api" "ws" {
+  name                       = "\${var.project_name}-ws"
+  protocol_type              = "WEBSOCKET"
+  route_selection_expression = "$request.body.action"
+}
+
+resource "aws_apigatewayv2_stage" "stage" {
+  api_id = aws_apigatewayv2_api.ws.id
+  name   = "prod"
+  auto_deploy = true
+}`,
+          variables: getRequiredVars('websocketgateway', meta.args),
+          outputs: `output "wss_url" { value = aws_apigatewayv2_stage.stage.invoke_url }`
+        };
+
+      case 'globalloadbalancer':
+        return {
+          main: `resource "aws_globalaccelerator_accelerator" "main" {
+  name            = "\${var.project_name}-ga"
+  ip_address_type = "IPV4"
+  enabled         = true
+}`,
+          variables: getRequiredVars('globalloadbalancer', meta.args),
+          outputs: `output "dns_name" { value = aws_globalaccelerator_accelerator.main.dns_name }`
+        };
+
+      case 'servicediscovery':
+        return {
+          main: `resource "aws_service_discovery_private_dns_namespace" "main" {
+  name        = "local"
+  description = "Service Discovery namespace"
+  vpc         = var.vpc_id
+}`,
+          variables: getRequiredVars('servicediscovery', meta.args),
+          outputs: `output "namespace_id" { value = aws_service_discovery_private_dns_namespace.main.id }`
         };
 
       case 'containerregistry':
@@ -3596,7 +3935,7 @@ resource "aws_ecr_repository" "repo" {
 }
 
 resource "aws_s3_bucket" "builds" {
-  bucket_prefix = "\${var.project_name}-builds-"
+  bucket_prefix = "\${substr(var.project_name, 0, min(length(var.project_name), 29))}-builds-"
   force_destroy = true
 }
 
@@ -3608,17 +3947,19 @@ resource "aws_iam_role" "codebuild_role" {
   })
 }
 
-resource "aws_iam_role_policy" "codebuild_policy" {
-  name = "\${var.project_name}-codebuild-policy"
-  role = aws_iam_role.codebuild_role.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      { Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"], Effect = "Allow", Resource = "*" },
-      { Action = ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject"], Effect = "Allow", Resource = "\${aws_s3_bucket.builds.arn}/*" },
-      { Action = ["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage", "ecr:PutImage", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload"], Effect = "Allow", Resource = "*" }
-    ]
-  })
+resource "aws_iam_role_policy_attachment" "codebuild_logs" {
+  role       = aws_iam_role.codebuild_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+}
+
+resource "aws_iam_role_policy_attachment" "codebuild_ecr" {
+  role       = aws_iam_role.codebuild_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
+}
+
+resource "aws_iam_role_policy_attachment" "codebuild_s3" {
+  role       = aws_iam_role.codebuild_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
 }
 
 resource "aws_codebuild_project" "build" {
@@ -3678,11 +4019,1117 @@ resource "aws_ecs_task_definition" "app" {
 }
 
 resource "aws_cloudwatch_log_group" "logs" {
-  name              = "/ecs/\${var.project_name}"
+  name = "/ecs/\${var.project_name}"
   retention_in_days = 7
 }
 
 resource "aws_ecs_service" "app" {
+  name = "\${var.project_name}-service"
+  cluster = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.app.arn
+  desired_count = 1
+  launch_type = "FARGATE"
+  network_configuration {
+    subnets = var.private_subnet_ids
+    security_groups = [aws_security_group.app_sg.id]
+    assign_public_ip = true
+  }
+}
+
+resource "aws_security_group" "app_sg" {
+  name = "\${var.project_name}-app-sg"
+  vpc_id = var.vpc_id
+  ingress {
+    from_port = 80
+    to_port = 80
+    protocol = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  egress {
+    from_port = 0
+    to_port = 0
+    protocol = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}`,
+          variables: getRequiredVars('computecontainer', meta.args),
+          outputs: `output "cluster_name" { value = aws_ecs_cluster.main.name }
+output "service_name" { value = aws_ecs_service.app.name }
+output "ecr_url" { value = aws_ecr_repository.repo.repository_url }
+output "codebuild_name" { value = aws_codebuild_project.build.name }
+output "build_bucket" { value = aws_s3_bucket.builds.bucket }
+output "region" { value = var.region }`
+        };
+
+      case 'vectordatabase':
+        return {
+          main: `resource "aws_db_instance" "vector" {
+  identifier           = "\${var.project_name}-vector-db"
+  allocated_storage    = 20
+  engine               = "postgres"
+  engine_version       = "15.4"
+  instance_class       = "db.t3.micro"
+  username             = "vectoradmin"
+  password             = "ChangeMe123!"
+  skip_final_snapshot  = true
+  vpc_security_group_ids = [aws_security_group.vector_sg.id]
+  db_subnet_group_name   = aws_db_subnet_group.vector.name
+}
+
+resource "aws_db_subnet_group" "vector" {
+  name       = "\${var.project_name}-vector-subnet"
+  subnet_ids = var.private_subnet_ids
+}
+
+resource "aws_security_group" "vector_sg" {
+  name        = "\${var.project_name}-vector-sg"
+  vpc_id      = var.vpc_id
+  ingress {
+    from_port = 5432
+    to_port   = 5432
+    protocol  = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+}`,
+          variables: getRequiredVars('vectordatabase', meta.args),
+          outputs: `output "endpoint" { value = aws_db_instance.vector.endpoint }`
+        };
+
+      case 'timeseriesdatabase':
+        return {
+          main: `resource "aws_timestreamwrite_database" "main" {
+  database_name = replace(var.project_name, "-", "_")
+}
+
+resource "aws_timestreamwrite_table" "main" {
+  database_name = aws_timestreamwrite_database.main.database_name
+  table_name    = "metrics"
+  retention_properties {
+    memory_store_retention_period_in_hours  = 24
+    magnetic_store_retention_period_in_days = 7
+  }
+}`,
+          variables: getRequiredVars('timeseriesdatabase', meta.args),
+          outputs: `output "database_name" { value = aws_timestreamwrite_database.main.database_name }`
+        };
+
+      case 'graphdatabase':
+        return {
+          main: `resource "aws_neptune_cluster" "main" {
+  cluster_identifier  = "\${var.project_name}-graph"
+  engine              = "neptune"
+  backup_retention_period = 1
+  preferred_backup_window = "07:00-09:00"
+  skip_final_snapshot     = true
+  vpc_security_group_ids  = [aws_security_group.neptune_sg.id]
+  neptune_subnet_group_name = aws_neptune_subnet_group.main.name
+}
+
+resource "aws_neptune_cluster_instance" "main" {
+  count              = 1
+  cluster_identifier = aws_neptune_cluster.main.id
+  engine             = "neptune"
+  instance_class     = "db.t3.medium"
+}
+
+resource "aws_neptune_subnet_group" "main" {
+  name       = "\${var.project_name}-neptune-subnet"
+  subnet_ids = var.private_subnet_ids
+}
+
+resource "aws_security_group" "neptune_sg" {
+  name   = "\${var.project_name}-neptune-sg"
+  vpc_id = var.vpc_id
+  ingress {
+    from_port = 8182
+    to_port   = 8182
+    protocol  = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+}`,
+          variables: getRequiredVars('nosqldatabase', meta.args),
+          outputs: `output "endpoint" { value = aws_neptune_cluster.main.endpoint }`
+        };
+
+      case 'analyticaldatabase':
+      case 'datawarehouse':
+        return {
+          main: `resource "aws_redshift_cluster" "main" {
+  cluster_identifier = "\${var.project_name}-redshift"
+  database_name      = "dev"
+  master_username    = "awsuser"
+  master_password    = "ChangeMe123!"
+  node_type          = "dc2.large"
+  cluster_type       = "single-node"
+  skip_final_snapshot = true
+  vpc_security_group_ids = [aws_security_group.redshift_sg.id]
+  cluster_subnet_group_name = aws_redshift_subnet_group.main.name
+}
+
+resource "aws_redshift_subnet_group" "main" {
+  name       = "\${var.project_name}-redshift-subnet"
+  subnet_ids = var.private_subnet_ids
+}
+
+resource "aws_security_group" "redshift_sg" {
+  name   = "\${var.project_name}-redshift-sg"
+  vpc_id = var.vpc_id
+  ingress {
+    from_port = 5439
+    to_port   = 5439
+    protocol  = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+}`,
+          variables: getRequiredVars('analyticaldatabase', meta.args),
+          outputs: `output "endpoint" { value = aws_redshift_cluster.main.endpoint }`
+        };
+
+      case 'datalake':
+        return {
+          main: `resource "aws_s3_bucket" "lake" {
+  bucket_prefix = "\${substr(var.project_name, 0, min(length(var.project_name), 31))}-lake-"
+  force_destroy = true
+}
+
+resource "aws_glue_catalog_database" "main" {
+  name = replace(var.project_name, "-", "_")
+}
+
+resource "aws_glue_crawler" "main" {
+  database_name = aws_glue_catalog_database.main.name
+  name          = "\${var.project_name}-crawler"
+  role          = aws_iam_role.glue.arn
+
+  s3_target {
+    path = "s3://\${aws_s3_bucket.lake.bucket}"
+  }
+}
+
+resource "aws_iam_role" "glue" {
+  name = "\${var.project_name}-glue-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{ Action = "sts:AssumeRole", Effect = "Allow", Principal = { Service = "glue.amazonaws.com" } }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "glue_service" {
+  role       = aws_iam_role.glue.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole"
+}`,
+          variables: getRequiredVars('datalake', meta.args),
+          outputs: `output "bucket_name" { value = aws_s3_bucket.lake.id }`
+        };
+
+      case 'computebatch':
+        return {
+          main: `resource "aws_batch_compute_environment" "main" {
+  compute_environment_name = "\${var.project_name}-batch"
+  compute_resources {
+    max_vcpus = 16
+    min_vcpus = 0
+    security_group_ids = [aws_security_group.batch.id]
+    subnets            = var.private_subnet_ids
+    type               = "FARGATE"
+  }
+  service_role = aws_iam_role.batch_service.arn
+  type         = "MANAGED"
+}
+
+resource "aws_iam_role" "batch_service" {
+  name = "\${var.project_name}-batch-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{ Action = "sts:AssumeRole", Effect = "Allow", Principal = { Service = "batch.amazonaws.com" } }]
+  })
+}
+
+resource "aws_security_group" "batch" {
+  name   = "\${var.project_name}-batch-sg"
+  vpc_id = var.vpc_id
+  egress {
+    from_port = 0
+    to_port   = 0
+    protocol  = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}`,
+          variables: getRequiredVars('computebatch', meta.args),
+          outputs: `output "compute_environment_arn" { value = aws_batch_compute_environment.main.arn }`
+        };
+
+      case 'computeedge':
+        return {
+          main: `resource "aws_cloudfront_function" "main" {
+  name    = "\${replace(var.project_name, "-", "_")}_edge_fn"
+  runtime = "cloudfront-js-1.0"
+  comment = "Edge function for \${var.project_name}"
+  publish = true
+  code    = <<-EOT
+    function handler(event) {
+      var request = event.request;
+      return request;
+    }
+  EOT
+}`,
+          variables: getRequiredVars('computeedge', meta.args),
+          outputs: `output "function_arn" { value = aws_cloudfront_function.main.arn }`
+        };
+
+      case 'cdn':
+        return {
+          main: `# ═══════════════════════════════════════════════════════════════════════════
+# CloudFront CDN with Origin Access Control(OAC) - Production Grade
+# ═══════════════════════════════════════════════════════════════════════════
+
+# 1. Origin Access Control(OAC) - Modern replacement for OAI
+resource "aws_cloudfront_origin_access_control" "oac" {
+    name = "\${var.project_name}-oac"
+    description = "OAC for static site S3 bucket"
+    origin_access_control_origin_type = "s3"
+    signing_behavior = "always"
+    signing_protocol = "sigv4"
+  }
+
+# 2. CloudFront Distribution
+resource "aws_cloudfront_distribution" "cdn" {
+    enabled = true
+    default_root_object = "index.html"
+    comment = "\${var.project_name} Static Site CDN"
+
+  origin {
+      domain_name = var.bucket_domain_name
+      origin_id = "site"
+      origin_access_control_id = aws_cloudfront_origin_access_control.oac.id
+    }
+
+  default_cache_behavior {
+      allowed_methods = ["GET", "HEAD"]
+      cached_methods = ["GET", "HEAD"]
+      target_origin_id = "site"
+      viewer_protocol_policy = "redirect-to-https"
+      compress = true
+
+    forwarded_values {
+        query_string = false
+      cookies {
+          forward = "none"
+        }
+      }
+
+      min_ttl = 0
+      default_ttl = 3600
+      max_ttl = 86400
+    }
+
+  # SPA Support: Handle 403 / 404 with index.html for client - side routing
+  custom_error_response {
+      error_code = 403
+      response_code = 200
+      response_page_path = "/index.html"
+    }
+  custom_error_response {
+      error_code = 404
+      response_code = 200
+      response_page_path = "/index.html"
+    }
+
+  restrictions {
+    geo_restriction {
+        restriction_type = "none"
+      }
+    }
+
+  viewer_certificate {
+      cloudfront_default_certificate = true
+    }
+
+    tags = {
+      Name      = "\${var.project_name}-cdn"
+    ManagedBy = "Cloudiverse"
+    }
+  }
+
+# 3. S3 Bucket Policy - CRITICAL: Allows ONLY this CloudFront distribution
+resource "aws_s3_bucket_policy" "cloudfront_access" {
+    bucket = var.bucket_name
+
+    policy = jsonencode({
+      Version = "2012-10-17"
+    Statement =[
+        {
+          Sid       = "AllowCloudFrontAccess"
+        Effect    = "Allow"
+        Principal = {
+            Service = "cloudfront.amazonaws.com"
+          }
+        Action   = "s3:GetObject"
+        Resource = "\${var.bucket_arn}/*"
+        Condition = {
+            StringEquals = {
+              "AWS:SourceArn" = aws_cloudfront_distribution.cdn.arn
+            }
+          }
+        }
+      ]
+    })
+
+    depends_on = [aws_cloudfront_distribution.cdn]
+  } `,
+          variables: getRequiredVars('cdn', meta.args) + `
+variable "bucket_domain_name" {
+    type = string
+    description = "S3 bucket regional domain name"
+  }
+variable "bucket_name" {
+    type = string
+    description = "S3 bucket name for policy attachment"
+  }
+variable "bucket_arn" {
+    type = string
+    description = "S3 bucket ARN for policy"
+  } `,
+          outputs: `output "endpoint" { value = aws_cloudfront_distribution.cdn.domain_name }
+output "id" { value = aws_cloudfront_distribution.cdn.id }
+output "arn" { value = aws_cloudfront_distribution.cdn.arn } `
+        };
+
+      case 'apigateway':
+        return {
+          main: `resource "aws_apigatewayv2_api" "api" {
+    name = "\${var.project_name}-api"
+    protocol_type = "HTTP"
+  }
+
+resource "aws_apigatewayv2_stage" "default" {
+    api_id = aws_apigatewayv2_api.api.id
+    name = "$default"
+    auto_deploy = true
+  } `,
+          variables: getRequiredVars('apigateway', meta.args),
+          outputs: `output "endpoint" { value = aws_apigatewayv2_api.api.api_endpoint } `
+        };
+
+      case 'networking':
+      case 'vpcnetworking':
+      case 'vpc':
+        return {
+          main: `resource "aws_vpc" "main" {
+    cidr_block = "10.0.0.0/16"
+    enable_dns_hostnames = true
+    tags = { Name = "\${var.project_name}-vpc" }
+  }
+
+resource "aws_subnet" "public" {
+    count = 2
+    vpc_id = aws_vpc.main.id
+    cidr_block = "10.0.\${count.index}.0/24"
+    availability_zone = data.aws_availability_zones.available.names[count.index]
+    map_public_ip_on_launch = true
+    tags = { Name = "\${var.project_name}-public-\${count.index}" }
+  }
+
+resource "aws_subnet" "private" {
+    count = 2
+    vpc_id = aws_vpc.main.id
+    cidr_block = "10.0.\${count.index + 10}.0/24"
+    availability_zone = data.aws_availability_zones.available.names[count.index]
+    tags = { Name = "\${var.project_name}-private-\${count.index}" }
+  }
+
+data "aws_availability_zones" "available" { } `,
+          variables: `variable "project_name" { type = string }
+variable "region" { type = string } `,
+          outputs: `output "vpc_id" { value = aws_vpc.main.id }
+output "public_subnet_ids" { value = aws_subnet.public[*].id }
+output "private_subnet_ids" { value = aws_subnet.private[*].id } `
+        };
+
+      case 'nosqldatabase':
+        return {
+          main: `resource "aws_dynamodb_table" "main" {
+    name = "\${var.project_name}-table"
+    billing_mode = "PAY_PER_REQUEST"
+    hash_key = "id"
+
+  attribute {
+      name = "id"
+      type = "S"
+    }
+
+  point_in_time_recovery {
+      enabled = var.encryption_at_rest
+    }
+
+  server_side_encryption {
+      enabled = var.encryption_at_rest
+    }
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "table_name" { value = aws_dynamodb_table.main.name }
+output "table_arn" { value = aws_dynamodb_table.main.arn } `
+        };
+
+      case 'computevm':
+        return {
+          main: `data "aws_ami" "latest_amazon_linux" {
+    most_recent = true
+    owners = ["amazon"]
+  filter {
+      name = "name"
+      values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+    }
+  }
+
+resource "aws_instance" "app" {
+    ami = data.aws_ami.latest_amazon_linux.id
+    instance_type = "t3.micro"
+    subnet_id = var.private_subnet_ids[0]
+    vpc_security_group_ids = [aws_security_group.vm_sg.id]
+
+    tags = { Name = "\${var.project_name}-vm" }
+  }
+
+resource "aws_security_group" "vm_sg" {
+    name = "\${var.project_name}-vm-sg"
+    vpc_id = var.vpc_id
+  ingress {
+      from_port = 22
+      to_port = 22
+      protocol = "tcp"
+      cidr_blocks = ["10.0.0.0/16"]
+    }
+  egress {
+      from_port = 0
+      to_port = 0
+      protocol = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "instance_id" { value = aws_instance.app.id }
+output "private_ip" { value = aws_instance.app.private_ip } `
+        };
+
+      case 'computeserverless':
+        return {
+          main: `resource "aws_iam_role" "lambda_role" {
+    name = "\${var.project_name}-lambda-role"
+    assume_role_policy = jsonencode({
+      Version = "2012-10-17"
+    Statement =[{
+        Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      }]
+    })
+  }
+
+resource "aws_iam_role_policy_attachment" "lambda_basic" {
+    role       = aws_iam_role.lambda_role.name
+    policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+  }
+
+resource "aws_iam_role_policy_attachment" "lambda_vpc" {
+    role       = aws_iam_role.lambda_role.name
+    policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+  }
+
+resource "time_sleep" "wait_for_role" {
+  create_duration = "15s"
+  depends_on = [
+    aws_iam_role_policy_attachment.lambda_basic,
+    aws_iam_role_policy_attachment.lambda_vpc
+  ]
+}
+
+data "archive_file" "lambda_zip" {
+    type = "zip"
+    source_file = "\${path.module}/index.js"
+    output_path = "\${path.module}/function.zip"
+  }
+
+resource "aws_lambda_function" "app" {
+    filename = data.archive_file.lambda_zip.output_path
+    source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+    function_name = "\${var.project_name}-function"
+    role = aws_iam_role.lambda_role.arn
+    handler = "index.handler"
+    runtime = "nodejs18.x"
+
+  vpc_config {
+      subnet_ids = var.private_subnet_ids
+      security_group_ids = [aws_security_group.lambda_sg.id]
+    }
+
+    depends_on = [
+      time_sleep.wait_for_role
+    ]
+  }
+
+resource "aws_security_group" "lambda_sg" {
+    name = "\${var.project_name}-lambda-sg"
+    vpc_id = var.vpc_id
+  egress {
+      from_port = 0
+      to_port = 0
+      protocol = "-1"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "function_name" { value = aws_lambda_function.app.function_name } `
+        };
+
+      case 'monitoring':
+        return {
+          main: `resource "aws_cloudwatch_metric_alarm" "health" {
+    alarm_name = "\${var.project_name}-health-alarm"
+    comparison_operator = "GreaterThanThreshold"
+    evaluation_periods = "2"
+    metric_name = "CPUUtilization"
+    namespace = "AWS/EC2"
+    period = "120"
+    statistic = "Average"
+    threshold = "80"
+    alarm_description = "This metric monitors ec2 cpu utilization"
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "url" { value = "https://console.aws.amazon.com/cloudwatch/" } `
+        };
+
+      case 'logging':
+        return {
+          main: `resource "aws_cloudwatch_log_group" "main" {
+    name = "/aws/\${var.project_name}/logs"
+    retention_in_days = 30
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "log_group_name" { value = aws_cloudwatch_log_group.main.name } `
+        };
+
+      case 'identityauth':
+      case 'auth':
+        return {
+          main: `resource "aws_iam_role" "app_role" {
+    name = "\${var.project_name}-app-role"
+    assume_role_policy = jsonencode({
+      Version = "2012-10-17"
+    Statement =[{
+        Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+      }]
+    })
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "client_id" { value = aws_iam_role.app_role.arn } `
+        };
+
+      // loadbalancer case already handled above at line ~3593
+
+      // apigateway case already handled above at line ~4228
+
+      case 'searchengine':
+        return {
+          main: `resource "aws_opensearch_domain" "search" {
+    domain_name = "\${substr(lower(var.project_name), 0, min(length(var.project_name), 21))}-search"
+    engine_version = "OpenSearch_2.5"
+
+  cluster_config {
+      instance_type = "t3.small.search"
+    }
+
+  vpc_options {
+      subnet_ids = [var.private_subnet_ids[0]]
+      security_group_ids = [aws_security_group.search_sg.id]
+    }
+
+  ebs_options {
+      ebs_enabled = true
+      volume_size = 10
+    }
+
+  encrypt_at_rest {
+      enabled = var.encryption_at_rest
+    }
+  }
+
+resource "aws_security_group" "search_sg" {
+    name = "\${var.project_name}-search-sg"
+    vpc_id = var.vpc_id
+  ingress {
+      from_port = 443
+      to_port = 443
+      protocol = "tcp"
+      cidr_blocks = ["10.0.0.0/16"]
+    }
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "endpoint" { value = aws_opensearch_domain.search.endpoint } `
+        };
+
+      case 'keymanagement':
+      case 'keymanagementservice':
+        return {
+          main: `resource "aws_kms_key" "main" {
+    description = "KMS key for \${var.project_name}"
+    deletion_window_in_days = 7
+    enable_key_rotation = true
+  }
+
+resource "aws_kms_alias" "main" {
+    name = "alias/\${var.project_name}"
+    target_key_id = aws_kms_key.main.key_id
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "key_id" { value = aws_kms_key.main.key_id } \noutput "arn" { value = aws_kms_key.main.arn } `
+        };
+
+      case 'waf':
+        return {
+          main: `resource "aws_wafv2_web_acl" "main" {
+  name        = "\${var.project_name}-waf"
+  description = "WAF for \${var.project_name}"
+  scope       = "REGIONAL"
+
+  default_action {
+    allow {}
+  }
+
+  rule {
+    name     = "AWSManagedRulesCommonRuleSet"
+    priority = 1
+
+    override_action {
+      none {}
+    }
+
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesCommonRuleSet"
+        vendor_name = "AWS"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "aws-waf-common-rules"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  visibility_config {
+    cloudwatch_metrics_enabled = true
+    metric_name                = "waf-main"
+    sampled_requests_enabled   = true
+  }
+}`,
+          variables: getRequiredVars('waf', meta.args),
+          outputs: `output "web_acl_arn" { value = aws_wafv2_web_acl.main.arn }`
+        };
+
+      case 'ddosprotection':
+        return {
+          main: `resource "aws_shield_protection" "main" {
+  name         = "\${var.project_name}-shield"
+  resource_arn = var.resource_arn
+}`,
+          variables: getRequiredVars('ddosprotection', meta.args) + '\nvariable "resource_arn" { type = string }',
+          outputs: `output "protection_id" { value = aws_shield_protection.main.id }`
+        };
+
+      case 'networkfirewall':
+        return {
+          main: `resource "aws_networkfirewall_firewall" "main" {
+  name                = "\${var.project_name}-fw"
+  firewall_policy_arn = aws_networkfirewall_firewall_policy.main.arn
+  vpc_id              = var.vpc_id
+  subnet_mapping {
+    subnet_id = var.public_subnet_ids[0]
+  }
+}
+
+resource "aws_networkfirewall_firewall_policy" "main" {
+  name = "\${var.project_name}-fw-policy"
+  firewall_policy {
+    stateless_default_actions          = ["aws:pass"]
+    stateless_fragment_default_actions = ["aws:pass"]
+  }
+}`,
+          variables: getRequiredVars('networkfirewall', meta.args),
+          outputs: `output "firewall_arn" { value = aws_networkfirewall_firewall.main.arn }`
+        };
+
+      case 'vpn':
+        return {
+          main: `resource "aws_vpn_gateway" "main" {
+  vpc_id = var.vpc_id
+  tags = { Name = "\${var.project_name}-vpn-gw" }
+}
+
+resource "aws_customer_gateway" "main" {
+  bgp_asn    = 65000
+  ip_address = "1.2.3.4"
+  type       = "ipsec.1"
+  tags = { Name = "\${var.project_name}-customer-gw" }
+}
+
+resource "aws_vpn_connection" "main" {
+  vpn_gateway_id      = aws_vpn_gateway.main.id
+  customer_gateway_id = aws_customer_gateway.main.id
+  type                = "ipsec.1"
+  static_routes_only  = true
+}`,
+          variables: getRequiredVars('vpn', meta.args),
+          outputs: `output "vpngw_id" { value = aws_vpn_gateway.main.id }`
+        };
+
+      case 'transitgateway':
+        return {
+          main: `resource "aws_ec2_transit_gateway" "main" {
+  description = "Transit Gateway for \${var.project_name}"
+  tags        = { Name = "\${var.project_name}-tgw" }
+}
+
+resource "aws_ec2_transit_gateway_vpc_attachment" "main" {
+  subnet_ids         = var.private_subnet_ids
+  transit_gateway_id = aws_ec2_transit_gateway.main.id
+  vpc_id             = var.vpc_id
+}`,
+          variables: getRequiredVars('transitgateway', meta.args),
+          outputs: `output "tgw_id" { value = aws_ec2_transit_gateway.main.id }`
+        };
+
+      case 'privatelink':
+        return {
+          main: `resource "aws_vpc_endpoint" "s3" {
+  vpc_id       = var.vpc_id
+  service_name = "com.amazonaws.\${var.region}.s3"
+  tags         = { Name = "\${var.project_name}-s3-endpoint" }
+}
+
+resource "aws_vpc_endpoint" "ecr_api" {
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.\${var.region}.ecr.api"
+  vpc_endpoint_type   = "Interface"
+  private_dns_enabled = true
+  subnet_ids          = var.private_subnet_ids
+  security_group_ids  = [aws_security_group.endpoint_sg.id]
+}
+
+resource "aws_security_group" "endpoint_sg" {
+  name   = "\${var.project_name}-endpoint-sg"
+  vpc_id = var.vpc_id
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+}`,
+          variables: getRequiredVars('privatelink', meta.args),
+          outputs: `output "s3_endpoint_id" { value = aws_vpc_endpoint.s3.id }`
+        };
+
+      case 'secretsmanagement':
+      case 'secretsmanager':
+        return {
+          main: `resource "aws_secretsmanager_secret" "main" {
+  name_prefix = "\${var.project_name}-secret-"
+}
+
+resource "aws_secretsmanager_secret_version" "main" {
+  secret_id     = aws_secretsmanager_secret.main.id
+  secret_string = jsonencode({ api_key = "change-me" })
+}`,
+          variables: getRequiredVars('secretsmanagement', meta.args),
+          outputs: `output "secret_arn" { value = aws_secretsmanager_secret.main.arn }`
+        };
+
+      case 'eventbus':
+        return {
+          main: `resource "aws_cloudwatch_event_bus" "main" {
+  name = "\${var.project_name}-event-bus"
+}`,
+          variables: getRequiredVars('eventbus', meta.args),
+          outputs: `output "event_bus_arn" { value = aws_cloudwatch_event_bus.main.arn }`
+        };
+
+      case 'notificationservice':
+        return {
+          main: `resource "aws_sns_topic" "main" {
+  name = "\${var.project_name}-notifications"
+}`,
+          variables: getRequiredVars('notificationservice', meta.args),
+          outputs: `output "sns_topic_arn" { value = aws_sns_topic.main.arn }`
+        };
+
+      case 'workfloworchestration':
+        return {
+          main: `resource "aws_sfn_state_machine" "main" {
+  name     = "\${var.project_name}-workflow"
+  role_arn = aws_iam_role.sfn_role.arn
+
+  definition = jsonencode({
+    StartAt = "HelloWorld",
+    States = {
+      HelloWorld = {
+        Type = "Pass",
+        Result = "Hello World!",
+        End = true
+      }
+    }
+  })
+}
+
+resource "aws_iam_role" "sfn_role" {
+  name = "\${var.project_name}-sfn-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Action = "sts:AssumeRole",
+      Effect = "Allow",
+      Principal = { Service = "states.amazonaws.com" }
+    }]
+  })
+}`,
+          variables: getRequiredVars('workfloworchestration', meta.args),
+          outputs: `output "state_machine_arn" { value = aws_sfn_state_machine.main.arn }`
+        };
+
+      case 'ml_training':
+      case 'mltraining':
+      case 'ml_inference':
+      case 'mlinference':
+        return {
+          main: `data "aws_caller_identity" "current" {}
+
+resource "aws_sagemaker_model" "main" {
+  name               = "\${var.project_name}-model"
+  execution_role_arn = aws_iam_role.sagemaker_role.arn
+
+  primary_container {
+    image = "public.ecr.aws/sagemaker/scikit-learn:0.23-1-cpu-py3"
+    image_config {
+      repository_access_mode = "Vpc"
+    }
+  }
+
+  vpc_config {
+    subnets = var.private_subnet_ids
+    security_group_ids = [aws_security_group.sagemaker_sg.id]
+  }
+}
+
+resource "aws_security_group" "sagemaker_sg" {
+  name        = "\${var.project_name}-sagemaker-sg"
+  description = "Security group for SageMaker model"
+  vpc_id      = var.vpc_id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_iam_role" "sagemaker_role" {
+  name = "\${var.project_name}-sagemaker-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Action = "sts:AssumeRole",
+      Effect = "Allow",
+      Principal = { Service = "sagemaker.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "sagemaker_full" {
+  role       = aws_iam_role.sagemaker_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
+}
+
+resource "aws_iam_role_policy_attachment" "sagemaker_ecr" {
+  role       = aws_iam_role.sagemaker_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}`,
+          variables: getRequiredVars('mltraining', meta.args),
+          outputs: `output "model_name" { value = aws_sagemaker_model.main.name }`
+        };
+
+      case 'iotcore':
+      case 'iotedgegateway':
+        return {
+          main: `resource "aws_iot_thing" "main" {
+  name = "\${var.project_name}-thing"
+}
+
+resource "aws_iot_certificate" "main" {
+  active = true
+}
+
+resource "aws_iot_policy" "main" {
+  name = "\${var.project_name}-iot-policy"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Action = "iot:*",
+      Effect = "Allow",
+      Resource = "*"
+    }]
+  })
+}`,
+          variables: getRequiredVars('iotcore', meta.args),
+          outputs: `output "thing_arn" { value = aws_iot_thing.main.arn }`
+        };
+
+      case 'logging':
+        return {
+          main: `resource "aws_cloudwatch_log_group" "main" {
+  name              = "\${var.project_name}-logs"
+  retention_in_days = 30
+}`,
+          variables: getRequiredVars('logging', meta.args),
+          outputs: `output "log_group_arn" { value = aws_cloudwatch_log_group.main.arn }`
+        };
+
+      case 'monitoring':
+      case 'metrics':
+      case 'alerting':
+        return {
+          main: `resource "aws_cloudwatch_dashboard" "main" {
+  dashboard_name = "\${var.project_name}-dashboard"
+  dashboard_body = jsonencode({
+    widgets = [
+      {
+        type   = "text"
+        width  = 12
+        height = 3
+        properties = {
+          markdown = "# Dashboard for \${var.project_name}"
+        }
+      }
+    ]
+  })
+}`,
+          variables: getRequiredVars('monitoring', meta.args),
+          outputs: `output "dashboard_arn" { value = aws_cloudwatch_dashboard.main.dashboard_arn }`
+        };
+
+      case 'tracing':
+      case 'apm':
+        return {
+          main: `resource "aws_xray_group" "main" {
+  group_name = "\${var.project_name}-tracing"
+  filter_expression = "service(\\\"\${var.project_name}\\\")"
+}`,
+          variables: getRequiredVars('tracing', meta.args),
+          outputs: `output "xray_group_arn" { value = aws_xray_group.main.arn }`
+        };
+
+      case 'computecontainer':
+      case 'compute_container':
+        {
+          const ecsCpu = 256; // Default or injected via vars later
+          const ecsMem = 512;
+          return {
+            main: `resource "aws_ecs_cluster" "main" {
+  name = "\${var.project_name}-cluster"
+
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
+}
+
+resource "aws_iam_role" "execution_role" {
+  name = "\${var.project_name}-exec-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "execution_role_policy" {
+  role       = aws_iam_role.execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role" "task_role" {
+  name = "\${var.project_name}-task-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_security_group" "app_sg" {
+  name   = "\${var.project_name}-ecs-sg"
+  vpc_id = var.vpc_id
+
+  ingress {
+    protocol    = "tcp"
+    from_port   = 80
+    to_port     = 80
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    protocol    = "-1"
+    from_port   = 0
+    to_port     = 0
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_ecs_task_definition" "app" {
+  family                   = "\${var.project_name}-task"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = 256
+  memory                   = 512
+  execution_role_arn       = aws_iam_role.execution_role.arn
+  task_role_arn            = aws_iam_role.task_role.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "\${var.project_name}-container"
+      image     = "nginx:latest"
+      essential = true
+      portMappings = [
+        {
+          containerPort = 80
+          hostPort      = 80
+        }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = "/ecs/\${var.project_name}"
+          "awslogs-region"        = var.region
+          "awslogs-stream-prefix" = "ecs"
+        }
+      }
+      environment = []
+    }
+  ])
+}
+
+resource "aws_ecs_service" "main" {
   name            = "\${var.project_name}-service"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.app.arn
@@ -3696,400 +5143,19 @@ resource "aws_ecs_service" "app" {
   }
 }
 
-resource "aws_security_group" "app_sg" {
-  name        = "\${var.project_name}-app-sg"
-  vpc_id      = var.vpc_id
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}`,
-          variables: getRequiredVars('computecontainer', meta.args),
-          outputs: `output "cluster_name" { value = aws_ecs_cluster.main.name }
-output "service_name" { value = aws_ecs_service.app.name }
-output "ecr_url" { value = aws_ecr_repository.repo.repository_url }
-output "codebuild_name" { value = aws_codebuild_project.build.name }
-output "build_bucket" { value = aws_s3_bucket.builds.bucket }
-output "region" { value = var.region }`
-        };
-
-      case 'cdn':
-        return {
-          main: `# ═══════════════════════════════════════════════════════════════════════════
-# CloudFront CDN with Origin Access Control (OAC) - Production Grade
-# ═══════════════════════════════════════════════════════════════════════════
-
-# 1. Origin Access Control (OAC) - Modern replacement for OAI
-resource "aws_cloudfront_origin_access_control" "oac" {
-  name                              = "\${var.project_name}-oac"
-  description                       = "OAC for static site S3 bucket"
-  origin_access_control_origin_type = "s3"
-  signing_behavior                  = "always"
-  signing_protocol                  = "sigv4"
-}
-
-# 2. CloudFront Distribution
-resource "aws_cloudfront_distribution" "cdn" {
-  enabled             = true
-  default_root_object = "index.html"
-  comment             = "\${var.project_name} Static Site CDN"
-
-  origin {
-    domain_name              = var.bucket_domain_name
-    origin_id                = "site"
-    origin_access_control_id = aws_cloudfront_origin_access_control.oac.id
-  }
-
-  default_cache_behavior {
-    allowed_methods        = ["GET", "HEAD"]
-    cached_methods         = ["GET", "HEAD"]
-    target_origin_id       = "site"
-    viewer_protocol_policy = "redirect-to-https"
-    compress               = true
-
-    forwarded_values {
-      query_string = false
-      cookies {
-        forward = "none"
-      }
-    }
-
-    min_ttl     = 0
-    default_ttl = 3600
-    max_ttl     = 86400
-  }
-
-  # SPA Support: Handle 403/404 with index.html for client-side routing
-  custom_error_response {
-    error_code         = 403
-    response_code      = 200
-    response_page_path = "/index.html"
-  }
-  custom_error_response {
-    error_code         = 404
-    response_code      = 200
-    response_page_path = "/index.html"
-  }
-
-  restrictions {
-    geo_restriction {
-      restriction_type = "none"
-    }
-  }
-
-  viewer_certificate {
-    cloudfront_default_certificate = true
-  }
-
-  tags = {
-    Name      = "\${var.project_name}-cdn"
-    ManagedBy = "Cloudiverse"
-  }
-}
-
-# 3. S3 Bucket Policy - CRITICAL: Allows ONLY this CloudFront distribution
-resource "aws_s3_bucket_policy" "cloudfront_access" {
-  bucket = var.bucket_name
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid       = "AllowCloudFrontAccess"
-        Effect    = "Allow"
-        Principal = {
-          Service = "cloudfront.amazonaws.com"
-        }
-        Action   = "s3:GetObject"
-        Resource = "\${var.bucket_arn}/*"
-        Condition = {
-          StringEquals = {
-            "AWS:SourceArn" = aws_cloudfront_distribution.cdn.arn
-          }
-        }
-      }
-    ]
-  })
-
-  depends_on = [aws_cloudfront_distribution.cdn]
-}`,
-          variables: getRequiredVars('cdn', meta.args) + `
-variable "bucket_domain_name" { 
-  type        = string 
-  description = "S3 bucket regional domain name"
-}
-variable "bucket_name" { 
-  type        = string 
-  description = "S3 bucket name for policy attachment"
-}
-variable "bucket_arn" { 
-  type        = string 
-  description = "S3 bucket ARN for policy"
-}`,
-          outputs: `output "endpoint" { value = aws_cloudfront_distribution.cdn.domain_name }
-output "id" { value = aws_cloudfront_distribution.cdn.id }
-output "arn" { value = aws_cloudfront_distribution.cdn.arn }`
-        };
-
-      case 'apigateway':
-        return {
-          main: `resource "aws_apigatewayv2_api" "api" {
-  name          = "\${var.project_name}-api"
-  protocol_type = "HTTP"
-}
-
-resource "aws_apigatewayv2_stage" "default" {
-  api_id = aws_apigatewayv2_api.api.id
-  name   = "$default"
-  auto_deploy = true
-}`,
-          variables: getRequiredVars('apigateway', meta.args),
-          outputs: `output "endpoint" { value = aws_apigatewayv2_api.api.api_endpoint }`
-        };
-
-      case 'networking':
-      case 'vpcnetworking':
-      case 'vpc':
-        return {
-          main: `resource "aws_vpc" "main" {
-  cidr_block = "10.0.0.0/16"
-  enable_dns_hostnames = true
-  tags = { Name = "\${var.project_name}-vpc" }
-}
-
-resource "aws_subnet" "public" {
-  count = 2
-  vpc_id = aws_vpc.main.id
-  cidr_block = "10.0.\${count.index}.0/24"
-  availability_zone = data.aws_availability_zones.available.names[count.index]
-  map_public_ip_on_launch = true
-  tags = { Name = "\${var.project_name}-public-\${count.index}" }
-}
-
-resource "aws_subnet" "private" {
-  count = 2
-  vpc_id = aws_vpc.main.id
-  cidr_block = "10.0.\${count.index + 10}.0/24"
-  availability_zone = data.aws_availability_zones.available.names[count.index]
-  tags = { Name = "\${var.project_name}-private-\${count.index}" }
-}
-
-data "aws_availability_zones" "available" {}`,
-          variables: `variable "project_name" { type = string }
-variable "region" { type = string }`,
-          outputs: `output "vpc_id" { value = aws_vpc.main.id }
-output "public_subnet_ids" { value = aws_subnet.public[*].id }
-output "private_subnet_ids" { value = aws_subnet.private[*].id }`
-        };
-
-      case 'nosqldatabase':
-        return {
-          main: `resource "aws_dynamodb_table" "main" {
-  name           = "\${var.project_name}-table"
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "id"
-
-  attribute {
-    name = "id"
-    type = "S"
-  }
-
-  point_in_time_recovery {
-    enabled = var.encryption_at_rest
-  }
-
-  server_side_encryption {
-    enabled = var.encryption_at_rest
-  }
-}`,
-          variables: getRequiredVars(service, meta.args),
-          outputs: `output "table_name" { value = aws_dynamodb_table.main.name }
-output "table_arn" { value = aws_dynamodb_table.main.arn }`
-        };
-
-      case 'computevm':
-        return {
-          main: `data "aws_ami" "latest_amazon_linux" {
-  most_recent = true
-  owners      = ["amazon"]
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
-  }
-}
-
-resource "aws_instance" "app" {
-  ami           = data.aws_ami.latest_amazon_linux.id
-  instance_type = "t3.micro"
-  subnet_id     = var.private_subnet_ids[0]
-  vpc_security_group_ids = [aws_security_group.vm_sg.id]
-
-  tags = { Name = "\${var.project_name}-vm" }
-}
-
-resource "aws_security_group" "vm_sg" {
-  name        = "\${var.project_name}-vm-sg"
-  vpc_id      = var.vpc_id
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/16"]
-  }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}`,
-          variables: getRequiredVars(service, meta.args),
-          outputs: `output "instance_id" { value = aws_instance.app.id }
-output "private_ip" { value = aws_instance.app.private_ip }`
-        };
-
-      case 'computeserverless':
-        return {
-          main: `resource "aws_iam_role" "lambda_role" {
-  name = "\${var.project_name}-lambda-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = { Service = "lambda.amazonaws.com" }
-    }]
-  })
-}
-
-data "archive_file" "lambda_zip" {
-  type        = "zip"
-  source_file = "\${path.module}/index.js"
-  output_path = "\${path.module}/function.zip"
-}
-
-resource "aws_lambda_function" "app" {
-  filename         = data.archive_file.lambda_zip.output_path
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
-  function_name    = "\${var.project_name}-function"
-  role             = aws_iam_role.lambda_role.arn
-  handler          = "index.handler"
-  runtime          = "nodejs16.x"
-
-  vpc_config {
-    subnet_ids         = var.private_subnet_ids
-    security_group_ids = [aws_security_group.lambda_sg.id]
-  }
-}
-
-resource "aws_security_group" "lambda_sg" {
-  name   = "\${var.project_name}-lambda-sg"
-  vpc_id = var.vpc_id
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}`,
-          variables: getRequiredVars(service, meta.args),
-          outputs: `output "function_name" { value = aws_lambda_function.app.function_name }`
-        };
-
-      case 'monitoring':
-        return {
-          main: `resource "aws_cloudwatch_metric_alarm" "health" {
-  alarm_name          = "\${var.project_name}-health-alarm"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "2"
-  metric_name         = "CPUUtilization"
-  namespace           = "AWS/EC2"
-  period              = "120"
-  statistic           = "Average"
-  threshold           = "80"
-  alarm_description   = "This metric monitors ec2 cpu utilization"
-}`,
-          variables: getRequiredVars(service, meta.args),
-          outputs: `output "url" { value = "https://console.aws.amazon.com/cloudwatch/" }`
-        };
-
-      case 'logging':
-        return {
-          main: `resource "aws_cloudwatch_log_group" "main" {
-  name              = "/aws/\${var.project_name}/logs"
+resource "aws_cloudwatch_log_group" "logs" {
+  name              = "/ecs/\${var.project_name}"
   retention_in_days = 30
-}`,
-          variables: getRequiredVars(service, meta.args),
-          outputs: `output "log_group_name" { value = aws_cloudwatch_log_group.main.name }`
-        };
-
-      case 'identityauth':
-      case 'auth':
-        return {
-          main: `resource "aws_iam_role" "app_role" {
-  name = "\${var.project_name}-app-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = { Service = "ec2.amazonaws.com" }
-    }]
-  })
-}`,
-          variables: getRequiredVars(service, meta.args),
-          outputs: `output "client_id" { value = aws_iam_role.app_role.arn }`
-        };
-
-      case 'loadbalancer':
-        return {
-          main: `resource "aws_lb" "main" {
-  name               = "\${var.project_name}-alb"
-  internal           = false
-  load_balancer_type = "application"
-  security_groups    = [aws_security_group.lb_sg.id]
-  subnets            = var.public_subnet_ids
-
-  enable_deletion_protection = false
 }
-
-resource "aws_security_group" "lb_sg" {
-  name   = "\${var.project_name}-lb-sg"
-  vpc_id = var.vpc_id
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}`,
-          variables: getRequiredVars(service, meta.args),
-          outputs: `output "dns_name" { value = aws_lb.main.dns_name }`
-        };
-
-      case 'apigateway':
-        return {
-          main: `resource "aws_apigatewayv2_api" "api" {
-  name          = "\${var.project_name}-api"
-  protocol_type = "HTTP"
-}
-
-resource "aws_apigatewayv2_stage" "default" {
-  api_id      = aws_apigatewayv2_api.api.id
-  name        = "$default"
-  auto_deploy = true
-}`,
-          variables: getRequiredVars(service, meta.args),
-          outputs: `output "url" { value = aws_apigatewayv2_api.api.api_endpoint }`
-        };
+`,
+            variables: getRequiredVars('computecontainer', meta.args),
+            outputs: `output "cluster_name" { value = aws_ecs_cluster.main.name }
+output "service_name" { value = aws_ecs_service.main.name }
+output "task_family" { value = aws_ecs_task_definition.app.family }
+output "ecr_url" { value = "" }
+`
+          };
+        }
 
       default:
         return skeleton;
@@ -4102,18 +5168,18 @@ resource "aws_apigatewayv2_stage" "default" {
       case 'setup':
         return {
           main: `resource "google_project_service" "apis" {
-  for_each = toset([
-    "iam.googleapis.com", 
-    "run.googleapis.com", 
-    "sqladmin.googleapis.com", 
-    "redis.googleapis.com",
-    "compute.googleapis.com",
-    "servicenetworking.googleapis.com",
-    "cloudresourcemanager.googleapis.com"
-  ])
-  service = each.key
-  disable_on_destroy = false
-}`,
+    for_each = toset([
+      "iam.googleapis.com",
+      "run.googleapis.com",
+      "sqladmin.googleapis.com",
+      "redis.googleapis.com",
+      "compute.googleapis.com",
+      "servicenetworking.googleapis.com",
+      "cloudresourcemanager.googleapis.com"
+    ])
+    service = each.key
+    disable_on_destroy = false
+  } `,
           variables: getRequiredVars(service, meta.args),
           outputs: ''
         };
@@ -4121,61 +5187,61 @@ resource "aws_apigatewayv2_stage" "default" {
       case 'computecontainer':
         return {
           main: `resource "google_artifact_registry_repository" "repo" {
-  location      = var.region
-  repository_id = "\${var.project_name}-repo"
-  format        = "DOCKER"
-}
+    location = var.region
+    repository_id = "\${var.project_name}-repo"
+    format = "DOCKER"
+  }
 
 resource "google_cloud_run_service" "app" {
-  name     = "\${var.project_name}-app"
-  location = var.region
+    name = "\${var.project_name}-app"
+    location = var.region
 
   template {
     spec {
       containers {
-        image = "\${var.region}-docker.pkg.dev/\${var.project_id}/\${google_artifact_registry_repository.repo.name}/app:latest"
+          image = "\${var.region}-docker.pkg.dev/\${var.project_id}/\${google_artifact_registry_repository.repo.name}/app:latest"
+        }
       }
     }
-  }
 
   traffic {
-    percent         = 100
-    latest_revision = true
-  }
-}`,
+      percent = 100
+      latest_revision = true
+    }
+  } `,
           variables: getRequiredVars('computecontainer', meta.args) + '\nvariable "project_id" { type = string }',
           outputs: `output "url" { value = google_cloud_run_service.app.status[0].url }
 output "service_name" { value = google_cloud_run_service.app.name }
 output "artifact_registry" { value = google_artifact_registry_repository.repo.name }
 output "project_id" { value = var.project_id }
-output "region" { value = var.region }`
+output "region" { value = var.region } `
         };
 
       case 'relationaldatabase':
         return {
           main: `resource "google_sql_database_instance" "main" {
-  name             = "\${var.project_name}-db"
-  database_version = "POSTGRES_13"
-  region           = var.region
+    name = "\${var.project_name}-db"
+    database_version = "POSTGRES_13"
+    region = var.region
 
   settings {
-    tier = "db-f1-micro"
+      tier = "db-f1-micro"
     backup_configuration {
-      enabled = true
-    }
+        enabled = true
+      }
     ip_configuration {
-      ipv4_enabled    = false
-      private_network = var.vpc_id
+        ipv4_enabled = false
+        private_network = var.vpc_id
+      }
     }
   }
-}
 
 resource "google_sql_database" "database" {
-  name     = "app_db"
-  instance = google_sql_database_instance.main.name
-}`,
+    name = "app_db"
+    instance = google_sql_database_instance.main.name
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "endpoint" { value = google_sql_database_instance.main.private_ip_address }`
+          outputs: `output "endpoint" { value = google_sql_database_instance.main.private_ip_address } `
         };
 
       case 'networking':
@@ -4183,238 +5249,646 @@ resource "google_sql_database" "database" {
       case 'vpc':
         return {
           main: `resource "google_compute_network" "vpc" {
-  name                    = "\${var.project_name}-vpc"
-  auto_create_subnetworks = false
-}
+    name = "\${var.project_name}-vpc"
+    auto_create_subnetworks = false
+  }
 
 resource "google_compute_subnetwork" "public" {
-  name          = "public"
-  ip_cidr_range = "10.0.1.0/24"
-  region        = var.region
-  network       = google_compute_network.vpc.id
-}
+    name = "public"
+    ip_cidr_range = "10.0.1.0/24"
+    region = var.region
+    network = google_compute_network.vpc.id
+  }
 
 resource "google_compute_subnetwork" "private" {
-  name          = "private"
-  ip_cidr_range = "10.0.2.0/24"
-  region        = var.region
-  network       = google_compute_network.vpc.id
-}`,
+    name = "private"
+    ip_cidr_range = "10.0.2.0/24"
+    region = var.region
+    network = google_compute_network.vpc.id
+  } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "vpc_id" { value = google_compute_network.vpc.id }
 output "public_subnet_ids" { value = [google_compute_subnetwork.public.id] }
-output "private_subnet_ids" { value = [google_compute_subnetwork.private.id] }`
+output "private_subnet_ids" { value = [google_compute_subnetwork.private.id] } `
         };
 
       case 'nosqldatabase':
         return {
           main: `resource "google_firestore_database" "database" {
-  project     = var.project_id
-  name        = "(default)"
-  location_id = var.region
-  type        = "FIRESTORE_NATIVE"
-}`,
+    project = var.project_id
+    name = "(default)"
+    location_id = var.region
+    type = "FIRESTORE_NATIVE"
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "database_id" { value = google_firestore_database.database.name }`
+          outputs: `output "database_id" { value = google_firestore_database.database.name } `
         };
 
       case 'objectstorage':
         return {
           main: `resource "google_storage_bucket" "store" {
-  name          = "\${var.project_name}-assets"
-  location      = var.region
-  force_destroy = true
-}`,
+    name = "\${var.project_name}-assets"
+    location = var.region
+    force_destroy = true
+  } `,
           variables: getRequiredVars('objectstorage', meta.args),
-          outputs: `output "bucket_name" { value = google_storage_bucket.store.name }`
+          outputs: `output "bucket_name" { value = google_storage_bucket.store.name } `
         };
 
       case 'cache':
         return {
           main: `resource "google_redis_instance" "cache" {
-  name           = "\${var.project_name}-cache"
-  tier           = "BASIC"
-  memory_size_gb = 1
-  region         = var.region
-  authorized_network = var.vpc_id
-}`,
+    name = "\${var.project_name}-cache"
+    tier = "BASIC"
+    memory_size_gb = 1
+    region = var.region
+    authorized_network = var.vpc_id
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "endpoint" { value = google_redis_instance.cache.host }`
+          outputs: `output "endpoint" { value = google_redis_instance.cache.host } `
         };
 
       case 'computevm':
         return {
           main: `resource "google_compute_instance" "vm" {
-  name         = "\${var.project_name}-vm"
-  machine_type = "e2-micro"
-  zone         = "\${var.region}-a"
+    name = "\${var.project_name}-vm"
+    machine_type = "e2-micro"
+    zone = "\${var.region}-a"
 
   boot_disk {
     initialize_params {
-      image = "debian-cloud/debian-11"
+        image = "debian-cloud/debian-11"
+      }
     }
-  }
 
   network_interface {
-    network = var.vpc_id
-    subnetwork = var.private_subnet_ids[0]
-  }
-}`,
+      network = var.vpc_id
+      subnetwork = var.private_subnet_ids[0]
+    }
+  } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "instance_id" { value = google_compute_instance.vm.instance_id }
-output "ip" { value = google_compute_instance.vm.network_interface[0].network_ip }`
+output "ip" { value = google_compute_instance.vm.network_interface[0].network_ip } `
         };
 
       case 'computeserverless':
         return {
           main: `resource "google_storage_bucket" "func_bucket" {
-  name     = "\${var.project_name}-func-source"
-  location = var.region
-}
+    name = "\${var.project_name}-func-source"
+    location = var.region
+  }
 
 data "archive_file" "source" {
-  type        = "zip"
-  source_file = "\${path.module}/index.js"
-  output_path = "\${path.module}/function.zip"
-}
+    type = "zip"
+    source_file = "\${path.module}/index.js"
+    output_path = "\${path.module}/function.zip"
+  }
 
 resource "google_storage_bucket_object" "archive" {
-  name   = "function.zip"
-  bucket = google_storage_bucket.func_bucket.name
-  source = data.archive_file.source.output_path
-}
+    name = "function.zip"
+    bucket = google_storage_bucket.func_bucket.name
+    source = data.archive_file.source.output_path
+  }
 
 resource "google_cloudfunctions_function" "function" {
-  name        = "\${var.project_name}-function"
-  description = "Cloud Function"
-  runtime     = "nodejs16"
+    name = "\${var.project_name}-function"
+    description = "Cloud Function"
+    runtime = "nodejs16"
 
-  available_memory_mb   = 256
-  source_archive_bucket = google_storage_bucket.func_bucket.name
-  source_archive_object = google_storage_bucket_object.archive.name
-  trigger_http          = true
-  entry_point           = "helloWorld"
-}`,
+    available_memory_mb = 256
+    source_archive_bucket = google_storage_bucket.func_bucket.name
+    source_archive_object = google_storage_bucket_object.archive.name
+    trigger_http = true
+    entry_point = "helloWorld"
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "url" { value = google_cloudfunctions_function.function.https_trigger_url }`
+          outputs: `output "url" { value = google_cloudfunctions_function.function.https_trigger_url } `
         };
 
       case 'monitoring':
         return {
           main: `resource "google_monitoring_alert_policy" "alert_policy" {
-  display_name = "\${var.project_name}-alert"
-  combiner     = "OR"
+    display_name = "\${var.project_name}-alert"
+    combiner = "OR"
   conditions {
-    display_name = "CPU Usage High"
+      display_name = "CPU Usage High"
     condition_threshold {
-      filter     = "metric.type=\\"compute.googleapis.com/instance/cpu/utilization\\" resource.type=\\"gce_instance\\""
-      duration   = "60s"
-      comparison = "COMPARISON_GT"
-      threshold_value = 0.8
+        filter = "metric.type=\\"compute.googleapis.com / instance / cpu / utilization\\" resource.type=\\"gce_instance\\""
+        duration = "60s"
+        comparison = "COMPARISON_GT"
+        threshold_value = 0.8
+      }
     }
-  }
-}`,
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "url" { value = "https://console.cloud.google.com/monitoring/dashboards" }`
+          outputs: `output "url" { value = "https://console.cloud.google.com/monitoring/dashboards" } `
         };
 
       case 'logging':
         return {
           main: `resource "google_logging_project_sink" "sink" {
-  name        = "\${var.project_name}-sink"
-  destination = "storage.googleapis.com/\${var.project_name}-logs"
-  filter      = "severity>=ERROR"
-}`,
+    name = "\${var.project_name}-sink"
+    destination = "storage.googleapis.com/\${var.project_name}-logs"
+    filter = "severity>=ERROR"
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "log_group_name" { value = google_logging_project_sink.sink.name }`
+          outputs: `output "log_group_name" { value = google_logging_project_sink.sink.name } `
         };
 
       case 'identityauth':
       case 'auth':
         return {
           main: `resource "google_service_account" "app_sa" {
-  account_id   = "sa-\${substr(replace(var.project_name, "-", ""), 0, 26)}"
-  display_name = "App Service Account"
-}`,
+    account_id = "sa-\${substr(replace(var.project_name, " - ", ""), 0, 26)}"
+    display_name = "App Service Account"
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "client_id" { value = google_service_account.app_sa.email }`
+          outputs: `output "client_id" { value = google_service_account.app_sa.email } `
         };
 
       case 'loadbalancer':
         return {
           main: `resource "google_compute_global_forwarding_rule" "default" {
-  name       = "\${var.project_name}-lb"
-  target     = google_compute_target_http_proxy.default.id
-  port_range = "80"
-}
+    name = "\${var.project_name}-lb"
+    target = google_compute_target_http_proxy.default.id
+    port_range = "80"
+  }
 
 resource "google_compute_target_http_proxy" "default" {
-  name    = "\${var.project_name}-proxy"
-  url_map = google_compute_url_map.default.id
-}
+    name = "\${var.project_name}-proxy"
+    url_map = google_compute_url_map.default.id
+  }
 
 resource "google_compute_url_map" "default" {
-  name            = "\${var.project_name}-urlmap"
-  default_service = google_compute_backend_service.default.id
-}
+    name = "\${var.project_name}-urlmap"
+    default_service = google_compute_backend_service.default.id
+  }
 
 resource "google_compute_backend_service" "default" {
-  name        = "\${var.project_name}-backend"
-  port_name   = "http"
-  protocol    = "HTTP"
-  timeout_sec = 10
-  health_checks = [google_compute_health_check.default.id]
-}
+    name = "\${var.project_name}-backend"
+    port_name = "http"
+    protocol = "HTTP"
+    timeout_sec = 10
+    health_checks = [google_compute_health_check.default.id]
+  }
 
 resource "google_compute_health_check" "default" {
-  name               = "\${var.project_name}-hc"
-  check_interval_sec = 1
-  timeout_sec        = 1
+    name = "\${var.project_name}-hc"
+    check_interval_sec = 1
+    timeout_sec = 1
   http_health_check {
-    port = 80
-  }
-}`,
+      port = 80
+    }
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "dns_name" { value = google_compute_global_forwarding_rule.default.ip_address }`
+          outputs: `output "dns_name" { value = google_compute_global_forwarding_rule.default.ip_address } `
         };
 
       case 'apigateway':
         return {
           main: `resource "google_api_gateway_api" "api" {
-  provider = google-beta
-  api_id   = "\${var.project_name}-api"
-}
+    provider = google - beta
+    api_id = "\${var.project_name}-api"
+  }
 
 resource "google_api_gateway_api_config" "api_cfg" {
-  provider      = google-beta
-  api           = google_api_gateway_api.api.api_id
-  api_config_id = "\${var.project_name}-cfg"
+    provider = google - beta
+    api = google_api_gateway_api.api.api_id
+    api_config_id = "\${var.project_name}-cfg"
 
   openapi_config {
     document {
-      path     = "spec.yaml"
-      contents = filebase64("spec.yaml")
+        path = "spec.yaml"
+        contents = filebase64("spec.yaml")
+      }
     }
-  }
-}`,
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "endpoint" { value = google_api_gateway_api_config.api_cfg.name }`
+          outputs: `output "endpoint" { value = google_api_gateway_api_config.api_cfg.name } `
         };
 
       case 'cdn':
         return {
           main: `resource "google_compute_backend_bucket" "cdn" {
-  name        = "\${var.project_name}-cdn-backend"
+    name = "\${var.project_name}-cdn-backend"
+    bucket_name = "\${var.project_name}-assets"
+    enable_cdn = true
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "endpoint" { value = google_compute_backend_bucket.cdn.name } `
+        };
+
+      case 'messagequeue':
+      case 'pubsub':
+      case 'eventbus':
+        return {
+          main: `resource "google_pubsub_topic" "main" {
+    name = "\${var.project_name}-topic"
+  }
+
+resource "google_pubsub_subscription" "main" {
+    name = "\${var.project_name}-sub"
+    topic = google_pubsub_topic.main.name
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "topic_id" { value = google_pubsub_topic.main.id } \noutput "endpoint" { value = google_pubsub_topic.main.id } `
+        };
+
+      case 'secretsmanagement':
+      case 'secretsmanager':
+        return {
+          main: `resource "google_secret_manager_secret" "secret" {
+    secret_id = "\${var.project_name}-secret"
+  replication {
+      automatic = true
+    }
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "secret_id" { value = google_secret_manager_secret.secret.id } `
+        };
+
+      case 'vectordatabase':
+        return {
+          main: `resource "google_vertex_ai_index" "vector" {
+  display_name = "\${var.project_name}-vector-index"
+  metadata {
+    config {
+      dimensions                  = 128
+      approximate_neighbors_count = 150
+      distance_measure_type       = "DOT_PRODUCT_DISTANCE"
+      algorithm_config {
+        tree_ah_config {
+          leaf_node_embedding_count    = 500
+          leaf_nodes_to_search_percent = 7
+        }
+      }
+    }
+  }
+  index_update_method = "STREAM_UPDATE"
+}`,
+          variables: getRequiredVars('vectordatabase', meta.args),
+          outputs: `output "index_id" { value = google_vertex_ai_index.vector.id }`
+        };
+
+      case 'timeseriesdatabase':
+        return {
+          main: `resource "google_bigtable_instance" "timeseries" {
+  name = "\${var.project_name}-ts"
+  cluster {
+    cluster_id   = "\${var.project_name}-ts-cluster"
+    zone         = "\${var.region}-a"
+    num_nodes    = 1
+    storage_type = "SSD"
+  }
+  deletion_protection = false
+}
+
+resource "google_bigtable_table" "metrics" {
+  name          = "metrics"
+  instance_name = google_bigtable_instance.timeseries.name
+  column_family {
+    family = "cf1"
+  }
+}`,
+          variables: getRequiredVars('timeseriesdatabase', meta.args),
+          outputs: `output "instance_name" { value = google_bigtable_instance.timeseries.name }`
+        };
+
+      case 'analyticaldatabase':
+      case 'datawarehouse':
+        return {
+          main: `resource "google_bigquery_dataset" "main" {
+  dataset_id                  = replace(var.project_name, "-", "_")
+  friendly_name               = var.project_name
+  description                 = "Data warehouse dataset for \${var.project_name}"
+  location                    = var.region
+  default_table_expiration_ms = 3600000
+}
+
+resource "google_bigquery_table" "main" {
+  dataset_id = google_bigquery_dataset.main.dataset_id
+  table_id   = "analytics_events"
+  deletion_protection = false
+}`,
+          variables: getRequiredVars('datawarehouse', meta.args),
+          outputs: `output "dataset_id" { value = google_bigquery_dataset.main.dataset_id }`
+        };
+
+      case 'datalake':
+        return {
+          main: `resource "google_storage_bucket" "lake" {
+  name          = "\${var.project_name}-datalake"
+  location      = var.region
+  force_destroy = true
+  uniform_bucket_level_access = true
+}
+
+resource "google_dataplex_lake" "main" {
+  name         = "\${var.project_name}-lake"
+  location     = var.region
+  project      = var.project_id
+  description  = "Dataplex lake for \${var.project_name}"
+}`,
+          variables: getRequiredVars('datalake', meta.args) + '\nvariable "project_id" { type = string }',
+          outputs: `output "bucket_name" { value = google_storage_bucket.lake.name }
+output "lake_id" { value = google_dataplex_lake.main.id }`
+        };
+
+      case 'computebatch':
+        return {
+          main: `resource "google_cloud_run_v2_job" "batch" {
+  name     = "\${var.project_name}-batch"
+  location = var.region
+
+  template {
+    template {
+      containers {
+        image = "gcr.io/cloudrun/hello"
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "512Mi"
+          }
+        }
+      }
+    }
+  }
+}`,
+          variables: getRequiredVars('computebatch', meta.args),
+          outputs: `output "job_name" { value = google_cloud_run_v2_job.batch.name }`
+        };
+
+      case 'computeedge':
+        return {
+          main: `resource "google_compute_backend_bucket" "edge" {
+  name        = "\${var.project_name}-edge-backend"
   bucket_name = "\${var.project_name}-assets"
   enable_cdn  = true
+}
+
+# Cloud CDN with Edge Functions typically uses Cloud Armor or Load Balancer
+# For a stub, we represent the CDN backend which handles edge caching
+`,
+          variables: getRequiredVars('computeedge', meta.args),
+          outputs: `output "cdn_backend" { value = google_compute_backend_bucket.edge.name }`
+        };
+
+      case 'waf':
+      case 'ddosprotection':
+        return {
+          main: `resource "google_compute_security_policy" "policy" {
+  name = "\${var.project_name}-security-policy"
+
+  rule {
+    action   = "deny(403)"
+    priority = "1000"
+    match {
+      versioned_expr = "SRC_IPS_V1"
+      config {
+        src_ips = ["1.1.1.1/32"]
+      }
+    }
+    description = "Deny access to specific IP address"
+  }
+
+  rule {
+    action   = "allow"
+    priority = "2147483647"
+    match {
+      versioned_expr = "SRC_IPS_V1"
+      config {
+        src_ips = ["*"]
+      }
+    }
+    description = "default rule"
+  }
 }`,
-          variables: getRequiredVars(service, meta.args),
-          outputs: `output "endpoint" { value = google_compute_backend_bucket.cdn.name }`
+          variables: getRequiredVars('waf', meta.args),
+          outputs: `output "policy_id" { value = google_compute_security_policy.policy.id }`
+        };
+
+      case 'networkfirewall':
+        return {
+          main: `resource "google_compute_firewall" "default" {
+  name    = "\${var.project_name}-fw"
+  network = var.vpc_id
+
+  allow {
+    protocol = "icmp"
+  }
+
+  allow {
+    protocol = "tcp"
+    ports    = ["80", "443", "22"]
+  }
+
+  source_ranges = ["0.0.0.0/0"]
+}`,
+          variables: getRequiredVars('networkfirewall', meta.args),
+          outputs: `output "firewall_name" { value = google_compute_firewall.default.name }`
+        };
+
+      case 'vpn':
+        return {
+          main: `resource "google_compute_vpn_gateway" "target_gateway" {
+  name    = "\${var.project_name}-vpn-gw"
+  network = var.vpc_id
+}
+
+resource "google_compute_address" "vpn_static_ip" {
+  name = "\${var.project_name}-vpn-static-ip"
+}
+
+resource "google_compute_forwarding_rule" "fr_esp" {
+  name        = "fr-esp"
+  ip_protocol = "ESP"
+  ip_address  = google_compute_address.vpn_static_ip.address
+  target      = google_compute_vpn_gateway.target_gateway.id
+}`,
+          variables: getRequiredVars('vpn', meta.args),
+          outputs: `output "vpn_ip" { value = google_compute_address.vpn_static_ip.address }`
+        };
+
+      case 'transitgateway':
+        return {
+          main: `resource "google_network_connectivity_hub" "main" {
+  name        = "\${var.project_name}-hub"
+  description = "Network Connectivity Center Hub for \${var.project_name}"
+}
+
+resource "google_network_connectivity_spoke" "vpc_spoke" {
+  name     = "\${var.project_name}-vpc-spoke"
+  location = "global"
+  hub      = google_network_connectivity_hub.main.id
+  linked_vpc_network {
+    uri = var.vpc_id
+  }
+}`,
+          variables: getRequiredVars('transitgateway', meta.args),
+          outputs: `output "hub_id" { value = google_network_connectivity_hub.main.id }`
+        };
+
+      case 'privatelink':
+        return {
+          main: `resource "google_compute_global_address" "psc_endpoint" {
+  name          = "\${var.project_name}-psc-address"
+  address_type  = "INTERNAL"
+  purpose       = "PRIVATE_SERVICE_CONNECT"
+  network       = var.vpc_id
+}
+
+# Example Private Service Connect Endpoint for Google APIs
+resource "google_compute_global_forwarding_rule" "psc_endpoint" {
+  name                  = "\${var.project_name}-psc-endpoint"
+  target                = "all-apis"
+  network               = var.vpc_id
+  ip_address            = google_compute_global_address.psc_endpoint.id
+  load_balancing_scheme = ""
+}`,
+          variables: getRequiredVars('privatelink', meta.args),
+          outputs: `output "psc_endpoint_ip" { value = google_compute_global_address.psc_endpoint.address }`
+        };
+
+      case 'eventbus':
+      case 'notificationservice':
+        return {
+          main: `resource "google_pubsub_topic" "events" {
+  name = "\${var.project_name}-events"
+}
+
+resource "google_pubsub_subscription" "events_sub" {
+  name  = "\${var.project_name}-events-sub"
+  topic = google_pubsub_topic.events.name
+}`,
+          variables: getRequiredVars('eventbus', meta.args),
+          outputs: `output "topic_name" { value = google_pubsub_topic.events.name }`
+        };
+
+      case 'workfloworchestration':
+        return {
+          main: `resource "google_workflows_workflow" "main" {
+  name            = "\${var.project_name}-workflow"
+  region          = var.region
+  description     = "Workflow for \${var.project_name}"
+  service_account = google_service_account.workflows_sa.id
+  source_contents = <<-EOF
+    - getCurrentTime:
+        call: http.get
+        args:
+            url: https://us-central1-workflowconnectors.googleapis.com/v1/projects/\${var.project_id}/locations/global/connectors/time:get
+        result: currentTime
+    - returnTime:
+        return: \${currentTime}
+    EOF
+}
+
+resource "google_service_account" "workflows_sa" {
+  account_id   = "\${var.project_name}-wf-sa"
+  display_name = "Workflows Service Account"
+}`,
+          variables: getRequiredVars('workfloworchestration', meta.args) + '\nvariable "project_id" { type = string }',
+          outputs: `output "workflow_id" { value = google_workflows_workflow.main.id }`
+        };
+
+      case 'mltraining':
+      case 'mlinference':
+        return {
+          main: `resource "google_vertex_ai_dataset" "main" {
+  display_name        = "\${var.project_name}-dataset"
+  metadata_schema_uri = "gs://google-cloud-aiplatform/schema/dataset/metadata/image_1.0.0.yaml"
+  region              = var.region
+}
+
+resource "google_vertex_ai_endpoint" "main" {
+  name         = "\${var.project_name}-endpoint"
+  display_name = "\${var.project_name}-endpoint"
+  location     = var.region
+}`,
+          variables: getRequiredVars('mltraining', meta.args),
+          outputs: `output "endpoint_id" { value = google_vertex_ai_endpoint.main.id }`
+        };
+
+      case 'iotcore':
+      case 'iotedgegateway':
+        return {
+          main: `resource "google_cloudiot_registry" "main" {
+  name     = "\${var.project_name}-iot-registry"
+  region   = var.region
+
+  event_notification_configs {
+    pubsub_topic_name = google_pubsub_topic.iot_events.id
+  }
+}
+
+resource "google_pubsub_topic" "iot_events" {
+  name = "\${var.project_name}-iot-events"
+}`,
+          variables: getRequiredVars('iotcore', meta.args),
+          outputs: `output "registry_id" { value = google_cloudiot_registry.main.id }`
+        };
+
+      case 'logging':
+        return {
+          main: `resource "google_logging_project_sink" "main" {
+  name        = "\${var.project_name}-sink"
+  destination = "storage.googleapis.com/\${google_storage_bucket.log_bucket.name}"
+  filter      = "severity >= ERROR"
+
+  unique_writer_identity = true
+}
+
+resource "google_storage_bucket" "log_bucket" {
+  name     = "\${var.project_name}-logs-\${var.project_id}"
+  location = var.region
+}`,
+          variables: getRequiredVars('logging', meta.args),
+          outputs: `output "log_sink_id" { value = google_logging_project_sink.main.id }`
+        };
+
+      case 'monitoring':
+      case 'metrics':
+      case 'alerting':
+        return {
+          main: `resource "google_monitoring_dashboard" "main" {
+  dashboard_json = jsonencode({
+    displayName = "Dashboard for \${var.project_name}"
+    gridLayout = {
+      widgets = [
+        {
+          title = "Basic Widget"
+          xyChart = {
+            dataSets = [{
+              timeSeriesQuery = {
+                timeSeriesFilter = {
+                  filter = "metric.type=\\\"compute.googleapis.com/instance/cpu/utilization\\\""
+                }
+              }
+            }]
+          }
+        }
+      ]
+    }
+  })
+}`,
+          variables: getRequiredVars('monitoring', meta.args),
+          outputs: `output "dashboard_id" { value = google_monitoring_dashboard.main.id }`
+        };
+
+      case 'tracing':
+      case 'apm':
+        return {
+          main: `resource "google_project_service" "trace" {
+  service            = "cloudtrace.googleapis.com"
+  disable_on_destroy = false
+}`,
+          variables: getRequiredVars('tracing', meta.args),
+          outputs: `output "trace_api_enabled" { value = true }`
         };
 
       default:
         return skeleton;
     }
+
   }
 
   // 3. AZURE IMPLEMENTATIONS
@@ -4423,109 +5897,109 @@ resource "google_api_gateway_api_config" "api_cfg" {
       case 'computecontainer':
         return {
           main: `resource "azurerm_container_registry" "acr" {
-  name                = replace("\${var.project_name}acr", "-", "")
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = var.location
-  sku                 = "Standard"
-  admin_enabled       = true
-}
+    name = replace("\${var.project_name}acr", "-", "")
+    resource_group_name = azurerm_resource_group.rg.name
+    location = var.location
+    sku = "Standard"
+    admin_enabled = true
+  }
 
 resource "azurerm_log_analytics_workspace" "core" {
-  name                = "\${var.project_name}-logs"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-  sku                 = "PerGB2018"
-  retention_in_days   = 30
-}
+    name = "\${var.project_name}-logs"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+    sku = "PerGB2018"
+    retention_in_days = 30
+  }
 
 resource "azurerm_container_app_environment" "env" {
-  name                       = "\${var.project_name}-env"
-  location                   = var.location
-  resource_group_name        = azurerm_resource_group.rg.name
-  log_analytics_workspace_id = azurerm_log_analytics_workspace.core.id
-}
+    name = "\${var.project_name}-env"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+    log_analytics_workspace_id = azurerm_log_analytics_workspace.core.id
+  }
 
 resource "azurerm_container_app" "app" {
-  name                         = "\${var.project_name}-app"
-  container_app_environment_id = azurerm_container_app_environment.env.id
-  resource_group_name          = azurerm_resource_group.rg.name
-  revision_mode                = "Single"
+    name = "\${var.project_name}-app"
+    container_app_environment_id = azurerm_container_app_environment.env.id
+    resource_group_name = azurerm_resource_group.rg.name
+    revision_mode = "Single"
 
   template {
     container {
-      name   = "main"
-      image  = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
-      cpu    = 0.5
-      memory = "1.0Gi"
+        name = "main"
+        image = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+        cpu = 0.5
+        memory = "1.0Gi"
+      }
     }
-  }
   
   ingress {
-    external_enabled = true
-    target_port      = 80
+      external_enabled = true
+      target_port = 80
     traffic_weight {
-      percentage = 100
-      latest_revision = true
+        percentage = 100
+        latest_revision = true
+      }
     }
   }
-}
 
 resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
           variables: getRequiredVars('computecontainer', meta.args),
           outputs: `output "url" { value = azurerm_container_app.app.ingress[0].fqdn }
 output "service_name" { value = azurerm_container_app.app.name }
 output "container_app_name" { value = azurerm_container_app.app.name }
 output "resource_group_name" { value = azurerm_resource_group.rg.name }
-output "acr_login_server" { value = azurerm_container_registry.acr.login_server }`
+output "acr_login_server" { value = azurerm_container_registry.acr.login_server } `
         };
 
       case 'objectstorage':
         return {
           main: `resource "azurerm_storage_account" "store" {
-  name                     = replace("\${var.project_name}store", "-", "")
-  resource_group_name      = "\${var.project_name}-rg"
-  location                 = var.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
-}
+    name = replace("\${var.project_name}store", "-", "")
+    resource_group_name = "\${var.project_name}-rg"
+    location = var.location
+    account_tier = "Standard"
+    account_replication_type = "LRS"
+  }
 
 resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
           variables: getRequiredVars('objectstorage', meta.args),
-          outputs: `output "bucket_name" { value = azurerm_storage_account.store.name }`
+          outputs: `output "bucket_name" { value = azurerm_storage_account.store.name } `
         };
 
       case 'relationaldatabase':
         return {
           main: `resource "azurerm_postgresql_server" "db" {
-  name                = "\${var.project_name}-db"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+    name = "\${var.project_name}-db"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
 
-  sku_name = "GP_Gen5_2"
+    sku_name = "GP_Gen5_2"
 
-  storage_mb            = 5120
-  backup_retention_days = var.backup_retention_days
-  geo_redundant_backup_enabled = false
-  auto_grow_enabled            = true
+    storage_mb = 5120
+    backup_retention_days = var.backup_retention_days
+    geo_redundant_backup_enabled = false
+    auto_grow_enabled = true
 
-  administrator_login          = "psqladmin"
-  administrator_login_password = "ChangeMe123!"
-  version                      = "11"
-  ssl_enforcement_enabled      = true
-}
+    administrator_login = "psqladmin"
+    administrator_login_password = "ChangeMe123!"
+    version = "11"
+    ssl_enforcement_enabled = true
+  }
 
 resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
           variables: getRequiredVars('relationaldatabase', meta.args),
-          outputs: `output "endpoint" { value = azurerm_postgresql_server.db.fqdn }`
+          outputs: `output "endpoint" { value = azurerm_postgresql_server.db.fqdn } `
         };
 
       case 'networking':
@@ -4533,204 +6007,390 @@ resource "azurerm_resource_group" "rg" {
       case 'vpc':
         return {
           main: `resource "azurerm_virtual_network" "main" {
-  name                = "\${var.project_name}-vnet"
-  address_space       = ["10.0.0.0/16"]
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-}
+    name = "\${var.project_name}-vnet"
+    address_space = ["10.0.0.0/16"]
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+  }
 
 resource "azurerm_subnet" "public" {
-  name                 = "public"
-  resource_group_name  = azurerm_resource_group.rg.name
-  virtual_network_name = azurerm_virtual_network.main.name
-  address_prefixes     = ["10.0.1.0/24"]
-}
+    name = "public"
+    resource_group_name = azurerm_resource_group.rg.name
+    virtual_network_name = azurerm_virtual_network.main.name
+    address_prefixes = ["10.0.1.0/24"]
+  }
 
 resource "azurerm_subnet" "private" {
-  name                 = "private"
-  resource_group_name  = azurerm_resource_group.rg.name
-  virtual_network_name = azurerm_virtual_network.main.name
-  address_prefixes     = ["10.0.2.0/24"]
-}
+    name = "private"
+    resource_group_name = azurerm_resource_group.rg.name
+    virtual_network_name = azurerm_virtual_network.main.name
+    address_prefixes = ["10.0.2.0/24"]
+  }
 
 resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "vpc_id" { value = azurerm_virtual_network.main.id }
 output "public_subnet_ids" { value = [azurerm_subnet.public.id] }
-output "private_subnet_ids" { value = [azurerm_subnet.private.id] }`
+output "private_subnet_ids" { value = [azurerm_subnet.private.id] } `
         };
 
       case 'cache':
         return {
           main: `resource "azurerm_redis_cache" "cache" {
-  name                = "\${var.project_name}-cache"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-  capacity            = 1
-  family              = "C"
-  sku_name            = "Basic"
-  non_ssl_port_enabled = false
-  minimum_tls_version = "1.2"
+    name = "\${var.project_name}-cache"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+    capacity = 1
+    family = "C"
+    sku_name = "Basic"
+    non_ssl_port_enabled = false
+    minimum_tls_version = "1.2"
 
   redis_configuration {
+    }
   }
-}
 
 resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "endpoint" { value = azurerm_redis_cache.cache.hostname }`
+          outputs: `output "endpoint" { value = azurerm_redis_cache.cache.hostname } `
         };
 
       case 'monitoring':
         return {
           main: `resource "azurerm_application_insights" "monitoring" {
-  name                = "\${var.project_name}-insights"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-  application_type    = "web"
-}
+    name = "\${var.project_name}-insights"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+    application_type = "web"
+  }
 
 resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "url" { value = "https://portal.azure.com" }`
+          outputs: `output "url" { value = "https://portal.azure.com" } `
         };
 
       case 'logging':
         return {
           main: `resource "azurerm_log_analytics_workspace" "logging" {
-  name                = "\${var.project_name}-logs"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-  sku                 = "PerGB2018"
-  retention_in_days   = 30
-}
+    name = "\${var.project_name}-logs"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+    sku = "PerGB2018"
+    retention_in_days = 30
+  }
 
 resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "log_group_name" { value = azurerm_log_analytics_workspace.logging.name }`
+          outputs: `output "log_group_name" { value = azurerm_log_analytics_workspace.logging.name } `
         };
       case 'loadbalancer':
         return {
           main: `resource "azurerm_public_ip" "lb" {
-  name                = "\${var.project_name}-lb-ip"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-  allocation_method   = "Static"
-  sku                 = "Standard"
-}
+    name = "\${var.project_name}-lb-ip"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+    allocation_method = "Static"
+    sku = "Standard"
+  }
 
 resource "azurerm_lb" "main" {
-  name                = "\${var.project_name}-lb"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-  sku                 = "Standard"
+    name = "\${var.project_name}-lb"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+    sku = "Standard"
 
   frontend_ip_configuration {
-    name                 = "PublicIPAddress"
-    public_ip_address_id = azurerm_public_ip.lb.id
+      name = "PublicIPAddress"
+      public_ip_address_id = azurerm_public_ip.lb.id
+    }
   }
-}
 
 resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "dns_name" { value = azurerm_public_ip.lb.ip_address }`
+          outputs: `output "dns_name" { value = azurerm_public_ip.lb.ip_address } `
         };
 
       case 'apigateway':
         return {
           main: `resource "azurerm_api_management" "api" {
-  name                = "\${var.project_name}-apim"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-  publisher_name      = "Cloudiverse"
-  publisher_email     = "admin@cloudiverse.com"
-  sku_name            = "Consumption_0"
-}
+    name = "\${var.project_name}-apim"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+    publisher_name = "Cloudiverse"
+    publisher_email = "admin@cloudiverse.com"
+    sku_name = "Consumption_0"
+  }
 
 resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "endpoint" { value = azurerm_api_management.api.gateway_url }`
+          outputs: `output "endpoint" { value = azurerm_api_management.api.gateway_url } `
         };
 
       case 'cdn':
         return {
           main: `resource "azurerm_cdn_profile" "cdn" {
-  name                = "\${var.project_name}-cdn"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-  sku                 = "Standard_Microsoft"
-}
+    name = "\${var.project_name}-cdn"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+    sku = "Standard_Microsoft"
+  }
 
 resource "azurerm_cdn_endpoint" "endpoint" {
-  name                = "\${var.project_name}-endpoint"
-  profile_name        = azurerm_cdn_profile.cdn.name
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+    name = "\${var.project_name}-endpoint"
+    profile_name = azurerm_cdn_profile.cdn.name
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
 
   origin {
-    name      = "default-origin"
-    host_name = "example.com"
+      name = "default-origin"
+      host_name = "example.com"
+    }
   }
-}
 
 resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "endpoint" { value = azurerm_cdn_endpoint.endpoint.fqdn }`
+          outputs: `output "endpoint" { value = azurerm_cdn_endpoint.endpoint.fqdn } `
         };
 
       case 'identityauth':
       case 'auth':
         return {
           main: `resource "azurerm_user_assigned_identity" "auth" {
-  name                = "\${var.project_name}-identity"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-}
+    name = "\${var.project_name}-identity"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+  }
 
 resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
           variables: getRequiredVars(service, meta.args),
-          outputs: `output "client_id" { value = azurerm_user_assigned_identity.auth.client_id }`
+          outputs: `output "client_id" { value = azurerm_user_assigned_identity.auth.client_id } `
         };
 
       case 'nosqldatabase':
         return {
           main: `resource "azurerm_cosmosdb_account" "nosql" {
-  name                = "\${var.project_name}-nosql"
+    name = "\${var.project_name}-nosql"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+    offer_type = "Standard"
+    kind = "GlobalDocumentDB"
+
+    enable_automatic_failover = false
+
+  consistency_policy {
+      consistency_level = "Session"
+    }
+
+  geo_location {
+      location = var.location
+      failover_priority = 0
+    }
+  }
+
+resource "azurerm_resource_group" "rg" {
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "endpoint" { value = azurerm_cosmosdb_account.nosql.endpoint } `
+        };
+
+      case 'computevm':
+        return {
+          main: `resource "azurerm_public_ip" "vm_ip" {
+    name = "\${var.project_name}-vm-ip"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+    allocation_method = "Dynamic"
+  }
+
+resource "azurerm_network_interface" "vm_nic" {
+    name = "\${var.project_name}-nic"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+
+  ip_configuration {
+      name = "internal"
+      subnet_id = var.private_subnet_ids[0]
+      private_ip_address_allocation = "Dynamic"
+      public_ip_address_id = azurerm_public_ip.vm_ip.id
+    }
+  }
+
+resource "azurerm_linux_virtual_machine" "vm" {
+    name = "\${var.project_name}-vm"
+    resource_group_name = azurerm_resource_group.rg.name
+    location = var.location
+    size = "Standard_B1s"
+    admin_username = "adminuser"
+    network_interface_ids = [
+      azurerm_network_interface.vm_nic.id,
+    ]
+
+  admin_ssh_key {
+      username = "adminuser"
+      public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC..."
+    }
+
+  os_disk {
+      caching = "ReadWrite"
+      storage_account_type = "Standard_LRS"
+    }
+
+  source_image_reference {
+      publisher = "Canonical"
+      offer = "UbuntuServer"
+      sku = "18.04-LTS"
+      version = "latest"
+    }
+  }
+
+resource "azurerm_resource_group" "rg" {
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "public_ip" { value = azurerm_linux_virtual_machine.vm.public_ip_address } `
+        };
+
+      case 'computeserverless':
+        return {
+          main: `resource "azurerm_storage_account" "func_store" {
+    name = replace("\${var.project_name}fsa", "-", "")
+    resource_group_name = azurerm_resource_group.rg.name
+    location = var.location
+    account_tier = "Standard"
+    account_replication_type = "LRS"
+  }
+
+resource "azurerm_service_plan" "func_plan" {
+    name = "\${var.project_name}-func-plan"
+    resource_group_name = azurerm_resource_group.rg.name
+    location = var.location
+    os_type = "Linux"
+    sku_name = "Y1"
+  }
+
+resource "azurerm_linux_function_app" "function" {
+    name = "\${var.project_name}-func"
+    resource_group_name = azurerm_resource_group.rg.name
+    location = var.location
+
+    storage_account_name = azurerm_storage_account.func_store.name
+    storage_account_access_key = azurerm_storage_account.func_store.primary_access_key
+    service_plan_id = azurerm_service_plan.func_plan.id
+
+  site_config { }
+  }
+
+resource "azurerm_resource_group" "rg" {
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "url" { value = azurerm_linux_function_app.function.default_hostname } `
+        };
+
+      case 'messagequeue':
+      case 'pubsub':
+      case 'eventbus':
+        return {
+          main: `resource "azurerm_servicebus_namespace" "main" {
+    name = "\${var.project_name}-sb-ns"
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+    sku = "Standard"
+  }
+
+resource "azurerm_servicebus_queue" "main" {
+    name = "\${var.project_name}-queue"
+    namespace_id = azurerm_servicebus_namespace.main.id
+  }
+
+resource "azurerm_resource_group" "rg" {
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "endpoint" { value = azurerm_servicebus_namespace.main.endpoint } `
+        };
+
+      case 'keymanagement':
+      case 'keymanagementservice':
+      case 'secretsmanagement':
+      case 'secretsmanager':
+        return {
+          main: `data "azurerm_client_config" "current" { }
+
+resource "azurerm_key_vault" "vault" {
+    name = replace("\${var.project_name}-kv", "-", "")
+    location = var.location
+    resource_group_name = azurerm_resource_group.rg.name
+    enabled_for_disk_encryption = true
+    tenant_id = data.azurerm_client_config.current.tenant_id
+    soft_delete_retention_days = 7
+    purge_protection_enabled = false
+
+    sku_name = "standard"
+
+  access_policy {
+      tenant_id = data.azurerm_client_config.current.tenant_id
+      object_id = data.azurerm_client_config.current.object_id
+
+      key_permissions = ["Get", "Create", "List"]
+      secret_permissions = ["Get", "Set", "List"]
+    }
+  }
+
+resource "azurerm_resource_group" "rg" {
+    name = "\${var.project_name}-rg"
+    location = var.location
+  } `,
+          variables: getRequiredVars(service, meta.args),
+          outputs: `output "vault_uri" { value = azurerm_key_vault.vault.vault_uri } `
+        };
+
+      case 'vectordatabase':
+        return {
+          main: `resource "azurerm_cosmosdb_account" "vector" {
+  name                = replace("\${var.project_name}-vector", "-", "")
   location            = var.location
   resource_group_name = azurerm_resource_group.rg.name
   offer_type          = "Standard"
-  kind                = "GlobalDocumentDB"
-
-  enable_automatic_failover = false
-
-  consistency_policy {
-    consistency_level       = "Session"
+  kind                = "MongoDB"
+  
+  capabilities {
+    name = "EnableMongo"
   }
-
+  
+  consistency_policy {
+    consistency_level = "Session"
+  }
+  
   geo_location {
     location          = var.location
     failover_priority = 0
@@ -4741,57 +6401,151 @@ resource "azurerm_resource_group" "rg" {
   name     = "\${var.project_name}-rg"
   location = var.location
 }`,
-          variables: getRequiredVars(service, meta.args),
-          outputs: `output "endpoint" { value = azurerm_cosmosdb_account.nosql.endpoint }`
+          variables: getRequiredVars('vectordatabase', meta.args),
+          outputs: `output "endpoint" { value = azurerm_cosmosdb_account.vector.endpoint }`
         };
 
-      case 'computevm':
+      case 'timeseriesdatabase':
         return {
-          main: `resource "azurerm_public_ip" "vm_ip" {
-  name                = "\${var.project_name}-vm-ip"
+          main: `resource "azurerm_kusto_cluster" "main" {
+  name                = replace("\${var.project_name}adx", "-", "")
   location            = var.location
   resource_group_name = azurerm_resource_group.rg.name
-  allocation_method   = "Dynamic"
-}
-
-resource "azurerm_network_interface" "vm_nic" {
-  name                = "\${var.project_name}-nic"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-
-  ip_configuration {
-    name                          = "internal"
-    subnet_id                     = var.private_subnet_ids[0]
-    private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.vm_ip.id
+  sku {
+    name     = "Dev(No SLA)_Standard_E2a_v4"
+    capacity = 1
   }
 }
 
-resource "azurerm_linux_virtual_machine" "vm" {
-  name                = "\${var.project_name}-vm"
+resource "azurerm_kusto_database" "main" {
+  name                = "metrics"
   resource_group_name = azurerm_resource_group.rg.name
   location            = var.location
-  size                = "Standard_B1s"
-  admin_username      = "adminuser"
-  network_interface_ids = [
-    azurerm_network_interface.vm_nic.id,
-  ]
+  cluster_name        = azurerm_kusto_cluster.main.name
+}
 
-  admin_ssh_key {
-    username   = "adminuser"
-    public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC..."
+resource "azurerm_resource_group" "rg" {
+  name     = "\${var.project_name}-rg"
+  location = var.location
+}`,
+          variables: getRequiredVars('timeseriesdatabase', meta.args),
+          outputs: `output "cluster_uri" { value = azurerm_kusto_cluster.main.uri }`
+        };
+
+      case 'analyticaldatabase':
+      case 'datawarehouse':
+        return {
+          main: `resource "azurerm_synapse_workspace" "main" {
+  name                                 = replace("\${var.project_name}synapse", "-", "")
+  resource_group_name                  = azurerm_resource_group.rg.name
+  location                             = var.location
+  storage_data_lake_gen2_filesystem_id = azurerm_storage_data_lake_gen2_filesystem.main.id
+  sql_administrator_login              = "sqladmin"
+  sql_administrator_login_password     = "ChangeMe123!"
+
+  identity {
+    type = "SystemAssigned"
+  }
+}
+
+resource "azurerm_storage_account" "synapse" {
+  name                     = replace("\${var.project_name}synsa", "-", "")
+  resource_group_name      = azurerm_resource_group.rg.name
+  location                 = var.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+  account_kind             = "StorageV2"
+  is_hns_enabled           = true
+}
+
+resource "azurerm_storage_data_lake_gen2_filesystem" "main" {
+  name               = "main"
+  storage_account_id = azurerm_storage_account.synapse.id
+}
+
+resource "azurerm_resource_group" "rg" {
+  name     = "\${var.project_name}-rg"
+  location = var.location
+}`,
+          variables: getRequiredVars('datawarehouse', meta.args),
+          outputs: `output "synapse_endpoint" { value = azurerm_synapse_workspace.main.connectivity_endpoints["dev"] }`
+        };
+
+      case 'datalake':
+        return {
+          main: `resource "azurerm_storage_account" "lake" {
+  name                     = replace("\${var.project_name}lake", "-", "")
+  resource_group_name      = azurerm_resource_group.rg.name
+  location                 = var.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+  account_kind             = "StorageV2"
+  is_hns_enabled           = true
+}
+
+resource "azurerm_storage_data_lake_gen2_filesystem" "lake" {
+  name               = "datalake"
+  storage_account_id = azurerm_storage_account.lake.id
+}
+
+resource "azurerm_resource_group" "rg" {
+  name     = "\${var.project_name}-rg"
+  location = var.location
+}`,
+          variables: getRequiredVars('datalake', meta.args),
+          outputs: `output "lake_storage_account" { value = azurerm_storage_account.lake.name }`
+        };
+
+      case 'computebatch':
+        return {
+          main: `resource "azurerm_batch_account" "main" {
+  name                = replace("\${var.project_name}batch", "-", "")
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = var.location
+  pool_allocation_mode = "BatchService"
+}
+
+resource "azurerm_resource_group" "rg" {
+  name     = "\${var.project_name}-rg"
+  location = var.location
+}`,
+          variables: getRequiredVars('computebatch', meta.args),
+          outputs: `output "batch_account_id" { value = azurerm_batch_account.main.id }`
+        };
+
+      case 'computeedge':
+        return {
+          main: `resource "azurerm_cdn_profile" "edge" {
+  name                = "\${var.project_name}-edge-cdn"
+  location            = "global"
+  resource_group_name = azurerm_resource_group.rg.name
+  sku                 = "Standard_Microsoft"
+}
+
+# Azure Front Door or Edge Zones would be used for edge compute
+# This stub represents the CDN layer which often integrates with Edge functions
+`,
+          variables: getRequiredVars('computeedge', meta.args),
+          outputs: `output "cdn_id" { value = azurerm_cdn_profile.edge.id }`
+        };
+
+      case 'waf':
+        return {
+          main: `resource "azurerm_web_application_firewall_policy" "main" {
+  name                = "\${var.project_name}-wafpolicy"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = var.location
+
+  managed_rules {
+    managed_rule_set {
+      type    = "OWASP"
+      version = "3.2"
+    }
   }
 
-  os_disk {
-    caching              = "ReadWrite"
-    storage_account_type = "Standard_LRS"
-  }
-
-  source_image_reference {
-    publisher = "Canonical"
-    offer     = "UbuntuServer"
-    sku       = "18.04-LTS"
-    version   = "latest"
+  policy_settings {
+    enabled = true
+    mode    = "Prevention"
   }
 }
 
@@ -4799,55 +6553,310 @@ resource "azurerm_resource_group" "rg" {
   name     = "\${var.project_name}-rg"
   location = var.location
 }`,
-          variables: getRequiredVars(service, meta.args),
-          outputs: `output "public_ip" { value = azurerm_linux_virtual_machine.vm.public_ip_address }`
+          variables: getRequiredVars('waf', meta.args),
+          outputs: `output "waf_policy_id" { value = azurerm_web_application_firewall_policy.main.id }`
         };
 
-      case 'computeserverless':
+      case 'ddosprotection':
         return {
-          main: `resource "azurerm_storage_account" "func_store" {
-  name                     = replace("\${var.project_name}fsa", "-", "")
+          main: `resource "azurerm_network_ddos_protection_plan" "main" {
+  name                = "\${var.project_name}-ddos"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.rg.name
+}
+
+resource "azurerm_resource_group" "rg" {
+  name     = "\${var.project_name}-rg"
+  location = var.location
+}`,
+          variables: getRequiredVars('ddosprotection', meta.args),
+          outputs: `output "ddos_plan_id" { value = azurerm_network_ddos_protection_plan.main.id }`
+        };
+
+      case 'networkfirewall':
+        return {
+          main: `resource "azurerm_firewall" "main" {
+  name                = "\${var.project_name}-fw"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.rg.name
+  sku_name            = "AZFW_VNet"
+  sku_tier            = "Standard"
+
+  ip_configuration {
+    name                 = "configuration"
+    subnet_id            = var.public_subnet_ids[0]
+    public_ip_address_id = azurerm_public_ip.fw_ip.id
+  }
+}
+
+resource "azurerm_public_ip" "fw_ip" {
+  name                = "\${var.project_name}-fw-ip"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.rg.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+resource "azurerm_resource_group" "rg" {
+  name     = "\${var.project_name}-rg"
+  location = var.location
+}`,
+          variables: getRequiredVars('networkfirewall', meta.args),
+          outputs: `output "firewall_id" { value = azurerm_firewall.main.id }`
+        };
+
+      case 'vpn':
+        return {
+          main: `resource "azurerm_public_ip" "vpn_ip" {
+  name                = "\${var.project_name}-vpn-ip"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.rg.name
+  allocation_method   = "Dynamic"
+}
+
+resource "azurerm_virtual_network_gateway" "main" {
+  name                = "\${var.project_name}-vpngw"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.rg.name
+
+  type     = "Vpn"
+  vpn_type = "RouteBased"
+
+  active_active = false
+  enable_bgp    = false
+  sku           = "Basic"
+
+  ip_configuration {
+    name                          = "vnetGatewayConfig"
+    public_ip_address_id          = azurerm_public_ip.vpn_ip.id
+    private_ip_address_allocation = "Dynamic"
+    subnet_id                     = var.private_subnet_ids[0]
+  }
+}
+
+resource "azurerm_resource_group" "rg" {
+  name     = "\${var.project_name}-rg"
+  location = var.location
+}`,
+          variables: getRequiredVars('vpn', meta.args),
+          outputs: `output "vpn_gateway_id" { value = azurerm_virtual_network_gateway.main.id }`
+        };
+
+      case 'transitgateway':
+        return {
+          main: `resource "azurerm_virtual_wan" "main" {
+  name                = "\${var.project_name}-vwan"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = var.location
+}
+
+resource "azurerm_virtual_hub" "main" {
+  name                = "\${var.project_name}-vhub"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = var.location
+  virtual_wan_id      = azurerm_virtual_wan.main.id
+  address_prefix      = "10.1.0.0/24"
+}
+
+resource "azurerm_resource_group" "rg" {
+  name     = "\${var.project_name}-rg"
+  location = var.location
+}`,
+          variables: getRequiredVars('transitgateway', meta.args),
+          outputs: `output "vwan_id" { value = azurerm_virtual_wan.main.id }`
+        };
+
+      case 'privatelink':
+        return {
+          main: `resource "azurerm_private_endpoint" "main" {
+  name                = "\${var.project_name}-pep"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.rg.name
+  subnet_id           = var.private_subnet_ids[0]
+
+  private_service_connection {
+    name                           = "\${var.project_name}-psc"
+    private_connection_resource_id = var.resource_id
+    is_manual_connection           = false
+    subresource_names              = ["vault"]
+  }
+}
+
+resource "azurerm_resource_group" "rg" {
+  name     = "\${var.project_name}-rg"
+  location = var.location
+}`,
+          variables: getRequiredVars('privatelink', meta.args) + '\nvariable "resource_id" { type = string }',
+          outputs: `output "endpoint_id" { value = azurerm_private_endpoint.main.id }`
+        };
+
+      case 'eventbus':
+      case 'notificationservice':
+        return {
+          main: `resource "azurerm_servicebus_namespace" "events" {
+  name                = replace("\${var.project_name}-events", "-", "")
+  location            = var.location
+  resource_group_name = azurerm_resource_group.rg.name
+  sku                 = "Standard"
+}
+
+resource "azurerm_servicebus_topic" "main" {
+  name         = "notifications"
+  namespace_id = azurerm_servicebus_namespace.events.id
+}`,
+          variables: getRequiredVars('eventbus', meta.args),
+          outputs: `output "servicebus_endpoint" { value = azurerm_servicebus_namespace.events.endpoint }`
+        };
+
+      case 'workfloworchestration':
+        return {
+          main: `resource "azurerm_logic_app_workflow" "main" {
+  name                = "\${var.project_name}-logicapp"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.rg.name
+}
+
+resource "azurerm_resource_group" "rg" {
+  name     = "\${var.project_name}-rg"
+  location = var.location
+}`,
+          variables: getRequiredVars('workfloworchestration', meta.args),
+          outputs: `output "logic_app_id" { value = azurerm_logic_app_workflow.main.id }`
+        };
+
+      case 'mltraining':
+      case 'mlinference':
+        return {
+          main: `resource "azurerm_machine_learning_workspace" "main" {
+  name                    = "\${var.project_name}-ml"
+  location                = var.location
+  resource_group_name     = azurerm_resource_group.rg.name
+  application_insights_id = azurerm_application_insights.ml.id
+  key_vault_id            = azurerm_key_vault.ml.id
+  storage_account_id      = azurerm_storage_account.ml.id
+
+  identity {
+    type = "SystemAssigned"
+  }
+}
+
+resource "azurerm_application_insights" "ml" {
+  name                = "\${var.project_name}-ml-ai"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.rg.name
+  application_type    = "web"
+}
+
+resource "azurerm_key_vault" "ml" {
+  name                = replace("\${var.project_name}mlkv", "-", "")
+  location            = var.location
+  resource_group_name = azurerm_resource_group.rg.name
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+  sku_name            = "standard"
+}
+
+resource "azurerm_storage_account" "ml" {
+  name                     = replace("\${var.project_name}mlsa", "-", "")
   resource_group_name      = azurerm_resource_group.rg.name
   location                 = var.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
 }
 
-resource "azurerm_service_plan" "func_plan" {
-  name                = "\${var.project_name}-func-plan"
+resource "azurerm_resource_group" "rg" {
+  name     = "\${var.project_name}-rg"
+  location = var.location
+}`,
+          variables: getRequiredVars('mltraining', meta.args),
+          outputs: `output "ml_workspace_id" { value = azurerm_machine_learning_workspace.main.id }`
+        };
+
+      case 'iotcore':
+      case 'iotedgegateway':
+        return {
+          main: `resource "azurerm_iothub" "main" {
+  name                = "\${var.project_name}-iothub"
   resource_group_name = azurerm_resource_group.rg.name
   location            = var.location
-  os_type             = "Linux"
-  sku_name            = "Y1"
-}
 
-resource "azurerm_linux_function_app" "function" {
-  name                = "\${var.project_name}-func"
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = var.location
-
-  storage_account_name       = azurerm_storage_account.func_store.name
-  storage_account_access_key = azurerm_storage_account.func_store.primary_access_key
-  service_plan_id            = azurerm_service_plan.func_plan.id
-
-  site_config {}
+  sku {
+    name     = "S1"
+    capacity = 1
+  }
 }
 
 resource "azurerm_resource_group" "rg" {
   name     = "\${var.project_name}-rg"
   location = var.location
 }`,
-          variables: getRequiredVars(service, meta.args),
-          outputs: `output "url" { value = azurerm_linux_function_app.function.default_hostname }`
+          variables: getRequiredVars('iotcore', meta.args),
+          outputs: `output "iothub_name" { value = azurerm_iothub.main.name }`
+        };
+
+      case 'logging':
+        return {
+          main: `resource "azurerm_log_analytics_workspace" "main" {
+  name                = "\${var.project_name}-logs"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.rg.name
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+}
+
+resource "azurerm_resource_group" "rg" {
+  name     = "\${var.project_name}-rg"
+  location = var.location
+}`,
+          variables: getRequiredVars('logging', meta.args),
+          outputs: `output "log_analytics_id" { value = azurerm_log_analytics_workspace.main.id }`
+        };
+
+      case 'monitoring':
+      case 'metrics':
+      case 'alerting':
+        return {
+          main: `resource "azurerm_monitor_action_group" "main" {
+  name                = "\${var.project_name}-actiongroup"
+  resource_group_name = azurerm_resource_group.rg.name
+  short_name          = "alerting"
+}
+
+resource "azurerm_resource_group" "rg" {
+  name     = "\${var.project_name}-rg"
+  location = var.location
+}`,
+          variables: getRequiredVars('monitoring', meta.args),
+          outputs: `output "monitor_action_group_id" { value = azurerm_monitor_action_group.main.id }`
+        };
+
+      case 'tracing':
+      case 'apm':
+        return {
+          main: `resource "azurerm_application_insights" "main" {
+  name                = "\${var.project_name}-appinsights"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.rg.name
+  application_type    = "web"
+}
+
+resource "azurerm_resource_group" "rg" {
+  name     = "\${var.project_name}-rg"
+  location = var.location
+}`,
+          variables: getRequiredVars('tracing', meta.args),
+          outputs: `output "app_insights_instrumentation_key" { value = azurerm_application_insights.main.instrumentation_key }`
         };
 
       default:
         return skeleton;
     }
+
   }
 
   return skeleton;
 }
+
+
 
 module.exports = {
   generateTerraform,

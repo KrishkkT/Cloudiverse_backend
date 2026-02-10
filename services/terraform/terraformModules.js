@@ -17,6 +17,7 @@ const { relationalDatabaseModule } = require('./templates/relationalDatabase');
 const { computeContainerModule } = require('./templates/computeContainer');
 const { nosqlDatabaseModule } = require('./templates/nosqlDatabase');
 const { loadBalancerModule } = require('./templates/loadBalancer');
+const { cacheModule } = require('./templates/cache');
 
 /**
  * Registry of specific generators.
@@ -48,6 +49,9 @@ const SPECIFIC_GENERATORS = {
     // Core Observability
     logging: loggingModule,
     monitoring: monitoringModule,
+
+    // Cache
+    cache: cacheModule,
 };
 
 /**

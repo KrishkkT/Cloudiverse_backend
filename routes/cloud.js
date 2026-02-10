@@ -20,7 +20,7 @@ const oauth2Client = new google.auth.OAuth2(
 const msalConfig = {
     auth: {
         clientId: process.env.AZURE_CLIENT_ID,
-        authority: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID || 'common'}`,
+        authority: "https://login.microsoftonline.com/common",
         clientSecret: process.env.AZURE_CLIENT_SECRET,
     }
 };
@@ -308,14 +308,17 @@ router.post('/:provider/connect', authMiddleware, async (req, res) => {
             const authCodeUrlParameters = {
                 scopes: [
                     "https://management.azure.com/user_impersonation", // For ARM (Role Assignment)
-                    "https://graph.microsoft.com/Application.ReadWrite.All", // For Creating App/SP
-                    "https://graph.microsoft.com/Directory.Read.All", // Optional: Read directory
+                    "User.Read", // Basic profile access (Personal & Work)
                     "offline_access" // Critical for refresh tokens
                 ],
                 redirectUri: process.env.AZURE_REDIRECT_URI,
-                state: workspace_id
+                state: workspace_id,
+                prompt: 'select_account',
+                authority: "https://login.microsoftonline.com/organizations"
             };
             authUrl = await cca.getAuthCodeUrl(authCodeUrlParameters);
+            console.log("[AZURE] Generated Auth URL:", authUrl);
+            console.log("[AZURE] Auth Params:", JSON.stringify(authCodeUrlParameters, null, 2));
         }
 
         res.json({
@@ -368,7 +371,16 @@ router.get('/:provider/callback', async (req, res) => {
             // We must now re-trigger login (phase=final) to get the actual tokens with the new permissions.
             if (req.query.admin_consent === 'True' || req.query.admin_consent === 'true') {
                 console.log("[AZURE_AUTO] Admin Consent Granted. Re-initiating login to acquire final tokens...");
-                const finalAuthUrl = await getAuthCodeUrl(authorityString, ["https://graph.microsoft.com/.default"], "final");
+
+                // Re-construct auth URL for final phase
+                const authorityString = "https://login.microsoftonline.com/common";
+                const finalAuthUrlParams = {
+                    scopes: ["https://graph.microsoft.com/.default", "offline_access", "User.Read", "https://management.azure.com/user_impersonation"],
+                    redirectUri: process.env.AZURE_REDIRECT_URI,
+                    state: 'final',
+                    authority: authorityString
+                };
+                const finalAuthUrl = await cca.getAuthCodeUrl(finalAuthUrlParams);
                 return res.redirect(finalAuthUrl);
             }
 
@@ -379,7 +391,8 @@ router.get('/:provider/callback', async (req, res) => {
                 "profile",
                 "email",
                 "offline_access",
-                "https://graph.microsoft.com/.default" // .default includes all app-configured permissions (Graph + ARM if configured)
+                "User.Read",
+                "https://management.azure.com/user_impersonation"
             ];
 
             const tokenRequest = {
@@ -394,13 +407,20 @@ router.get('/:provider/callback', async (req, res) => {
 
             // B. FORCE ADMIN CONSENT (If Phase = 'init')
             // The user mandates: "On first connect, redirect user to adminconsent".
-            // This ensures the Enterprise App is provisioned and permissions granted BEFORE we try to make API calls.
-            if (state === 'init') {
+            // 🛡️ PASS: Personal (Consumer) accounts CANNOT grant admin consent.
+            const isConsumerAccount = tenantId === '9188040d-6c67-4c5b-b112-36a304b66dad';
+
+            if (state === 'init' && !isConsumerAccount) {
                 console.log(`[AZURE_AUTO] First Connect (Tenant: ${tenantId}). Redirecting to Force Admin Consent...`);
                 // Construct Admin Consent URL
                 const adminConsentUrl = `https://login.microsoftonline.com/${tenantId}/adminconsent?client_id=${process.env.AZURE_CLIENT_ID}&redirect_uri=${process.env.AZURE_REDIRECT_URI}&state=consenting`;
                 return res.redirect(adminConsentUrl);
             }
+
+            if (isConsumerAccount && state === 'init') {
+                console.log("[AZURE_AUTO] Consumer Account detected. Bypassing Admin Consent (not supported for personal accounts).");
+            }
+
 
             // C. PROCEED (Phase = 'final') - We have Consent + Tokens
             console.log("[AZURE_AUTO] Phase 'final': Starting Service Principal Creation...");
@@ -408,7 +428,7 @@ router.get('/:provider/callback', async (req, res) => {
             // Get Graph Token
             const graphRes = await cca.acquireTokenSilent({
                 account: account,
-                scopes: ["https://graph.microsoft.com/.default"]
+                scopes: ["User.Read"]
             });
             const graphToken = graphRes.accessToken;
 
@@ -491,57 +511,66 @@ router.get('/:provider/callback', async (req, res) => {
                 throw graphErr;
             }
 
-            // F. Create Service Principal (Graph)
-            await new Promise(r => setTimeout(r, 2000));
-
-            // Check if SP exists
-            let spObjectId;
-            const existingSps = await axios.get(`https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '${appId}'`, { headers: { Authorization: `Bearer ${finalGraphToken}` } });
-            if (existingSps.data.value && existingSps.data.value.length > 0) {
-                spObjectId = existingSps.data.value[0].id;
-            } else {
-                const createSpRes = await axios.post('https://graph.microsoft.com/v1.0/servicePrincipals', {
-                    appId: appId
-                }, { headers: { Authorization: `Bearer ${finalGraphToken}` } });
-                spObjectId = createSpRes.data.id;
-            }
-
-            // G. Create Client Secret
-            const secretRes = await axios.post(`https://graph.microsoft.com/v1.0/applications/${appObjectId}/addPassword`, {
-                passwordCredential: { displayName: "TerraformKey" }
-            }, { headers: { Authorization: `Bearer ${finalGraphToken}` } });
-            const clientSecret = secretRes.data.secretText;
-
-            // H. Assign 'Owner' Role (ARM)
-            const roleAssignmentId = crypto.randomUUID();
-            const roleScope = `/subscriptions/${subscriptionId}`;
-            const roleDefId = `${roleScope}/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635`;
-
-            // Wait for SP to propagate to ARM (can take 10-60s)
-            console.log("[AZURE_AUTO] Waiting for SP propagation...");
-            await new Promise(r => setTimeout(r, 15000));
-
+            let credentials = {};
             try {
-                await axios.put(`https://management.azure.com${roleScope}/providers/Microsoft.Authorization/roleAssignments/${roleAssignmentId}?api-version=2018-09-01-preview`, {
-                    properties: {
-                        roleDefinitionId: roleDefId,
-                        principalId: spObjectId
-                    }
-                }, { headers: { Authorization: `Bearer ${finalArmToken}` } });
-            } catch (roleErr) {
-                // Ignore "Already Exists" (409)
-                if (roleErr.response?.status === 409) {
-                    console.log("[AZURE_AUTO] Role assignment already exists. Proceeding.");
-                } else {
-                    console.error("[AZURE_AUTO] Role Assignment Failed:", roleErr.response?.data || roleErr.message);
-                    if (roleErr.response?.status === 403 || roleErr.response?.status === 401) {
-                        throw new Error("Authorize Cloudiverse to deploy resources in your Azure account.");
-                    }
-                    throw roleErr;
-                }
-            }
+                // F. Create Service Principal (Graph)
+                await new Promise(r => setTimeout(r, 2000));
 
-            console.log("[AZURE_AUTO] Service Principal Created & Assigned!");
+                // Check if SP exists
+                let spObjectId;
+                const existingSps = await axios.get(`https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '${appId}'`, { headers: { Authorization: `Bearer ${finalGraphToken}` } });
+                if (existingSps.data.value && existingSps.data.value.length > 0) {
+                    spObjectId = existingSps.data.value[0].id;
+                } else {
+                    const createSpRes = await axios.post('https://graph.microsoft.com/v1.0/servicePrincipals', {
+                        appId: appId
+                    }, { headers: { Authorization: `Bearer ${finalGraphToken}` } });
+                    spObjectId = createSpRes.data.id;
+                }
+
+                // G. Create Client Secret
+                const secretRes = await axios.post(`https://graph.microsoft.com/v1.0/applications/${appObjectId}/addPassword`, {
+                    passwordCredential: { displayName: "TerraformKey" }
+                }, { headers: { Authorization: `Bearer ${finalGraphToken}` } });
+                const clientSecret = secretRes.data.secretText;
+
+                // H. Assign 'Owner' Role (ARM)
+                const roleAssignmentId = crypto.randomUUID();
+                const roleScope = `/subscriptions/${subscriptionId}`;
+                const roleDefId = `${roleScope}/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635`;
+
+                // Wait for SP to propagate to ARM (can take 10-60s)
+                console.log("[AZURE_AUTO] Waiting for SP propagation...");
+                await new Promise(r => setTimeout(r, 15000));
+
+                try {
+                    await axios.put(`https://management.azure.com${roleScope}/providers/Microsoft.Authorization/roleAssignments/${roleAssignmentId}?api-version=2018-09-01-preview`, {
+                        properties: {
+                            roleDefinitionId: roleDefId,
+                            principalId: spObjectId
+                        }
+                    }, { headers: { Authorization: `Bearer ${finalArmToken}` } });
+                } catch (roleErr) {
+                    // Ignore "Already Exists" (409)
+                    if (roleErr.response?.status === 409) {
+                        console.log("[AZURE_AUTO] Role assignment already exists. Proceeding.");
+                    } else {
+                        console.warn("[AZURE_AUTO] Role Assignment Failed (Non-blocking):", roleErr.response?.data || roleErr.message);
+                    }
+                }
+
+                console.log("[AZURE_AUTO] Service Principal Created & Assigned!");
+
+                credentials = {
+                    client_id: appId,
+                    client_secret: clientSecret,
+                    tenant_id: finalTenantId,
+                    subscription_id: subscriptionId
+                };
+            } catch (spErr) {
+                console.warn("[AZURE_AUTO] Failed to automatically create Service Principal (Expected for Personal Accounts):", spErr.message);
+                // Continue without credentials - User might need to configure manually or use CLI
+            }
 
             connectionMetadata = {
                 ...connectionMetadata,
@@ -550,14 +579,10 @@ router.get('/:provider/callback', async (req, res) => {
                 subscription_id: subscriptionId,
                 region: 'centralindia',
                 principalObjectId: response.idTokenClaims?.oid || response.account.idTokenClaims?.oid, // Store OID as requested
-                credentials: {
-                    client_id: appId,
-                    client_secret: clientSecret,
-                    tenant_id: finalTenantId, // ❗ Ensure Terraform gets this exact tenant
-                    subscription_id: subscriptionId
-                },
+                credentials: Object.keys(credentials).length > 0 ? credentials : undefined,
                 verified: true,
-                status: 'connected'
+                status: 'connected',
+                manual_sp_required: Object.keys(credentials).length === 0
             };
         }
 
@@ -641,20 +666,26 @@ router.post('/disconnect', authMiddleware, async (req, res) => {
 
         const currentState = wsRes.rows[0].state_json || {};
 
-        // Clear connection metadata
+        // Clear connection metadata and reset deployment flow
         const updatedState = {
             ...currentState,
+            step: 'deploy', // Force back to deployment start
             connection: {
                 status: 'disconnected',
                 provider: null,
                 account_id: null,
                 tokens: null,
                 verified: false
-            }
+            },
+            // Reset deployment steps to ensure clean reconnect experience
+            deployment: null,
+            terraform: null,
+            provisioningState: null,
+            isDeployed: false
         };
 
         await pool.query(
-            "UPDATE workspaces SET state_json = $1, updated_at = NOW() WHERE id = $2",
+            "UPDATE workspaces SET state_json = $1, step = 'deploy', updated_at = NOW() WHERE id = $2",
             [JSON.stringify(updatedState), workspace_id]
         );
 

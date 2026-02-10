@@ -7,18 +7,18 @@ const { renderStandardVariables, generateMinimalModule } = require('./base');
  * Used for distributing traffic across compute instances
  */
 function loadBalancerModule(provider) {
-    const p = provider.toLowerCase();
+  const p = provider.toLowerCase();
 
-    if (p === 'aws') {
-        return {
-            mainTf: `
+  if (p === 'aws') {
+    return {
+      mainTf: `
 # Application Load Balancer
 resource "aws_lb" "main" {
   name               = "\${var.project_name}-alb"
   internal           = var.internal
   load_balancer_type = "application"
-  security_groups    = var.security_group_ids
-  subnets            = var.subnet_ids
+  security_groups    = [aws_security_group.lb.id]
+  subnets            = var.public_subnet_ids
 
   enable_deletion_protection = var.enable_deletion_protection
 
@@ -26,6 +26,39 @@ resource "aws_lb" "main" {
     Name        = "\${var.project_name}-alb"
     Environment = var.environment
     ManagedBy   = "Cloudiverse"
+  }
+}
+
+resource "aws_security_group" "lb" {
+  name        = "\${var.project_name}-lb-sg"
+  description = "Allow inbound traffic for ALB"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description = "HTTP from anywhere"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTPS from anywhere"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "\${var.project_name}-lb-sg"
   }
 }
 
@@ -97,7 +130,7 @@ resource "aws_lb_listener" "https" {
   }
 }
 `.trim(),
-            variablesTf: `
+      variablesTf: `
 ${renderStandardVariables('aws')}
 
 variable "internal" {
@@ -106,13 +139,7 @@ variable "internal" {
   description = "Whether the load balancer is internal"
 }
 
-variable "security_group_ids" {
-  type    = list(string)
-  default = []
-  description = "Security group IDs for the ALB"
-}
-
-variable "subnet_ids" {
+variable "public_subnet_ids" {
   type    = list(string)
   default = []
   description = "Subnet IDs for the ALB"
@@ -155,7 +182,7 @@ variable "certificate_arn" {
   description = "ACM certificate ARN for HTTPS"
 }
 `.trim(),
-            outputsTf: `
+      outputsTf: `
 output "alb_arn" {
   value       = aws_lb.main.arn
   description = "ALB ARN"
@@ -171,12 +198,12 @@ output "target_group_arn" {
   description = "Target group ARN"
 }
 `.trim()
-        };
-    }
+    };
+  }
 
-    if (p === 'gcp') {
-        return {
-            mainTf: `
+  if (p === 'gcp') {
+    return {
+      mainTf: `
 # Global HTTP(S) Load Balancer components
 
 # Backend Service
@@ -227,7 +254,7 @@ resource "google_compute_global_forwarding_rule" "main" {
   port_range = "80"
 }
 `.trim(),
-            variablesTf: `
+      variablesTf: `
 ${renderStandardVariables('gcp')}
 
 variable "instance_group" {
@@ -245,7 +272,7 @@ variable "health_check_path" {
   default = "/health"
 }
 `.trim(),
-            outputsTf: `
+      outputsTf: `
 output "load_balancer_ip" {
   value       = google_compute_global_forwarding_rule.main.ip_address
   description = "Load balancer IP address"
@@ -256,12 +283,12 @@ output "backend_service_id" {
   description = "Backend service ID"
 }
 `.trim()
-        };
-    }
+    };
+  }
 
-    // Azure
-    return {
-        mainTf: `
+  // Azure
+  return {
+    mainTf: `
 # Public IP for Load Balancer
 resource "azurerm_public_ip" "lb" {
   name                = "\${var.project_name}-lb-ip"
@@ -321,7 +348,7 @@ resource "azurerm_lb_rule" "main" {
   probe_id                       = azurerm_lb_probe.main.id
 }
 `.trim(),
-        variablesTf: `
+    variablesTf: `
 ${renderStandardVariables('azure')}
 
 variable "health_check_port" {
@@ -339,7 +366,7 @@ variable "backend_port" {
   default = 80
 }
 `.trim(),
-        outputsTf: `
+    outputsTf: `
 output "lb_id" {
   value       = azurerm_lb.main.id
   description = "Load balancer ID"
@@ -355,7 +382,7 @@ output "backend_pool_id" {
   description = "Backend address pool ID"
 }
 `.trim()
-    };
+  };
 }
 
 module.exports = { loadBalancerModule };

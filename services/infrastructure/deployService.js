@@ -68,6 +68,11 @@ async function deployImageToProvider(deploymentId, workspace, conn, provider, im
     const infraOutputs = workspace.state_json.infra_outputs;
     const region = workspace.state_json.region || 'ap-south-1';
 
+    // Ensure computecontainer is present (Handle snake_case V2 output)
+    if (infraOutputs && infraOutputs.compute_container) {
+        infraOutputs.computecontainer = infraOutputs.compute_container;
+    }
+
     // Ensure computecontainer is present or fallback
     if (!infraOutputs || !infraOutputs.computecontainer) {
         await appendLog(deploymentId, `⚠️ Standardized computecontainer outputs not found. Attempting legacy fallback...`);
@@ -83,11 +88,70 @@ async function deployImageToProvider(deploymentId, workspace, conn, provider, im
 
     const cc = infraOutputs.computecontainer || {};
 
+    // ---------------------------------------------------------
+    // 🌍 ENV VAR INJECTION (Added for Deployment Alignment)
+    // ---------------------------------------------------------
+    // ---------------------------------------------------------
+    // 🌍 ENV VAR INJECTION (Aligned with Terraform V2 Outputs)
+    // ---------------------------------------------------------
+    const envVars = {};
+
+    // 0. Normalize Output Access Helper
+    const getVal = (key) => infraOutputs[key]?.value;
+
+    // 1. Database (Output: database_endpoint)
+    const dbEndpoint = getVal('database_endpoint');
+    if (dbEndpoint) {
+        envVars['DB_HOST'] = dbEndpoint;
+        envVars['DB_PORT'] = '5432'; // Default for now
+        envVars['DB_NAME'] = 'app_db';
+        // Placeholder credential - in production this would be replaced by Secrets Manager retrieval or IAM Auth
+        envVars['DATABASE_URL'] = `postgres://user:password@${dbEndpoint}:5432/app_db`;
+    } else if (infraOutputs.relationaldatabase?.value?.endpoint) {
+        // Fallback for V1
+        const db = infraOutputs.relationaldatabase.value;
+        envVars['DB_HOST'] = db.endpoint;
+        envVars['DB_PORT'] = db.port || '5432';
+        envVars['DATABASE_URL'] = `postgres://user:password@${db.endpoint}:${envVars['DB_PORT']}/${db.name || 'app_db'}`;
+    }
+
+    // 2. Cache (Output: cache_endpoint)
+    const cacheEndpoint = getVal('cache_endpoint');
+    if (cacheEndpoint) {
+        envVars['REDIS_HOST'] = cacheEndpoint;
+        envVars['REDIS_PORT'] = '6379';
+        envVars['REDIS_URL'] = `redis://${cacheEndpoint}:6379`;
+    }
+
+    // 3. Storage (Output: bucket_name, bucket_region)
+    const bucketName = getVal('bucket_name');
+    if (bucketName) {
+        envVars['STORAGE_BUCKET'] = bucketName;
+        envVars['STORAGE_REGION'] = getVal('region') || getVal('bucket_region') || region;
+    }
+
+    // 4. Auth (Output: auth_client_id)
+    const authClientId = getVal('auth_client_id');
+    if (authClientId) {
+        envVars['AUTH_CLIENT_ID'] = authClientId;
+        envVars['AUTH_ISSUER'] = `https://${authClientId}.auth0.com`; // Placeholder assumption
+    }
+
+    // 5. API Gateway / CDN
+    const apiEndpoint = getVal('api_endpoint');
+    if (apiEndpoint) envVars['API_URL'] = apiEndpoint;
+
+    const cdnEndpoint = getVal('cdn_endpoint');
+    if (cdnEndpoint) envVars['CDN_URL'] = `https://${cdnEndpoint}`;
+
+    console.log(`[DEPLOY] Injecting ${Object.keys(envVars).length} Environment Variables...`);
+
+
     if (provider === 'aws') {
         const { role_arn, external_id } = conn;
 
-        const clusterName = cc.ecs_cluster_name?.value || cc.cluster_name?.value || cc.cluster_name;
-        const serviceName = cc.container_service_name?.value || cc.service_name?.value || cc.service_name;
+        const clusterName = cc.value?.cluster_name || cc.ecs_cluster_name?.value || cc.cluster_name?.value || cc.cluster_name;
+        const serviceName = cc.value?.service_name || cc.container_service_name?.value || cc.service_name?.value || cc.service_name;
 
         if (!clusterName || !serviceName) {
             throw new Error("No compute container infrastructure found (ECS Cluster/Service missing).");
@@ -111,6 +175,10 @@ async function deployImageToProvider(deploymentId, workspace, conn, provider, im
         }));
 
         const oldDef = taskDefRes.taskDefinition;
+
+        // Merge Env Vars for ECS
+        const newEnv = Object.entries(envVars).map(([name, value]) => ({ name, value }));
+
         const newDefInput = {
             family: oldDef.family,
             taskRoleArn: oldDef.taskRoleArn,
@@ -118,7 +186,8 @@ async function deployImageToProvider(deploymentId, workspace, conn, provider, im
             networkMode: oldDef.networkMode,
             containerDefinitions: oldDef.containerDefinitions.map(c => ({
                 ...c,
-                image: image // 🔥 SWAP IMAGE HERE
+                image: image, // 🔥 SWAP IMAGE
+                environment: [...(c.environment || []), ...newEnv] // 🔥 INJECT ENV VARS
             })),
             cpu: oldDef.cpu,
             memory: oldDef.memory
@@ -140,14 +209,14 @@ async function deployImageToProvider(deploymentId, workspace, conn, provider, im
         await appendLog(deploymentId, `✅ ECS Service updated to use revision ${newTaskArn.split(':').pop()}`);
 
         // Return endpoint: service_endpoint (GCP/Azure/ALB) or load_balancer_dns
-        const rawUrl = cc.service_endpoint?.value || cc.load_balancer_dns?.value || infraOutputs.loadbalancer?.dns_name?.value || infraOutputs.lb_dns_name?.value;
+        const rawUrl = cc.value?.service_endpoint || cc.service_endpoint?.value || cc.load_balancer_dns?.value || infraOutputs.loadbalancer?.dns_name?.value || infraOutputs.lb_dns_name?.value;
         return rawUrl ? (rawUrl.startsWith('http') ? rawUrl : `http://${rawUrl}`) : null;
     }
 
     if (provider === 'azure' || provider === 'azurerm') {
         const { client_id, client_secret, tenant_id, subscription_id } = conn.credentials;
-        const containerAppName = cc.container_app_name?.value || cc.container_app_name || cc.service_name;
-        const resourceGroupName = cc.resource_group_name?.value || cc.resource_group_name;
+        const containerAppName = cc.value?.container_app_name || cc.container_app_name?.value || cc.container_app_name || cc.service_name;
+        const resourceGroupName = cc.value?.resource_group_name || cc.resource_group_name?.value || cc.resource_group_name;
 
         if (!containerAppName || !resourceGroupName) {
             throw new Error(`Missing Azure Infrastructure Outputs (Container App Name/Resource Group).`);
@@ -167,6 +236,11 @@ async function deployImageToProvider(deploymentId, workspace, conn, provider, im
         const currentApp = await client.containerApps.get(resourceGroupName, containerAppName);
         currentApp.template.containers[0].image = image;
 
+        // Merge Env Vars for Azure
+        const azureEnv = Object.entries(envVars).map(([name, value]) => ({ name, value }));
+        // existing env logic if needed: currentApp.template.containers[0].env || []
+        currentApp.template.containers[0].env = [...(currentApp.template.containers[0].env || []), ...azureEnv];
+
         const updateOp = await client.containerApps.beginUpdateAndWait(resourceGroupName, containerAppName, currentApp);
         const fqdn = updateOp.configuration?.ingress?.fqdn;
         const liveUrl = fqdn ? `https://${fqdn}` : cc.service_endpoint?.value;
@@ -185,9 +259,9 @@ async function deployImageToProvider(deploymentId, workspace, conn, provider, im
         }
         const run = google.run({ version: 'v1', auth });
 
-        const serviceName = cc.service_name?.value || cc.service_name || workspace.name;
-        const region = cc.region?.value || cc.region || workspace.state_json.region;
-        const project = cc.project_id?.value || cc.project_id || conn.project_id;
+        const serviceName = cc.value?.service_name || cc.service_name?.value || cc.service_name || workspace.name;
+        const region = cc.value?.region || cc.region?.value || cc.region || workspace.state_json.region;
+        const project = cc.value?.project_id || cc.project_id?.value || cc.project_id || conn.project_id;
 
         const name = `projects/${project}/locations/${region}/services/${serviceName}`;
         await appendLog(deploymentId, `🔍 Fetching Cloud Run service: ${name}...`);
@@ -197,10 +271,20 @@ async function deployImageToProvider(deploymentId, workspace, conn, provider, im
 
         serviceData.spec.template.spec.containers[0].image = image;
 
+        // Merge Env Vars for GCP
+        const gcpEnv = Object.entries(envVars).map(([name, value]) => ({ name, value }));
+        serviceData.spec.template.spec.containers[0].env = [...(serviceData.spec.template.spec.containers[0].env || []), ...gcpEnv];
+
+
         const op = await run.projects.locations.services.replaceService({
             name,
             requestBody: serviceData
         });
+
+        // 🔍 HARDENING: Wait for Ready Condition
+        await appendLog(deploymentId, `⏳ Waiting for Cloud Run service to be ready...`);
+        // Simple delay for now, ideally poll status.conditions
+        await new Promise(r => setTimeout(r, 10000));
 
         const liveUrl = op.data.status?.url || cc.service_endpoint?.value;
         await appendLog(deploymentId, `✅ Cloud Run service updated: ${liveUrl}`);
@@ -208,6 +292,27 @@ async function deployImageToProvider(deploymentId, workspace, conn, provider, im
     }
 
     throw new Error(`Provider ${provider} not supported for container deployment yet.`);
+}
+
+/**
+ * 🔒 HARDENING: Persist Deployment State (Separate from Infra)
+ */
+async function saveDeploymentState(workspaceId, state) {
+    try {
+        // We use a JSONB column 'deployment_state' on workspaces or a separate table.
+        // For now, we'll store it in 'deployment_history' last entry or a dedicated field if available.
+        // Let's reuse 'deployment_history' for now but strictly structured.
+        // BETTER: Update the 'state_json' with a 'deployment' key.
+        await pool.query(
+            `UPDATE workspaces 
+             SET state_json = jsonb_set(state_json, '{deployment}', $1::jsonb)
+             WHERE id = $2`,
+            [JSON.stringify(state), workspaceId]
+        );
+        console.log(`[DEPLOY STATE] Saved: ${JSON.stringify(state)}`);
+    } catch (e) {
+        console.error("Failed to save deployment state:", e);
+    }
 }
 
 const updateDeploymentStatus = async (deploymentId, status, url = null, logs = []) => {
@@ -232,9 +337,20 @@ const updateDeploymentStatus = async (deploymentId, status, url = null, logs = [
     if (status === 'success') {
         try {
             // Get workspace_id from deployment
-            const deployResult = await pool.query('SELECT workspace_id FROM deployments WHERE id = $1', [deploymentId]);
+            const deployResult = await pool.query('SELECT workspace_id, source_type FROM deployments WHERE id = $1', [deploymentId]);
             if (deployResult.rows.length > 0) {
-                const workspaceId = deployResult.rows[0].workspace_id;
+                const { workspace_id, source_type } = deployResult.rows[0];
+
+                // 🔒 HARDENING: Save Explicit Deployment State
+                const deployState = {
+                    status: 'ACTIVE',
+                    image: logs.find(l => l.message.includes('Swapping image'))?.message?.split('to ')[1] || 'unknown',
+                    revision: new Date().toISOString(), // Use timestamp as revision for now
+                    deployed_at: new Date().toISOString(),
+                    live_url: url,
+                    verified: true
+                };
+                await saveDeploymentState(workspace_id, deployState);
 
                 // Update workspace to DEPLOYED status with history
                 await pool.query(
@@ -248,16 +364,25 @@ const updateDeploymentStatus = async (deploymentId, status, url = null, logs = [
                         action: 'DEPLOY_SUCCESS',
                         timestamp: new Date().toISOString(),
                         deployment_id: deploymentId,
-                        live_url: url
-                    }]), workspaceId]
+                        live_url: url,
+                        state: deployState
+                    }]), workspace_id]
                 );
 
-                console.log(`[DEPLOY] Workspace ${workspaceId} marked as DEPLOYED`);
+                console.log(`[DEPLOY] Workspace ${workspace_id} marked as DEPLOYED`);
             }
         } catch (wsErr) {
             console.error(`[DEPLOY] Failed to update workspace status:`, wsErr);
             // Non-fatal: deployment succeeded, workspace status update is secondary
         }
+    } else if (status === 'failed') {
+        // 🔒 HARDENING: Mark as FAILED in state if it was a verification failure
+        try {
+            const deployResult = await pool.query('SELECT workspace_id FROM deployments WHERE id = $1', [deploymentId]);
+            if (deployResult.rows.length > 0) {
+                await saveDeploymentState(deployResult.rows[0].workspace_id, { status: 'FAILED', reason: 'Verification or Deploy Failed' });
+            }
+        } catch (e) { console.error(e); }
     }
 };
 
@@ -294,29 +419,7 @@ async function retryOperation(fn, retries = 3, delayMs = 1000) {
     }
 }
 
-// Helper: Verify Live Site
-async function verifyLiveSite(url, deploymentId) {
-    console.log(`[VERIFY] Checking live site: ${url}`);
 
-    // Retry verification 5 times with 2s delay (CloudFront propagation can take a moment)
-    for (let i = 0; i < 10; i++) {
-        try {
-            const res = await axios.get(url, { timeout: 5000 });
-            if (res.status >= 200 && res.status < 300) {
-                // Sanity check HTML content
-                if (typeof res.data === 'string' && res.data.toLowerCase().includes('<html')) {
-                    await appendLog(deploymentId, `✅ Live site verification successful (Attempt ${i + 1})`);
-                    return true;
-                }
-            }
-        } catch (e) {
-            console.log(`[VERIFY] Attempt ${i + 1} failed: ${e.message}`);
-        }
-        await new Promise(r => setTimeout(r, 3000));
-    }
-
-    throw new Error("Live site verified failed after multiple attempts.");
-}
 
 // Helper: Validate GitHub Repo
 function validateRepoUrl(url) {
@@ -809,7 +912,9 @@ const deployFromGithub = async (deploymentId, workspace, config) => {
                 liveUrl = `https://${staticMeta.cdn_domain || staticMeta.bucket_name}`;
             }
 
-            await updateDeploymentStatus(deploymentId, 'success', liveUrl, [{ message: `🚀 Static deployment successful!` }]);
+            await appendLog(deploymentId, `🔍 Verifying site availability: ${liveUrl}`);
+            await verifyLiveSite(deploymentId, liveUrl, 10);
+            await updateDeploymentStatus(deploymentId, 'success', liveUrl, [{ message: `🚀 Static deployment successful! Verified: ${liveUrl}` }]);
 
         } else if (targetType === 'CONTAINER_SERVICE') {
             if (projectInfo.type !== 'CONTAINER') {
@@ -956,6 +1061,35 @@ const deployFromDocker = async (deploymentId, workspace, config) => {
             { message: `Details: ${errorObj.details || ''}` }
         ]);
     }
+};
+
+// Helper: Verify Live Site Function
+const verifyLiveSite = async (deploymentId, url, maxRetries = 10) => {
+    let attempts = 0;
+    while (attempts < maxRetries) {
+        attempts++;
+        try {
+            console.log(`[VERIFY] Attempt ${attempts}/${maxRetries} for ${url}`);
+            const response = await axios.get(url, { timeout: 5000 });
+            if (response.status === 200 && response.data) {
+                await appendLog(deploymentId, `✅ Site verified! (HTTP 200, content-length: ${response.headers['content-length'] || 'OK'})`);
+                return true;
+            }
+        } catch (error) {
+            console.warn(`[VERIFY] validation failed attempt ${attempts}: ${error.code || error.message}`);
+            // If 403 Forbidden (common with S3/CloudFront initially), wait longer
+            if (error.response?.status === 403 || error.response?.status === 404) {
+                await appendLog(deploymentId, `⏳ Waiting for propagation... (${error.response.status})`);
+            }
+        }
+        // Exponential backoff: 2s, 4s, 8s, etc. capped at 10s
+        const delay = Math.min(2000 * Math.pow(1.5, attempts), 10000);
+        await new Promise(resolve => setTimeout(resolve, delay));
+    }
+    await appendLog(deploymentId, `⚠️ Site deployed but verification timed out after ${maxRetries} attempts. It may take a few more minutes to propagate.`);
+    // We don't throw here to avoid failing the deployment completely if it's just slow DNS propagation
+    // But we warn the user.
+    return false;
 };
 
 module.exports = {

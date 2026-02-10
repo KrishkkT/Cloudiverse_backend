@@ -277,6 +277,98 @@ const OPERATIONS_SIZING = {
     }
 };
 
+// AI & ML Sizing with cost profiles
+const AI_ML_SIZING = {
+    mlinference: {
+        cost_effective: {
+            SMALL: { instance_type: "ml.t2.medium", instances: 1, description: "1x ml.t2.medium" },
+            MEDIUM: { instance_type: "ml.m5.large", instances: 1, description: "1x ml.m5.large" },
+            LARGE: { instance_type: "ml.m5.xlarge", instances: 2, description: "2x ml.m5.xlarge" }
+        },
+        high_performance: {
+            SMALL: { instance_type: "ml.g4dn.xlarge", instances: 1, description: "1x ml.g4dn.xlarge (GPU)" },
+            MEDIUM: { instance_type: "ml.g4dn.2xlarge", instances: 2, description: "2x ml.g4dn.2xlarge (GPU)" },
+            LARGE: { instance_type: "ml.p3.2xlarge", instances: 2, description: "2x ml.p3.2xlarge (High perf GPU)" }
+        }
+    },
+    mlpipelineorchestration: {
+        cost_effective: {
+            SMALL: { executions_per_month: 100, description: "100 executions/mo" },
+            MEDIUM: { executions_per_month: 1000, description: "1K executions/mo" },
+            LARGE: { executions_per_month: 10000, description: "10K executions/mo" }
+        },
+        high_performance: {
+            SMALL: { executions_per_month: 1000, description: "1K executions/mo" },
+            MEDIUM: { executions_per_month: 10000, description: "10K executions/mo" },
+            LARGE: { executions_per_month: 100000, description: "100K executions/mo" }
+        }
+    },
+    experimenttracking: {
+        cost_effective: {
+            SMALL: { storage_gb: 10, users: 5, description: "10GB, 5 users" },
+            MEDIUM: { storage_gb: 50, users: 20, description: "50GB, 20 users" },
+            LARGE: { storage_gb: 200, users: 100, description: "200GB, 100 users" }
+        },
+        high_performance: {
+            SMALL: { storage_gb: 50, users: 10, description: "50GB, 10 users" },
+            MEDIUM: { storage_gb: 200, users: 50, description: "200GB, 50 users" },
+            LARGE: { storage_gb: 1000, users: 200, description: "1TB, 200 users" }
+        }
+    },
+    modelregistry: {
+        cost_effective: {
+            SMALL: { models_stored: 10, storage_gb: 5, description: "10 models, 5GB" },
+            MEDIUM: { models_stored: 50, storage_gb: 20, description: "50 models, 20GB" },
+            LARGE: { models_stored: 200, storage_gb: 100, description: "200 models, 100GB" }
+        },
+        high_performance: {
+            SMALL: { models_stored: 50, storage_gb: 20, description: "50 models, 20GB" },
+            MEDIUM: { models_stored: 200, storage_gb: 100, description: "200 models, 100GB" },
+            LARGE: { models_stored: 1000, storage_gb: 500, description: "1000 models, 500GB" }
+        }
+    }
+};
+
+// Additional Platform Sizing
+const ADDITIONAL_PLATFORM_SIZING = {
+    servicediscovery: {
+        cost_effective: {
+            SMALL: { instances: 10, queries_per_month: 100000, description: "10 instances, 100K queries" },
+            MEDIUM: { instances: 100, queries_per_month: 1000000, description: "100 instances, 1M queries" },
+            LARGE: { instances: 1000, queries_per_month: 10000000, description: "1000 instances, 10M queries" }
+        },
+        high_performance: {
+            SMALL: { instances: 100, queries_per_month: 1000000, description: "100 instances, 1M queries" },
+            MEDIUM: { instances: 1000, queries_per_month: 10000000, description: "1000 instances, 10M queries" },
+            LARGE: { instances: 10000, queries_per_month: 100000000, description: "10K instances, 100M queries" }
+        }
+    },
+    servicemesh: {
+        cost_effective: {
+            SMALL: { nodes: 5, description: "5 nodes mesh" },
+            MEDIUM: { nodes: 20, description: "20 nodes mesh" },
+            LARGE: { nodes: 100, description: "100 nodes mesh" }
+        },
+        high_performance: {
+            SMALL: { nodes: 20, description: "20 nodes mesh" },
+            MEDIUM: { nodes: 100, description: "100 nodes mesh" },
+            LARGE: { nodes: 500, description: "500 nodes mesh" }
+        }
+    },
+    globalloadbalancer: {
+        cost_effective: {
+            SMALL: { rules: 5, data_processed_gb: 100, description: "5 rules, 100GB" },
+            MEDIUM: { rules: 20, data_processed_gb: 1000, description: "20 rules, 1TB" },
+            LARGE: { rules: 100, data_processed_gb: 5000, description: "100 rules, 5TB" }
+        },
+        high_performance: {
+            SMALL: { rules: 20, data_processed_gb: 1000, description: "20 rules, 1TB" },
+            MEDIUM: { rules: 100, data_processed_gb: 5000, description: "100 rules, 5TB" },
+            LARGE: { rules: 500, data_processed_gb: 50000, description: "500 rules, 50TB" }
+        }
+    }
+};
+
 // Combined sizing model
 const SIZING_MODEL = {
     compute_container: { ...COMPUTE_SIZING.compute_container },
@@ -319,6 +411,17 @@ const SIZING_MODEL = {
     nosqldatabase: { ...DATA_SIZING.nosql_database },
     logging: { ...OPERATIONS_SIZING.logging },
     monitoring: { ...OPERATIONS_SIZING.monitoring },
+
+    // AI & ML
+    mlinference: { ...AI_ML_SIZING.mlinference },
+    mlpipelineorchestration: { ...AI_ML_SIZING.mlpipelineorchestration },
+    experimenttracking: { ...AI_ML_SIZING.experimenttracking },
+    modelregistry: { ...AI_ML_SIZING.modelregistry },
+
+    // Additional Platform
+    servicediscovery: { ...ADDITIONAL_PLATFORM_SIZING.servicediscovery },
+    servicemesh: { ...ADDITIONAL_PLATFORM_SIZING.servicemesh },
+    globalloadbalancer: { ...ADDITIONAL_PLATFORM_SIZING.globalloadbalancer },
 
     // 🔥 FIX: Missing service sizing (caused $0 Infracost estimates)
     paymentgateway: {

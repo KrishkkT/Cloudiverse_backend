@@ -1368,27 +1368,39 @@ router.post('/analyze', authMiddleware, async (req, res) => {
         // Build SERVICE_CLASSES from pattern resolver output
         const SERVICE_CLASSES = {};
         for (const [name, description] of Object.entries(SERVICE_CLASS_DESCRIPTIONS)) {
+            const svcInfo = patternResolution.services.find(s => (canonicalToServiceClassMap[s.name] || s.name) === name);
+            const isSelected = !!svcInfo;
+            const isRequired = isSelected && svcInfo.state === 'REQUIRED';
+            const isSuggested = isSelected && svcInfo.state === 'SUGGESTED';
+
             SERVICE_CLASSES[name] = {
-                required: selectedServiceClasses.has(name),
+                required: isRequired,
                 description: description,
-                pattern_required: true, // All services from canonical architecture are required
-                pattern_optional: false,
+                pattern_required: isRequired,
+                pattern_optional: isSuggested,
                 pattern_forbidden: false
             };
         }
+
 
         // Build skeleton from pattern-resolved service classes
         const skeleton = {
             pattern: patternResolution.pattern,
             pattern_name: patternResolution.pattern_name,
             cost_range: patternResolution.cost_range || { min: 0, max: 0 },
-            required_services: patternResolution.services.map(service => ({
-                service_class: canonicalToServiceClassMap[service.name] || service.name, // Map to expected service class name
+            required_services: patternResolution.services.filter(s => s.state === 'REQUIRED').map(service => ({
+                service_class: canonicalToServiceClassMap[service.name] || service.name,
                 description: service.description,
                 pattern_required: true
             })),
-            optional_services: [],
+            optional_services: patternResolution.services.filter(s => s.state === 'SUGGESTED').map(service => ({
+                service_class: canonicalToServiceClassMap[service.name] || service.name,
+                description: service.description,
+                pattern_required: false,
+                is_suggestion: true
+            })),
             forbidden_services: []
+
         };
 
         console.log(`Pattern ${patternResolution.pattern}: ${skeleton.required_services.length} required, ${skeleton.optional_services.length} optional, ${skeleton.forbidden_services.length} forbidden`);
@@ -1915,7 +1927,22 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
         }
 
         const costProfile = cost_profile || 'cost_effective';
-        const selected_provider = req.body.selected_provider || 'AWS'; // Need to extract provider from request
+        const selected_provider = req.body.selected_provider || 'AWS';
+
+        // 🔥 MERGE USER REMOVALS INTO TERMINAL EXCLUSIONS
+        if (req.body.removedServices && Array.isArray(req.body.removedServices)) {
+            const userRemoved = req.body.removedServices.map(s => s.service_name || s.id || s);
+            if (!infraSpec.locked_intent) infraSpec.locked_intent = {};
+            if (!infraSpec.locked_intent.terminal_exclusions) infraSpec.locked_intent.terminal_exclusions = [];
+
+            userRemoved.forEach(svc => {
+                if (!infraSpec.locked_intent.terminal_exclusions.includes(svc)) {
+                    infraSpec.locked_intent.terminal_exclusions.push(svc);
+                }
+            });
+            console.log(`[REMOVAL] Merged ${userRemoved.length} user-removed services into terminal exclusions`);
+        }
+
         let costAnalysis;
         let scenarios = null;
 
@@ -2033,6 +2060,20 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                 .filter(Boolean);
 
             console.log(`[NORMALIZATION] Deployable services: ${originalLength} → ${infraSpec.canonical_architecture.deployable_services.length} (normalized to objects)`);
+
+            // 🔥 FIX: Apply terminal_exclusions to filter out user-removed services
+            if (terminalExclusions.length > 0) {
+                const beforeCount = infraSpec.canonical_architecture.deployable_services.length;
+                infraSpec.canonical_architecture.deployable_services = infraSpec.canonical_architecture.deployable_services
+                    .filter(s => {
+                        const svcId = s.service_id || s.service_class || s.id;
+                        return !terminalExclusions.includes(svcId);
+                    });
+                const afterCount = infraSpec.canonical_architecture.deployable_services.length;
+                if (beforeCount !== afterCount) {
+                    console.log(`[EXCLUSIONS] Filtered deployable services: ${beforeCount} → ${afterCount} (terminal_exclusions: ${terminalExclusions.join(', ')})`);
+                }
+            }
 
             if (originalLength > 0 && infraSpec.canonical_architecture.deployable_services.length === 0) {
                 console.error(`[NORMALIZATION] CRITICAL: All ${originalLength} services lost during normalization!`);
@@ -3535,7 +3576,44 @@ router.post('/deploy/terraform', authMiddleware, async (req, res) => {
 
         const stateJson = wsResult.rows[0].state_json || {};
         const infraSpec = stateJson.infraSpec || {};
-        const connectionData = stateJson.connection || {};
+        let connectionData = stateJson.connection || {};
+
+        // 🔥 MERGE USER REMOVALS INTO TERMINAL EXCLUSIONS (for Terraform)
+        if (req.body.removedServices && Array.isArray(req.body.removedServices)) {
+            const userRemoved = req.body.removedServices.map(s => s.service_name || s.id || s);
+            if (!infraSpec.locked_intent) infraSpec.locked_intent = {};
+            if (!infraSpec.locked_intent.terminal_exclusions) infraSpec.locked_intent.terminal_exclusions = [];
+
+            userRemoved.forEach(svc => {
+                if (!infraSpec.locked_intent.terminal_exclusions.includes(svc)) {
+                    infraSpec.locked_intent.terminal_exclusions.push(svc);
+                }
+            });
+            console.log(`[REMOVAL] Merged ${userRemoved.length} user-removed services for Terraform generation`);
+        }
+
+        // 🔥 ROBUST CONNECTION LOOKUP: Prevent race condition failures
+        if (!connectionData.status || connectionData.status !== 'connected') {
+            console.log(`[DEPLOY:TF] Connection in state_json is ${connectionData.status || 'missing'}. Checking user_cloud_connections...`);
+            const connResult = await pool.query(
+                `SELECT connection_data, status, verified 
+                 FROM user_cloud_connections 
+                 WHERE user_id = $1 AND provider = $2`,
+                [req.user.id, provider.toLowerCase()]
+            );
+
+            if (connResult.rows.length > 0 && connResult.rows[0].status === 'connected') {
+                const row = connResult.rows[0];
+                connectionData = {
+                    ...row.connection_data,
+                    status: row.status,
+                    verified: row.verified,
+                    provider: provider.toLowerCase()
+                };
+                console.log(`[DEPLOY:TF] Found valid connection in user_cloud_connections. Proceeding.`);
+            }
+        }
+
 
         // Extract deployable services
         const deployableServices = (
