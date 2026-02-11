@@ -75,6 +75,26 @@ class User {
     const result = await pool.query(query, [id]);
     return result.rows[0];
   }
+  static async updateCloudCredentials(userId, provider, credentials) {
+    const query = `
+      UPDATE users 
+      SET cloud_credentials = jsonb_set(
+        COALESCE(cloud_credentials, '{}'), 
+        '{${provider}}', 
+        $1
+      )
+      WHERE id = $2
+      RETURNING id, cloud_credentials
+    `;
+    const result = await pool.query(query, [JSON.stringify(credentials), userId]);
+    return result.rows[0];
+  }
+
+  static async getCloudCredentials(userId) {
+    const query = 'SELECT cloud_credentials FROM users WHERE id = $1';
+    const result = await pool.query(query, [userId]);
+    return result.rows[0]?.cloud_credentials || {};
+  }
 }
 
 module.exports = User;

@@ -2386,15 +2386,10 @@ function generateVersionsTf(provider) {
   }
 `;
 
-  if (provider === 'azure' || provider === 'azurerm') {
-    tf += `  backend "azurerm" {
-    resource_group_name  = "cloudiverseresourcegroup"
-    storage_account_name = "cloudiversetfstate"
-    container_name       = "tfstate"
-    # key is passed via -backend-config during init
-  }
-`;
-  }
+  /* 
+  # Backend config removed to allow local state (default)
+  # This fixes the 'no such host' error for the missing storage account
+  */
 
   tf += `}\n`;
   return tf;
@@ -2448,10 +2443,7 @@ provider "google-beta" {
   } else if (provider === 'azure' || provider === 'azurerm') {
     return `provider "azurerm" {
   features {}
-  subscription_id = var.user_subscription_id
-  tenant_id       = var.user_tenant_id
-  client_id       = var.user_client_id
-  client_secret   = var.user_client_secret
+  # Credentials via ARM_* environment variables
 }
 `;
   }
@@ -2586,35 +2578,7 @@ variable "subnetwork_name" {
   } else if (provider === 'azure') {
     variables += `
 # Azure Deployment Variables (User)
-variable "user_subscription_id" {
-  description = "Target Azure Subscription ID"
-  type        = string
-}
-
-variable "user_tenant_id" {
-  description = "Target Azure Tenant ID"
-  type        = string
-}
-
-variable "user_client_id" {
-  description = "Azure Client ID"
-  type        = string
-  default     = null
-}
-
-variable "user_client_secret" {
-  description = "Azure Client Secret"
-  type        = string
-  sensitive   = true
-  default     = null
-}
-
-variable "user_access_token" {
-  description = "Azure Access Token (for delegated auth)"
-  type        = string
-  sensitive   = true
-  default     = null
-}
+# Credentials passed via Environment Variables (ARM_*) for security
 
 variable "location" {
   description = "Azure region"
@@ -2626,57 +2590,57 @@ variable "location" {
 
   variables += `
 variable "project_name" {
-    description = "Project name (used for resource naming)"
-    type = string
-  }
+      description = "Project name (used for resource naming)"
+      type = string
+    }
 
 variable "environment" {
-    description = "Environment (dev, staging, production)"
-    type = string
+      description = "Environment (dev, staging, production)"
+      type = string
   default     = "production"
-  }
+    }
 
 variable "resource_group_name" {
-    description = "Azure resource group name"
-    type = string
+      description = "Azure resource group name"
+      type = string
         default     = ""
-  }
+    }
 
-  `;
+    `;
 
 
   // NFR-driven variables
   variables += `# NFR - Driven Variables
 variable "encryption_at_rest" {
-    description = "Enable encryption at rest for storage services"
-    type = bool
+      description = "Enable encryption at rest for storage services"
+      type = bool
   default     = true
-  }
+    }
 
 variable "backup_retention_days" {
-    description = "Number of days to retain backups"
-    type = number
+      description = "Number of days to retain backups"
+      type = number
   default     = 7
-  }
+    }
 
 variable "deletion_protection" {
-    description = "Enable deletion protection for stateful resources"
-    type = bool
+      description = "Enable deletion protection for stateful resources"
+      type = bool
   default     = true
-  }
+    }
 
 variable "multi_az" {
-    description = "Enable multi-AZ deployment for high availability"
-    type = bool
+      description = "Enable multi-AZ deployment for high availability"
+      type = bool
   default     = false
-  }
+    }
 
 variable "monitoring_enabled" {
-    description = "Enable monitoring and logging"
-    type = bool
+      description = "Enable monitoring and logging"
+      type = bool
   default     = true
-  }
-  `;
+    }
+    `;
 
   return variables;
 }
@@ -2780,27 +2744,27 @@ function generateOutputsTf(provider, pattern, services) {
   }
 
   outputs += `output "deployment_target" {
-    description = "The authoritative deployment contract. Deploy service MUST read this."
-    value = {
-      type     = "${targetType}"
+      description = "The authoritative deployment contract. Deploy service MUST read this."
+      value = {
+        type     = "${targetType}"
     provider = "${provider}"
     region   = var.${provider === 'azure' ? 'location' : 'region'}
 
-    static = {
-      bucket_name   = ${hasService('objectstorage') ? 'try(module.object_storage.bucket_name, null)' : 'null'}
-    bucket_region = var.${provider === 'azure' ? 'location' : 'region'
+      static = {
+        bucket_name   = ${hasService('objectstorage') ? 'try(module.object_storage.bucket_name, null)' : 'null'}
+      bucket_region = var.${provider === 'azure' ? 'location' : 'region'
     }
-  cdn_domain = ${hasService('cdn') ? 'try(module.cdn.endpoint, null)' : 'null'}
-}
+    cdn_domain = ${hasService('cdn') ? 'try(module.cdn.endpoint, null)' : 'null'}
+  }
 
-container = {
-  cluster_name        = ${hasService('computecontainer') ? 'try(module.app_container.cluster_name, null)' : hasService('appcompute') ? 'try(module.app_compute.cluster_name, null)' : 'null'}
-service_name = ${hasService('computecontainer') ? 'try(module.app_container.service_name, null)' : hasService('appcompute') ? 'try(module.app_compute.service_name, null)' : 'null'}
-container_app_name = ${hasService('computecontainer') ? 'try(module.app_container.container_app_name, null)' : hasService('appcompute') ? 'try(module.app_compute.container_app_name, null)' : 'null'}
-resource_group_name = ${hasService('computecontainer') ? 'try(module.app_container.resource_group_name, null)' : hasService('appcompute') ? 'try(module.app_compute.resource_group_name, null)' : 'null'}
-registry_url = ${hasService('computecontainer') ? 'try(module.app_container.ecr_url, module.app_container.acr_login_server, null)' : hasService('appcompute') ? 'try(module.app_compute.ecr_url, module.app_compute.acr_login_server, null)' : 'null'}
-build_project_name = ${hasService('computecontainer') ? 'try(module.app_container.codebuild_name, null)' : hasService('appcompute') ? 'try(module.app_compute.codebuild_name, null)' : 'null'}
-    }
+  container = {
+    cluster_name        = ${hasService('computecontainer') ? 'try(module.app_container.cluster_name, null)' : hasService('appcompute') ? 'try(module.app_compute.cluster_name, null)' : 'null'}
+  service_name = ${hasService('computecontainer') ? 'try(module.app_container.service_name, null)' : hasService('appcompute') ? 'try(module.app_compute.service_name, null)' : 'null'}
+  container_app_name = ${hasService('computecontainer') ? 'try(module.app_container.container_app_name, null)' : hasService('appcompute') ? 'try(module.app_compute.container_app_name, null)' : 'null'}
+  resource_group_name = ${hasService('computecontainer') ? 'try(module.app_container.resource_group_name, null)' : hasService('appcompute') ? 'try(module.app_compute.resource_group_name, null)' : 'null'}
+  registry_url = ${hasService('computecontainer') ? 'try(module.app_container.ecr_url, module.app_container.acr_login_server, null)' : hasService('appcompute') ? 'try(module.app_compute.ecr_url, module.app_compute.acr_login_server, null)' : 'null'}
+  build_project_name = ${hasService('computecontainer') ? 'try(module.app_container.codebuild_name, null)' : hasService('appcompute') ? 'try(module.app_compute.codebuild_name, null)' : 'null'}
+}
   }
 }
 
@@ -3662,7 +3626,7 @@ function getModuleSource(service, provider) {
       cdn: 'output "endpoint" { value = "" }\\noutput "id" { value = "" }',
       apigateway: 'output "endpoint" { value = "" }',
       relationaldatabase: 'output "endpoint" { value = "" }',
-      objectstorage: 'output "bucket_name" { value = "" }',
+      objectstorage: 'output "bucket_name" { value = "" }\\noutput "bucket_domain_name" { value = "" }\\noutput "bucket_arn" { value = "" }',
       computecontainer: 'output "cluster_name" { value = "" }\\noutput "service_name" { value = "" }',
       containerregistry: 'output "repository_url" { value = "" }',
       computeserverless: 'output "url" { value = "" }',
@@ -5981,7 +5945,9 @@ output "acr_login_server" { value = azurerm_container_registry.acr.login_server 
     account_replication_type = "LRS"
   } `,
           variables: getRequiredVars('objectstorage', meta.args),
-          outputs: `output "bucket_name" { value = azurerm_storage_account.store.name } `
+          outputs: `output "bucket_name" { value = azurerm_storage_account.store.name }
+output "bucket_domain_name" { value = azurerm_storage_account.store.primary_blob_endpoint }
+output "bucket_arn" { value = azurerm_storage_account.store.id } `
         };
 
       case 'relationaldatabase':
@@ -6051,11 +6017,6 @@ output "private_subnet_ids" { value = [azurerm_subnet.private.id] } `
 
   redis_configuration {
     }
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "endpoint" { value = azurerm_redis_cache.cache.hostname } `
@@ -6068,11 +6029,6 @@ resource "azurerm_resource_group" "rg" {
     location = var.location
     resource_group_name = var.resource_group_name
     application_type = "web"
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "url" { value = "https://portal.azure.com" } `
@@ -6086,11 +6042,6 @@ resource "azurerm_resource_group" "rg" {
     resource_group_name = var.resource_group_name
     sku = "PerGB2018"
     retention_in_days = 30
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "log_group_name" { value = azurerm_log_analytics_workspace.logging.name } `
@@ -6115,11 +6066,6 @@ resource "azurerm_lb" "main" {
       name = "PublicIPAddress"
       public_ip_address_id = azurerm_public_ip.lb.id
     }
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "dns_name" { value = azurerm_public_ip.lb.ip_address } `
@@ -6134,11 +6080,6 @@ resource "azurerm_resource_group" "rg" {
     publisher_name = "Cloudiverse"
     publisher_email = "admin@cloudiverse.com"
     sku_name = "Consumption_0"
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "endpoint" { value = azurerm_api_management.api.gateway_url } `
@@ -6163,11 +6104,6 @@ resource "azurerm_cdn_endpoint" "endpoint" {
       name = "default-origin"
       host_name = "example.com"
     }
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "endpoint" { value = azurerm_cdn_endpoint.endpoint.fqdn } `
@@ -6180,11 +6116,6 @@ resource "azurerm_resource_group" "rg" {
     name = "\${var.project_name}-identity"
     location = var.location
     resource_group_name = var.resource_group_name
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "client_id" { value = azurerm_user_assigned_identity.auth.client_id } `
@@ -6195,7 +6126,7 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_cosmosdb_account" "nosql" {
     name = "\${var.project_name}-nosql"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     offer_type = "Standard"
     kind = "GlobalDocumentDB"
 
@@ -6209,11 +6140,6 @@ resource "azurerm_resource_group" "rg" {
       location = var.location
       failover_priority = 0
     }
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "endpoint" { value = azurerm_cosmosdb_account.nosql.endpoint } `
@@ -6224,14 +6150,14 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_public_ip" "vm_ip" {
     name = "\${var.project_name}-vm-ip"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     allocation_method = "Dynamic"
   }
 
 resource "azurerm_network_interface" "vm_nic" {
     name = "\${var.project_name}-nic"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
 
   ip_configuration {
       name = "internal"
@@ -6243,7 +6169,7 @@ resource "azurerm_network_interface" "vm_nic" {
 
 resource "azurerm_linux_virtual_machine" "vm" {
     name = "\${var.project_name}-vm"
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     location = var.location
     size = "Standard_B1s"
     admin_username = "adminuser"
@@ -6253,7 +6179,7 @@ resource "azurerm_linux_virtual_machine" "vm" {
 
   admin_ssh_key {
       username = "adminuser"
-      public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC..."
+      public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAQC..."
     }
 
   os_disk {
@@ -6267,11 +6193,6 @@ resource "azurerm_linux_virtual_machine" "vm" {
       sku = "18.04-LTS"
       version = "latest"
     }
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "public_ip" { value = azurerm_linux_virtual_machine.vm.public_ip_address } `
@@ -6281,7 +6202,7 @@ resource "azurerm_resource_group" "rg" {
         return {
           main: `resource "azurerm_storage_account" "func_store" {
     name = replace("\${var.project_name}fsa", "-", "")
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     location = var.location
     account_tier = "Standard"
     account_replication_type = "LRS"
@@ -6289,7 +6210,7 @@ resource "azurerm_resource_group" "rg" {
 
 resource "azurerm_service_plan" "func_plan" {
     name = "\${var.project_name}-func-plan"
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     location = var.location
     os_type = "Linux"
     sku_name = "Y1"
@@ -6297,7 +6218,7 @@ resource "azurerm_service_plan" "func_plan" {
 
 resource "azurerm_linux_function_app" "function" {
     name = "\${var.project_name}-func"
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     location = var.location
 
     storage_account_name = azurerm_storage_account.func_store.name
@@ -6305,11 +6226,6 @@ resource "azurerm_linux_function_app" "function" {
     service_plan_id = azurerm_service_plan.func_plan.id
 
   site_config { }
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "url" { value = azurerm_linux_function_app.function.default_hostname } `
@@ -6322,18 +6238,13 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_servicebus_namespace" "main" {
     name = "\${var.project_name}-sb-ns"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     sku = "Standard"
   }
 
 resource "azurerm_servicebus_queue" "main" {
     name = "\${var.project_name}-queue"
     namespace_id = azurerm_servicebus_namespace.main.id
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "endpoint" { value = azurerm_servicebus_namespace.main.endpoint } `
@@ -6349,7 +6260,7 @@ resource "azurerm_resource_group" "rg" {
 resource "azurerm_key_vault" "vault" {
     name = replace("\${var.project_name}-kv", "-", "")
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     enabled_for_disk_encryption = true
     tenant_id = data.azurerm_client_config.current.tenant_id
     soft_delete_retention_days = 7
@@ -6364,11 +6275,6 @@ resource "azurerm_key_vault" "vault" {
       key_permissions = ["Get", "Create", "List"]
       secret_permissions = ["Get", "Set", "List"]
     }
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "vault_uri" { value = azurerm_key_vault.vault.vault_uri } `
@@ -6379,7 +6285,7 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_cosmosdb_account" "vector" {
   name                = replace("\${var.project_name}-vector", "-", "")
   location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   offer_type          = "Standard"
   kind                = "MongoDB"
   
@@ -6395,12 +6301,7 @@ resource "azurerm_resource_group" "rg" {
     location          = var.location
     failover_priority = 0
   }
-}
-
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+} `,
           variables: getRequiredVars('vectordatabase', meta.args),
           outputs: `output "endpoint" { value = azurerm_cosmosdb_account.vector.endpoint }`
         };
@@ -6410,7 +6311,7 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_kusto_cluster" "main" {
   name                = replace("\${var.project_name}adx", "-", "")
   location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   sku {
     name     = "Dev(No SLA)_Standard_E2a_v4"
     capacity = 1
@@ -6419,15 +6320,10 @@ resource "azurerm_resource_group" "rg" {
 
 resource "azurerm_kusto_database" "main" {
   name                = "metrics"
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   location            = var.location
   cluster_name        = azurerm_kusto_cluster.main.name
-}
-
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+} `,
           variables: getRequiredVars('timeseriesdatabase', meta.args),
           outputs: `output "cluster_uri" { value = azurerm_kusto_cluster.main.uri }`
         };
@@ -6437,7 +6333,7 @@ resource "azurerm_resource_group" "rg" {
         return {
           main: `resource "azurerm_synapse_workspace" "main" {
   name                                 = replace("\${var.project_name}synapse", "-", "")
-  resource_group_name                  = azurerm_resource_group.rg.name
+  resource_group_name                  = var.resource_group_name
   location                             = var.location
   storage_data_lake_gen2_filesystem_id = azurerm_storage_data_lake_gen2_filesystem.main.id
   sql_administrator_login              = "sqladmin"
@@ -6450,7 +6346,7 @@ resource "azurerm_resource_group" "rg" {
 
 resource "azurerm_storage_account" "synapse" {
   name                     = replace("\${var.project_name}synsa", "-", "")
-  resource_group_name      = azurerm_resource_group.rg.name
+  resource_group_name      = var.resource_group_name
   location                 = var.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
@@ -6461,12 +6357,7 @@ resource "azurerm_storage_account" "synapse" {
 resource "azurerm_storage_data_lake_gen2_filesystem" "main" {
   name               = "main"
   storage_account_id = azurerm_storage_account.synapse.id
-}
-
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+} `,
           variables: getRequiredVars('datawarehouse', meta.args),
           outputs: `output "synapse_endpoint" { value = azurerm_synapse_workspace.main.connectivity_endpoints["dev"] }`
         };
@@ -6475,7 +6366,7 @@ resource "azurerm_resource_group" "rg" {
         return {
           main: `resource "azurerm_storage_account" "lake" {
   name                     = replace("\${var.project_name}lake", "-", "")
-  resource_group_name      = azurerm_resource_group.rg.name
+  resource_group_name      = var.resource_group_name
   location                 = var.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
@@ -6486,29 +6377,44 @@ resource "azurerm_resource_group" "rg" {
 resource "azurerm_storage_data_lake_gen2_filesystem" "lake" {
   name               = "datalake"
   storage_account_id = azurerm_storage_account.lake.id
-}
-
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+} `,
           variables: getRequiredVars('datalake', meta.args),
           outputs: `output "lake_storage_account" { value = azurerm_storage_account.lake.name }`
+        };
+
+      case 'cdn':
+        return {
+          main: `resource "azurerm_cdn_profile" "cdn" {
+  name                = "\${var.project_name}-cdn"
+  location            = "global"
+  resource_group_name = var.resource_group_name
+  sku                 = "Standard_Microsoft"
+}
+
+resource "azurerm_cdn_endpoint" "cdn_ep" {
+  name                = "\${var.project_name}-cdn-ep"
+  profile_name        = azurerm_cdn_profile.cdn.name
+  location            = "global"
+  resource_group_name = var.resource_group_name
+
+  origin {
+    name      = "origin1"
+    host_name = var.bucket_domain_name
+  }
+}`,
+          variables: getRequiredVars('cdn', meta.args) + '\nvariable "bucket_domain_name" { type = string }',
+          outputs: `output "endpoint" { value = azurerm_cdn_endpoint.cdn_ep.fqdn }
+output "id" { value = azurerm_cdn_profile.cdn.id }`
         };
 
       case 'computebatch':
         return {
           main: `resource "azurerm_batch_account" "main" {
   name                = replace("\${var.project_name}batch", "-", "")
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   location            = var.location
   pool_allocation_mode = "BatchService"
-}
-
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+} `,
           variables: getRequiredVars('computebatch', meta.args),
           outputs: `output "batch_account_id" { value = azurerm_batch_account.main.id }`
         };
@@ -6518,7 +6424,7 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_cdn_profile" "edge" {
   name                = "\${var.project_name}-edge-cdn"
   location            = "global"
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   sku                 = "Standard_Microsoft"
 }
 
@@ -6533,7 +6439,7 @@ resource "azurerm_resource_group" "rg" {
         return {
           main: `resource "azurerm_web_application_firewall_policy" "main" {
   name                = "\${var.project_name}-wafpolicy"
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   location            = var.location
 
   managed_rules {
@@ -6547,12 +6453,7 @@ resource "azurerm_resource_group" "rg" {
     enabled = true
     mode    = "Prevention"
   }
-}
-
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+} `,
           variables: getRequiredVars('waf', meta.args),
           outputs: `output "waf_policy_id" { value = azurerm_web_application_firewall_policy.main.id }`
         };
@@ -6562,13 +6463,8 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_network_ddos_protection_plan" "main" {
   name                = "\${var.project_name}-ddos"
   location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-}
-
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+  resource_group_name = var.resource_group_name
+} `,
           variables: getRequiredVars('ddosprotection', meta.args),
           outputs: `output "ddos_plan_id" { value = azurerm_network_ddos_protection_plan.main.id }`
         };
@@ -6578,7 +6474,7 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_firewall" "main" {
   name                = "\${var.project_name}-fw"
   location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   sku_name            = "AZFW_VNet"
   sku_tier            = "Standard"
 
@@ -6592,15 +6488,10 @@ resource "azurerm_resource_group" "rg" {
 resource "azurerm_public_ip" "fw_ip" {
   name                = "\${var.project_name}-fw-ip"
   location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   allocation_method   = "Static"
   sku                 = "Standard"
-}
-
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+} `,
           variables: getRequiredVars('networkfirewall', meta.args),
           outputs: `output "firewall_id" { value = azurerm_firewall.main.id }`
         };
@@ -6610,14 +6501,14 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_public_ip" "vpn_ip" {
   name                = "\${var.project_name}-vpn-ip"
   location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   allocation_method   = "Dynamic"
 }
 
 resource "azurerm_virtual_network_gateway" "main" {
   name                = "\${var.project_name}-vpngw"
   location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
 
   type     = "Vpn"
   vpn_type = "RouteBased"
@@ -6632,12 +6523,7 @@ resource "azurerm_virtual_network_gateway" "main" {
     private_ip_address_allocation = "Dynamic"
     subnet_id                     = var.private_subnet_ids[0]
   }
-}
-
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+} `,
           variables: getRequiredVars('vpn', meta.args),
           outputs: `output "vpn_gateway_id" { value = azurerm_virtual_network_gateway.main.id }`
         };
@@ -6646,22 +6532,17 @@ resource "azurerm_resource_group" "rg" {
         return {
           main: `resource "azurerm_virtual_wan" "main" {
   name                = "\${var.project_name}-vwan"
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   location            = var.location
 }
 
 resource "azurerm_virtual_hub" "main" {
   name                = "\${var.project_name}-vhub"
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   location            = var.location
   virtual_wan_id      = azurerm_virtual_wan.main.id
   address_prefix      = "10.1.0.0/24"
-}
-
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+} `,
           variables: getRequiredVars('transitgateway', meta.args),
           outputs: `output "vwan_id" { value = azurerm_virtual_wan.main.id }`
         };
@@ -6671,7 +6552,7 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_private_endpoint" "main" {
   name                = "\${var.project_name}-pep"
   location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   subnet_id           = var.private_subnet_ids[0]
 
   private_service_connection {
@@ -6680,12 +6561,7 @@ resource "azurerm_resource_group" "rg" {
     is_manual_connection           = false
     subresource_names              = ["vault"]
   }
-}
-
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+} `,
           variables: getRequiredVars('privatelink', meta.args) + '\nvariable "resource_id" { type = string }',
           outputs: `output "endpoint_id" { value = azurerm_private_endpoint.main.id }`
         };
@@ -6696,14 +6572,14 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_servicebus_namespace" "events" {
   name                = replace("\${var.project_name}-events", "-", "")
   location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   sku                 = "Standard"
 }
 
 resource "azurerm_servicebus_topic" "main" {
   name         = "notifications"
   namespace_id = azurerm_servicebus_namespace.events.id
-}`,
+} `,
           variables: getRequiredVars('eventbus', meta.args),
           outputs: `output "servicebus_endpoint" { value = azurerm_servicebus_namespace.events.endpoint }`
         };
@@ -6713,24 +6589,20 @@ resource "azurerm_servicebus_topic" "main" {
           main: `resource "azurerm_logic_app_workflow" "main" {
   name                = "\${var.project_name}-logicapp"
   location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-}
-
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-rg"
-  location = var.location
-}`,
+  resource_group_name = var.resource_group_name
+} `,
           variables: getRequiredVars('workfloworchestration', meta.args),
           outputs: `output "logic_app_id" { value = azurerm_logic_app_workflow.main.id }`
         };
 
       case 'mltraining':
-      case 'mlinference':
         return {
-          main: `resource "azurerm_machine_learning_workspace" "main" {
+          main: `data "azurerm_client_config" "current" { }
+
+resource "azurerm_machine_learning_workspace" "main" {
   name                    = "\${var.project_name}-ml"
   location                = var.location
-  resource_group_name     = azurerm_resource_group.rg.name
+  resource_group_name     = var.resource_group_name
   application_insights_id = azurerm_application_insights.ml.id
   key_vault_id            = azurerm_key_vault.ml.id
   storage_account_id      = azurerm_storage_account.ml.id
@@ -6743,21 +6615,21 @@ resource "azurerm_resource_group" "rg" {
 resource "azurerm_application_insights" "ml" {
   name                = "\${var.project_name}-ml-ai"
   location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   application_type    = "web"
 }
 
 resource "azurerm_key_vault" "ml" {
   name                = replace("\${var.project_name}mlkv", "-", "")
   location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
 }
 
 resource "azurerm_storage_account" "ml" {
   name                     = replace("\${var.project_name}mlsa", "-", "")
-  resource_group_name      = azurerm_resource_group.rg.name
+  resource_group_name      = var.resource_group_name
   location                 = var.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
@@ -6771,12 +6643,197 @@ resource "azurerm_resource_group" "rg" {
           outputs: `output "ml_workspace_id" { value = azurerm_machine_learning_workspace.main.id }`
         };
 
+      case 'searchengine':
+        return {
+          main: `resource "azurerm_search_service" "search" {
+  name                = "\${var.project_name}-search"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  sku                 = "standard"
+}`,
+          variables: getRequiredVars('searchengine', meta.args),
+          outputs: `output "id" { value = azurerm_search_service.search.id }
+output "name" { value = azurerm_search_service.search.name }`
+        };
+
+      case 'websocketgateway':
+        return {
+          main: `resource "azurerm_api_management" "apim" {
+  name                = "\${var.project_name}-apim"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  publisher_name      = "Cloudiverse"
+  publisher_email     = "admin@cloudiverse.io"
+  sku_name            = "Developer_1"
+}`,
+          variables: getRequiredVars('websocketgateway', meta.args),
+          outputs: `output "gateway_url" { value = azurerm_api_management.apim.gateway_url }`
+        };
+
+      case 'mlinference':
+        return {
+          main: `data "azurerm_client_config" "current" {}
+
+resource "azurerm_kubernetes_cluster" "aks" {
+  name                = "\${var.project_name}-aks-inf"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  dns_prefix          = "\${var.project_name}-aks"
+
+  default_node_pool {
+    name       = "default"
+    node_count = 1
+    vm_size    = "Standard_DS2_v2"
+  }
+
+  identity {
+    type = "SystemAssigned"
+  }
+}`,
+          variables: getRequiredVars('mlinference', meta.args),
+          outputs: `output "kube_config" { value = azurerm_kubernetes_cluster.aks.kube_config_raw }`
+        };
+
+      case 'eventbus':
+        return {
+          main: `resource "azurerm_eventgrid_topic" "topic" {
+  name                = "\${var.project_name}-topic"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+}`,
+          variables: getRequiredVars('eventbus', meta.args),
+          outputs: `output "endpoint" { value = azurerm_eventgrid_topic.topic.endpoint }`
+        };
+
+      case 'globalloadbalancer':
+        return {
+          main: `resource "azurerm_cdn_frontdoor_profile" "fd" {
+  name                = "\${var.project_name}-fd"
+  resource_group_name = var.resource_group_name
+  sku_name            = "Standard_AzureFrontDoor"
+}
+
+resource "azurerm_cdn_frontdoor_endpoint" "fd_ep" {
+  name                     = "\${var.project_name}-ep"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.fd.id
+}
+`,
+          variables: getRequiredVars('globalloadbalancer', meta.args),
+          outputs: `output "frontend_endpoint" { value = azurerm_cdn_frontdoor_endpoint.fd_ep.host_name }`
+        };
+
+      case 'servicediscovery':
+        return {
+          main: `resource "azurerm_private_dns_zone" "dns" {
+  name                = "privatelink.postgres.database.azure.com"
+  resource_group_name = var.resource_group_name
+}`,
+          variables: getRequiredVars('servicediscovery', meta.args),
+          outputs: `output "id" { value = azurerm_private_dns_zone.dns.id }`
+        };
+
+      case 'servicemesh':
+        return {
+          main: `resource "azurerm_kubernetes_cluster" "mesh" {
+  name                = "\${var.project_name}-mesh"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  dns_prefix          = "\${var.project_name}-mesh"
+  
+  default_node_pool {
+    name       = "default"
+    node_count = 1
+    vm_size    = "Standard_DS2_v2"
+  }
+  
+  identity {
+    type = "SystemAssigned"
+  }
+  
+  # Placeholder for Service Mesh addon if available or manual Install via Helm
+}`,
+          variables: getRequiredVars('servicemesh', meta.args),
+          outputs: `output "kube_config" { value = azurerm_kubernetes_cluster.mesh.kube_config_raw }`
+        };
+
+      case 'modelregistry':
+        return {
+          main: `resource "azurerm_container_registry" "ml_acr" {
+  name                = replace("\${var.project_name}mlacr", "-", "")
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  sku                 = "Standard"
+  admin_enabled       = true
+}`,
+          variables: getRequiredVars('modelregistry', meta.args),
+          outputs: `output "login_server" { value = azurerm_container_registry.ml_acr.login_server }`
+        };
+
+      case 'experimenttracking':
+        return {
+          main: `data "azurerm_client_config" "current" {}
+
+resource "azurerm_storage_account" "ml_storage" {
+  name                     = replace("\${var.project_name}mlst", "-", "")
+  location                 = var.location
+  resource_group_name      = var.resource_group_name
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_application_insights" "app_insights" {
+  name                = "\${var.project_name}-ai"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  application_type    = "web"
+}
+
+resource "azurerm_key_vault" "kv" {
+  name                = "\${var.project_name}-kv"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+  sku_name            = "standard"
+  
+  access_policy {
+    tenant_id = data.azurerm_client_config.current.tenant_id
+    object_id = data.azurerm_client_config.current.object_id
+    secret_permissions = ["Get", "List", "Set", "Delete"]
+  }
+}
+
+resource "azurerm_machine_learning_workspace" "ws" {
+  name                    = "\${var.project_name}-mlws"
+  location                = var.location
+  resource_group_name     = var.resource_group_name
+  application_insights_id = azurerm_application_insights.app_insights.id
+  key_vault_id            = azurerm_key_vault.kv.id
+  storage_account_id      = azurerm_storage_account.ml_storage.id
+  identity {
+    type = "SystemAssigned"
+  }
+}`,
+          variables: getRequiredVars('experimenttracking', meta.args),
+          outputs: `output "id" { value = azurerm_machine_learning_workspace.ws.id }`
+        };
+
+      case 'mlpipelineorchestration':
+        return {
+          main: `resource "azurerm_data_factory" "df" {
+  name                = "\${var.project_name}-df"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+}`,
+          variables: getRequiredVars('mlpipelineorchestration', meta.args),
+          outputs: `output "name" { value = azurerm_data_factory.df.name }`
+        };
+
       case 'iotcore':
       case 'iotedgegateway':
         return {
           main: `resource "azurerm_iothub" "main" {
   name                = "\${var.project_name}-iothub"
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   location            = var.location
 
   sku {
@@ -6798,7 +6855,7 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_log_analytics_workspace" "main" {
   name                = "\${var.project_name}-logs"
   location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   sku                 = "PerGB2018"
   retention_in_days   = 30
 }
@@ -6817,7 +6874,7 @@ resource "azurerm_resource_group" "rg" {
         return {
           main: `resource "azurerm_monitor_action_group" "main" {
   name                = "\${var.project_name}-actiongroup"
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   short_name          = "alerting"
 }
 
@@ -6829,13 +6886,199 @@ resource "azurerm_resource_group" "rg" {
           outputs: `output "monitor_action_group_id" { value = azurerm_monitor_action_group.main.id }`
         };
 
+      case 'searchengine':
+        return {
+          main: `resource "azurerm_search_service" "search" {
+  name                = "\${var.project_name}-search"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  sku                 = "standard"
+}`,
+          variables: getRequiredVars('searchengine', meta.args),
+          outputs: `output "id" { value = azurerm_search_service.search.id }
+output "name" { value = azurerm_search_service.search.name }`
+        };
+
+      case 'websocketgateway':
+        return {
+          main: `resource "azurerm_api_management" "apim" {
+  name                = "\${var.project_name}-apim"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  publisher_name      = "Cloudiverse"
+  publisher_email     = "admin@cloudiverse.io"
+  sku_name            = "Developer_1"
+}`,
+          variables: getRequiredVars('websocketgateway', meta.args),
+          outputs: `output "gateway_url" { value = azurerm_api_management.apim.gateway_url }`
+        };
+
+      case 'mlinference':
+        return {
+          main: `data "azurerm_client_config" "current" {}
+
+resource "azurerm_kubernetes_cluster" "aks" {
+  name                = "\${var.project_name}-aks-inf"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  dns_prefix          = "\${var.project_name}-aks"
+
+  default_node_pool {
+    name       = "default"
+    node_count = 1
+    vm_size    = "Standard_DS2_v2"
+  }
+
+  identity {
+    type = "SystemAssigned"
+  }
+}`,
+          variables: getRequiredVars('mlinference', meta.args),
+          outputs: `output "kube_config" { value = azurerm_kubernetes_cluster.aks.kube_config_raw }`
+        };
+
+      case 'eventbus':
+        return {
+          main: `resource "azurerm_eventgrid_topic" "topic" {
+  name                = "\${var.project_name}-topic"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+}`,
+          variables: getRequiredVars('eventbus', meta.args),
+          outputs: `output "endpoint" { value = azurerm_eventgrid_topic.topic.endpoint }`
+        };
+
+      case 'globalloadbalancer':
+        return {
+          main: `resource "azurerm_cdn_frontdoor_profile" "fd" {
+  name                = "\${var.project_name}-fd"
+  resource_group_name = var.resource_group_name
+  sku_name            = "Standard_AzureFrontDoor"
+}
+
+resource "azurerm_cdn_frontdoor_endpoint" "fd_ep" {
+  name                     = "\${var.project_name}-ep"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.fd.id
+}
+`,
+          variables: getRequiredVars('globalloadbalancer', meta.args),
+          outputs: `output "frontend_endpoint" { value = azurerm_cdn_frontdoor_endpoint.fd_ep.host_name }`
+        };
+
+      case 'servicediscovery':
+        return {
+          main: `resource "azurerm_private_dns_zone" "dns" {
+  name                = "privatelink.postgres.database.azure.com"
+  resource_group_name = var.resource_group_name
+}`,
+          variables: getRequiredVars('servicediscovery', meta.args),
+          outputs: `output "id" { value = azurerm_private_dns_zone.dns.id }`
+        };
+
+      case 'servicemesh':
+        return {
+          main: `resource "azurerm_kubernetes_cluster" "mesh" {
+  name                = "\${var.project_name}-mesh"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  dns_prefix          = "\${var.project_name}-mesh"
+  
+  default_node_pool {
+    name       = "default"
+    node_count = 1
+    vm_size    = "Standard_DS2_v2"
+  }
+  
+  identity {
+    type = "SystemAssigned"
+  }
+  
+  # Placeholder for Service Mesh addon if available or manual Install via Helm
+}`,
+          variables: getRequiredVars('servicemesh', meta.args),
+          outputs: `output "kube_config" { value = azurerm_kubernetes_cluster.mesh.kube_config_raw }`
+        };
+
+      case 'modelregistry':
+        return {
+          main: `resource "azurerm_container_registry" "ml_acr" {
+  name                = replace("\${var.project_name}mlacr", "-", "")
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  sku                 = "Standard"
+  admin_enabled       = true
+}`,
+          variables: getRequiredVars('modelregistry', meta.args),
+          outputs: `output "login_server" { value = azurerm_container_registry.ml_acr.login_server }`
+        };
+
+      case 'experimenttracking':
+        return {
+          main: `data "azurerm_client_config" "current" {}
+
+resource "azurerm_storage_account" "ml_storage" {
+  name                     = replace("\${var.project_name}mlst", "-", "")
+  location                 = var.location
+  resource_group_name      = var.resource_group_name
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_application_insights" "app_insights" {
+  name                = "\${var.project_name}-ai"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  application_type    = "web"
+}
+
+resource "azurerm_key_vault" "kv" {
+  name                = "\${var.project_name}-kv"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+  sku_name            = "standard"
+  
+  access_policy {
+    tenant_id = data.azurerm_client_config.current.tenant_id
+    object_id = data.azurerm_client_config.current.object_id
+    secret_permissions = ["Get", "List", "Set", "Delete"]
+  }
+}
+
+resource "azurerm_machine_learning_workspace" "ws" {
+  name                    = "\${var.project_name}-mlws"
+  location                = var.location
+  resource_group_name     = var.resource_group_name
+  application_insights_id = azurerm_application_insights.app_insights.id
+  key_vault_id            = azurerm_key_vault.kv.id
+  storage_account_id      = azurerm_storage_account.ml_storage.id
+  identity {
+    type = "SystemAssigned"
+  }
+}`,
+          variables: getRequiredVars('experimenttracking', meta.args),
+          outputs: `output "id" { value = azurerm_machine_learning_workspace.ws.id }`
+        };
+
+      case 'mlpipelineorchestration':
+        return {
+          main: `resource "azurerm_data_factory" "df" {
+  name                = "\${var.project_name}-df"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+}`,
+          variables: getRequiredVars('mlpipelineorchestration', meta.args),
+          outputs: `output "name" { value = azurerm_data_factory.df.name }`
+        };
+
       case 'tracing':
+
       case 'apm':
         return {
           main: `resource "azurerm_application_insights" "main" {
   name                = "\${var.project_name}-appinsights"
   location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = var.resource_group_name
   application_type    = "web"
 }
 

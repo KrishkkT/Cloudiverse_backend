@@ -19,6 +19,7 @@ const pool = require('../config/db');
 const archiver = require('archiver');
 const fs = require('fs');
 const path = require('path');
+const User = require('../models/User');
 
 
 // ═══════════════════════════════════════════════════════════════════
@@ -3593,24 +3594,48 @@ router.post('/deploy/terraform', authMiddleware, async (req, res) => {
         }
 
         // 🔥 ROBUST CONNECTION LOOKUP: Prevent race condition failures
-        if (!connectionData.status || connectionData.status !== 'connected') {
-            console.log(`[DEPLOY:TF] Connection in state_json is ${connectionData.status || 'missing'}. Checking user_cloud_connections...`);
-            const connResult = await pool.query(
-                `SELECT connection_data, status, verified 
-                 FROM user_cloud_connections 
-                 WHERE user_id = $1 AND provider = $2`,
-                [req.user.id, provider.toLowerCase()]
-            );
+        // Check if connection is missing OR if it lacks critical tokens (e.g. Azure Access Token)
+        const isAzureMissingToken = (provider.toLowerCase() === 'azure' &&
+            (!connectionData.tokens || (!connectionData.tokens.accessToken && !connectionData.tokens.access_token)));
 
-            if (connResult.rows.length > 0 && connResult.rows[0].status === 'connected') {
-                const row = connResult.rows[0];
+        if (!connectionData.status || connectionData.status !== 'connected' || isAzureMissingToken) {
+            console.log(`[DEPLOY:TF] Connection in state_json is ${connectionData.status || 'missing'} or incomplete. Refreshing from User Profile...`);
+
+            // 1. Try User Profile (Primary Source of Truth for Credentials)
+            let foundInProfile = false;
+            const userCreds = await User.getCloudCredentials(req.user.id);
+            if (userCreds && userCreds[provider.toLowerCase()]) {
+                const savedConn = userCreds[provider.toLowerCase()];
                 connectionData = {
-                    ...row.connection_data,
-                    status: row.status,
-                    verified: row.verified,
+                    ...savedConn,
+                    status: 'connected', // implied
+                    verified: true,
                     provider: provider.toLowerCase()
                 };
-                console.log(`[DEPLOY:TF] Found valid connection in user_cloud_connections. Proceeding.`);
+                console.log(`[DEPLOY:TF] ✅ Refreshed connection data from User Profile.`);
+                foundInProfile = true;
+            }
+
+            // 2. Fallback to Legacy Table (user_cloud_connections) - Only if not found in profile
+            if (!foundInProfile) {
+                console.log(`[DEPLOY:TF] User Profile empty. Checking user_cloud_connections...`);
+                const connResult = await pool.query(
+                    `SELECT connection_data, status, verified 
+                 FROM user_cloud_connections 
+                 WHERE user_id = $1 AND provider = $2`,
+                    [req.user.id, provider.toLowerCase()]
+                );
+
+                if (connResult.rows.length > 0 && connResult.rows[0].status === 'connected') {
+                    const row = connResult.rows[0];
+                    connectionData = {
+                        ...row.connection_data,
+                        status: row.status,
+                        verified: row.verified,
+                        provider: provider.toLowerCase()
+                    };
+                    console.log(`[DEPLOY:TF] Found valid connection in user_cloud_connections. Proceeding.`);
+                }
             }
         }
 
@@ -3677,8 +3702,15 @@ router.post('/deploy/terraform', authMiddleware, async (req, res) => {
             const terraformGenerator = require('../services/infrastructure/terraformGeneratorV2');
 
             // FIX: Normalize Region (Handle 'ap-south1' typo) at source
-            let region = infraSpec.resolved_region?.resolved || infraSpec.region?.logical || 'ap-south-1';
-            if (region && /^[a-z]+-[a-z]+\d$/.test(region) === false && region.match(/[a-z]+[a-z]+\d/)) {
+            // 🧠 INTELLIGENT DEFAULT REGION
+            let defaultRegion = 'ap-south-1'; // AWS Default
+            if (provider.toLowerCase() === 'azure') defaultRegion = 'centralindia';
+            if (provider.toLowerCase() === 'gcp') defaultRegion = 'asia-south1';
+
+            let region = infraSpec.resolved_region?.resolved || infraSpec.region?.logical || defaultRegion;
+
+            // Fix generic dash logic if likely AWS
+            if (provider.toLowerCase() === 'aws' && region && /^[a-z]+-[a-z]+\d$/.test(region) === false && region.match(/[a-z]+[a-z]+\d/)) {
                 region = region.replace(/([a-z]+)-?([a-z]+)(\d)/, "$1-$2-$3");
             }
             console.log(`[DEPLOY:TF] Using normalized region: ${region}`);
@@ -3692,6 +3724,13 @@ router.post('/deploy/terraform', authMiddleware, async (req, res) => {
                 projectName,
                 { connectionData }
             );
+
+            // DEBUG: Log contents of connectionData before execution
+            console.log(`[DEPLOY:TF] DEBUG: connectionData passed to executor:`, JSON.stringify({
+                ...connectionData,
+                tokens: connectionData.tokens ? { ...connectionData.tokens, accessToken: connectionData.tokens.accessToken ? 'PRESENT' : 'MISSING', refresh_token: 'REDACTED' } : 'MISSING',
+                credentials: connectionData.credentials ? 'PRESENT' : 'MISSING'
+            }, null, 2));
 
             // Start async real execution
             terraformExecutor.startRealTerraformExecution(

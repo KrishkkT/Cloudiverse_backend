@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const authMiddleware = require('../middleware/auth');
+const User = require('../models/User');
 const { STSClient, AssumeRoleCommand, GetCallerIdentityCommand } = require("@aws-sdk/client-sts");
 const { CloudFormationClient, DeleteStackCommand, DescribeStacksCommand } = require("@aws-sdk/client-cloudformation");
 const { google } = require('googleapis');
@@ -40,6 +41,73 @@ async function checkGcpBilling(projectId, authClient) {
         console.error(`Error checking billing for ${projectId}:`, error.message);
         // If 403, it might mean API not enabled, but we should handle gracefully
         throw error;
+    }
+}
+
+// 🛡️ Helper: Create Service Principal for Terraform (Graph API)
+async function createServicePrincipal(accessToken, appName) {
+    try {
+        console.log(`[AZURE_SP] Starting SP creation for: ${appName}`);
+        const headers = { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' };
+
+        // 1. Create AD Application
+        const appRes = await axios.post('https://graph.microsoft.com/v1.0/applications', {
+            displayName: appName,
+            signInAudience: "AzureADMyOrg"
+        }, { headers });
+        const appId = appRes.data.appId;
+        const objectId = appRes.data.id;
+        console.log(`[AZURE_SP] App Created: ${appId}`);
+
+        // 2. Create Service Principal
+        // Wait a bit for propagation? usually fast enough
+        const spRes = await axios.post('https://graph.microsoft.com/v1.0/servicePrincipals', {
+            appId: appId
+        }, { headers });
+        const spId = spRes.data.id;
+        console.log(`[AZURE_SP] Service Principal Created: ${spId}`);
+
+        // 3. Create Client Secret
+        const secretRes = await axios.post(`https://graph.microsoft.com/v1.0/applications/${objectId}/addPassword`, {
+            passwordCredential: {
+                displayName: "TerraformAuth"
+            }
+        }, { headers });
+        const clientSecret = secretRes.data.secretText;
+        console.log(`[AZURE_SP] Client Secret Generated`);
+
+        return { appId, spId, clientSecret };
+
+    } catch (err) {
+        console.error(`[AZURE_SP_ERROR] Failed to create SP: ${err.response?.data?.error?.message || err.message}`);
+        return null; // Fail gracefully, fall back to user token (conceptually, though we want to enforce SP)
+    }
+}
+
+// 🛡️ Helper: Assign Role to SP (ARM API)
+async function assignContributorRole(accessToken, subscriptionId, spId) {
+    try {
+        console.log(`[AZURE_RBAC] Assigning Contributor role to SP: ${spId}`);
+        const headers = { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' };
+
+        // Contributor Role Definition ID (Fixed UUID for built-in role)
+        const roleDefinitionId = `/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c`;
+        const roleAssignmentName = crypto.randomUUID();
+
+        await axios.put(`https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleAssignments/${roleAssignmentName}?api-version=2020-04-01-preview`, {
+            properties: {
+                roleDefinitionId: roleDefinitionId,
+                principalId: spId,
+                principalType: 'ServicePrincipal'
+            }
+        }, { headers });
+
+        console.log(`[AZURE_RBAC] Role Assigned Successfully`);
+        return true;
+    } catch (err) {
+        console.error(`[AZURE_RBAC_ERROR] Failed to assign role: ${err.response?.data?.error?.message || err.message}`);
+        // Often fails if user is not Owner/User Access Admin. We should warn but proceed (SP exists at least).
+        return false;
     }
 }
 
@@ -258,6 +326,37 @@ router.get('/connections/:provider', authMiddleware, async (req, res) => {
             });
         }
 
+        // AUTO-CONNECT: Check User Profile
+        const userCreds = await User.getCloudCredentials(req.user.id);
+        if (userCreds[provider]) {
+            console.log(`[CLOUD] Auto-connecting workspace ${workspace_id} to ${provider} using saved user credentials`);
+            const savedConnection = userCreds[provider];
+
+            // Merge into workspace state
+            const updatedState = {
+                ...state,
+                connection: {
+                    ...savedConnection,
+                    status: 'connected',
+                    connected_at: new Date().toISOString()
+                }
+            };
+
+            await pool.query(
+                "UPDATE workspaces SET state_json = $1 WHERE id = $2",
+                [JSON.stringify(updatedState), workspace_id]
+            );
+
+            return res.json({
+                connected: true,
+                account_id: savedConnection.account_id,
+                subscription_id: savedConnection.subscription_id,
+                tenant_id: savedConnection.tenant_id,
+                region: savedConnection.region,
+                provider: provider
+            });
+        }
+
         res.json({ connected: false });
 
     } catch (err) {
@@ -347,7 +446,6 @@ router.post('/:provider/connect', authMiddleware, async (req, res) => {
             const authCodeUrlParameters = {
                 scopes: [
                     "https://management.azure.com/user_impersonation",
-                    "https://storage.azure.com/user_impersonation",
                     "User.Read",
                     "offline_access",
                     "openid",
@@ -493,8 +591,36 @@ router.get('/:provider/callback', async (req, res) => {
             // D. Create Service Principal (Only for Work Accounts)
             let credentials = {};
             if (!isConsumerAccount) {
-                // ... (Existing SP creation logic would go here, simplified for brevity as implementation plan focus is on Auth/Safety)
-                // Keeping existing SP logic flow but using the tokens we have
+                console.log(`[AZURE_AUTO] Work Account Detected - Attempting to create Service Principal...`);
+
+                // Check if we already created one (optimization for re-connects could go here, but strict creation is safer for now)
+                const spData = await createServicePrincipal(armToken, "Cloudiverse Terraform");
+
+                if (spData) {
+                    // Assign Role
+                    const roleAssigned = await assignContributorRole(armToken, subscriptionId, spData.spId);
+
+                    if (roleAssigned) {
+                        credentials = {
+                            client_id: spData.appId,
+                            client_secret: spData.clientSecret,
+                            tenant_id: targetTenantId,
+                            subscription_id: subscriptionId
+                        };
+                        console.log(`[AZURE_AUTO] ✅ Service Principal Configured Successfully`);
+                    } else {
+                        console.warn(`[AZURE_AUTO] ⚠️ SP Created but Role Assignment failed (Permissions?). User may need to assign manually.`);
+                        // We still save the SP credentials, as they are valid identities
+                        credentials = {
+                            client_id: spData.appId,
+                            client_secret: spData.clientSecret,
+                            tenant_id: targetTenantId,
+                            subscription_id: subscriptionId
+                        };
+                    }
+                }
+            } else {
+                console.log(`[AZURE_AUTO] Consumer Account (Personal) - Skipping SP Creation (Not supported via Graph API easily)`);
             }
 
             connectionMetadata = {
@@ -507,8 +633,9 @@ router.get('/:provider/callback', async (req, res) => {
                 // Store encrypted refresh token
                 tokens: {
                     refreshToken: encryptedRefreshToken, // 🔒 Encrypted
-                    // accessToken: response.accessToken // OPTIONAL: Only if needed for immediate session, else assume CredentialProvider refreshes it
+                    accessToken: response.accessToken // REQUIRED: For immediate Terraform execution
                 },
+                credentials: credentials, // 🛡️ Persist SP Credentials
                 verified: true,
                 status: 'connected'
             };
@@ -531,10 +658,22 @@ router.get('/:provider/callback', async (req, res) => {
         }
 
         // 3. Update Workspace
-        const wsRes = await pool.query("SELECT state_json FROM workspaces WHERE id = $1", [workspace_id]);
+        const wsRes = await pool.query("SELECT user_id, state_json FROM workspaces WHERE id = $1", [workspace_id]);
         if (wsRes.rows.length === 0) return res.status(404).send("Workspace not found");
 
+        const workspaceOwnerId = wsRes.rows[0].user_id;
         const currentState = wsRes.rows[0].state_json || {};
+
+        // SAVE TO USER PROFILE (Persistent Connection)
+        if (workspaceOwnerId && connectionMetadata.status === 'connected') {
+            try {
+                await User.updateCloudCredentials(workspaceOwnerId, provider, connectionMetadata);
+                console.log(`[CLOUD] Saved ${provider} credentials to user profile ${workspaceOwnerId}`);
+            } catch (saveErr) {
+                console.error(`[CLOUD] Failed to save credentials to user profile`, saveErr);
+            }
+        }
+
         const updatedState = {
             ...currentState,
             step: 'deploy',

@@ -483,23 +483,8 @@ class TerraformExecutor {
 
             // 🔥 AZURE BACKEND CONFIGURATION
             if (isAzure(provider)) {
-                // These values should ideally come from env vars or config, hardcoding per plan for now
-                initArgs.push('-backend-config=resource_group_name=cloudiverseresourcegroup');
-                initArgs.push('-backend-config=storage_account_name=cloudiversetfstate');
-                initArgs.push('-backend-config=container_name=tfstate');
-
-                // Use Platform Credentials for the Backend (to allow access to the shared state account)
-                if (process.env.AZURE_CLIENT_ID) initArgs.push(`-backend-config=client_id=${process.env.AZURE_CLIENT_ID}`);
-                if (process.env.AZURE_CLIENT_SECRET) initArgs.push(`-backend-config=client_secret=${process.env.AZURE_CLIENT_SECRET}`);
-                if (process.env.AZURE_TENANT_ID) initArgs.push(`-backend-config=tenant_id=${process.env.AZURE_TENANT_ID}`);
-                if (process.env.AZURE_SUBSCRIPTION_ID) initArgs.push(`-backend-config=subscription_id=${process.env.AZURE_SUBSCRIPTION_ID}`);
-
-                // Set use_azuread_auth=false to avoid audience mismatch with user's ARM_ACCESS_TOKEN
-                initArgs.push('-backend-config=use_azuread_auth=false');
-
-                initArgs.push(`-backend-config=key=ws_${workspaceId}/terraform.tfstate`);
-
-                this.addLog(jobId, `Configuring Azure Backend with platform credentials: ws_${workspaceId}/terraform.tfstate`, 'INFO');
+                // Config removed to allow local state (fix for missing storage account)
+                this.addLog(jobId, `Using Local Backend for Azure (State stored in workspace dir)`, 'INFO');
             }
 
             const initResult = await this.runTerraformCommand(
