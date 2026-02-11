@@ -193,8 +193,14 @@ class CredentialProvider {
     async getAzureCredentials(connectionData) {
         console.log('[CREDENTIAL] Getting Azure credentials...');
 
-        if (!connectionData.tokens?.accessToken) {
-            throw new Error('Azure connection missing access token');
+        // Initial Metadata Check
+        const hasAccessToken = !!connectionData.tokens?.accessToken;
+        const hasRefreshToken = !!(connectionData.tokens?.refreshToken || connectionData.tokens?.refresh_token);
+        const hasServicePrincipal = !!(connectionData.credentials?.client_id && connectionData.credentials?.client_secret);
+        const hasBackendFallback = !!process.env.AZURE_CLIENT_SECRET;
+
+        if (!hasAccessToken && !hasRefreshToken && !hasServicePrincipal && !hasBackendFallback) {
+            throw new Error('Azure connection missing required credentials (access token, refresh token, or service principal)');
         }
 
         // Standardize Azure Service Principal / User Auth Environment Variables
@@ -223,19 +229,49 @@ class CredentialProvider {
             console.log('[CREDENTIAL] Using Azure Service Principal credentials');
         }
         // DELEGATED AUTH: Use User Access Token (with Auto-Refresh)
-        else if (connectionData.tokens?.refreshToken || connectionData.tokens?.refresh_token) {
+        else if (hasRefreshToken) {
             try {
-                const refreshToken = connectionData.tokens.refreshToken || connectionData.tokens.refresh_token;
+                const { decrypt } = require('../shared/encryptionService');
+                let refreshToken = connectionData.tokens.refreshToken || connectionData.tokens.refresh_token;
+
+                // 1. Decrypt if it looks encrypted
+                if (refreshToken && refreshToken.includes(':')) {
+                    try {
+                        const decrypted = decrypt(refreshToken);
+                        if (decrypted) refreshToken = decrypted;
+                    } catch (e) {
+                        console.warn('[CREDENTIAL] Decryption failed, using raw token (might be a legacy unencrypted token)');
+                    }
+                }
+
                 console.log('[CREDENTIAL] Refreshing Azure Access Token for delegated verification...');
 
-                const response = await this.cca.acquireTokenByRefreshToken({
+                // 2. Use Tenanted Authority if available
+                const tenantId = connectionData.tenant_id || process.env.AZURE_TENANT_ID || 'common';
+                const authority = `https://login.microsoftonline.com/${tenantId}`;
+
+                // Create a temporary CCA for this specific authority if needed
+                const msalConfig = {
+                    auth: {
+                        clientId: process.env.AZURE_CLIENT_ID,
+                        clientSecret: process.env.AZURE_CLIENT_SECRET,
+                        authority: authority
+                    }
+                };
+                const tempCca = new msal.ConfidentialClientApplication(msalConfig);
+
+                const response = await tempCca.acquireTokenByRefreshToken({
                     refreshToken: refreshToken,
-                    scopes: ["https://management.azure.com/user_impersonation", "User.Read"]
+                    scopes: [
+                        "https://management.azure.com/user_impersonation",
+                        "https://storage.azure.com/user_impersonation",
+                        "User.Read"
+                    ]
                 });
 
                 if (response && response.accessToken) {
                     envVars.ARM_ACCESS_TOKEN = response.accessToken;
-                    console.log('[CREDENTIAL] ✅ Azure Token Refreshed Successfully');
+                    console.log(`[CREDENTIAL] ✅ Azure Token Refreshed Successfully via Authority: ${authority}`);
 
                     // CRITICAL: Unset CLIENT_SECRET to force Terraform to use the ACCESS_TOKEN
                     delete envVars.ARM_CLIENT_SECRET;
@@ -245,10 +281,12 @@ class CredentialProvider {
             } catch (refreshErr) {
                 console.warn(`[CREDENTIAL] ⚠️ Token Refresh Failed: ${refreshErr.message}`);
                 // Fallback to existing access token if available (might still work if not expired)
-                if (connectionData.tokens.accessToken) {
+                if (connectionData.tokens?.accessToken) {
                     envVars.ARM_ACCESS_TOKEN = connectionData.tokens.accessToken;
                     delete envVars.ARM_CLIENT_SECRET;
                     console.log('[CREDENTIAL] Using existing Azure Access Token (Fallback)');
+                } else {
+                    throw new Error(`Azure Token Refresh Failed and no existing access token: ${refreshErr.message}`);
                 }
             }
         }
@@ -294,7 +332,9 @@ class CredentialProvider {
             'AWS_SESSION_TOKEN',
             'GOOGLE_OAUTH_ACCESS_TOKEN',
             'ARM_CLIENT_SECRET',
-            'ARM_ACCESS_TOKEN'
+            'ARM_ACCESS_TOKEN',
+            'TF_VAR_user_client_secret',
+            'TF_VAR_user_access_token'
         ];
 
         for (const key of sensitiveKeys) {

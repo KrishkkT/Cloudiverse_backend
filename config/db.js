@@ -18,6 +18,7 @@ const pool = new Pool({
 
 
 // Test the connection
+/*
 pool.query('SELECT NOW()', (err, res) => {
   if (err) {
     console.error('Database connection error:', err.stack);
@@ -25,6 +26,7 @@ pool.query('SELECT NOW()', (err, res) => {
     console.log('Database connected successfully');
   }
 });
+*/
 
 // FIX: Prevent crash on idle client errors
 pool.on('error', (err, client) => {

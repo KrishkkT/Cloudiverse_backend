@@ -334,3 +334,12 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`[NETWORK] Listening on 0.0.0.0:${PORT} (All Interfaces)`);
 });
 
+// Process Error Handlers
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
+

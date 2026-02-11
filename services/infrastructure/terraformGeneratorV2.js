@@ -180,6 +180,7 @@ const SERVICE_METADATA = {
   networkfirewall: { deps: ['networking'], args: ['vpc_id', 'public_subnet_ids'] },
   transitgateway: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
   websocketgateway: { deps: ['networking'], args: ['vpc_id'] },
+  cdn: { args: ['bucket_domain_name', 'bucket_name', 'bucket_arn'] },
   graphdatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
 
   // Security
@@ -2372,17 +2373,31 @@ function generateVersionsTf(provider) {
 
   const config = providerConfigs[provider];
 
-  return `terraform {
-        required_version = ">= 1.0"
+  const providerName = provider === 'aws' ? 'aws' : provider === 'gcp' ? 'google' : 'azurerm';
+
+  let tf = `terraform {
+  required_version = ">= 1.0"
   
   required_providers {
-    ${provider === 'aws' ? 'aws' : provider === 'gcp' ? 'google' : 'azurerm'} = {
-            source = "${config.source}"
-            version = "${config.version}"
-          }
-        }
-      }
-      `;
+    ${providerName} = {
+      source  = "${config.source}"
+      version = "${config.version}"
+    }
+  }
+`;
+
+  if (provider === 'azure' || provider === 'azurerm') {
+    tf += `  backend "azurerm" {
+    resource_group_name  = "cloudiverseresourcegroup"
+    storage_account_name = "cloudiversetfstate"
+    container_name       = "tfstate"
+    # key is passed via -backend-config during init
+  }
+`;
+  }
+
+  tf += `}\n`;
+  return tf;
 }
 
 const defaultRegions = {
@@ -2431,19 +2446,12 @@ provider "google-beta" {
 }
 `;
   } else if (provider === 'azure' || provider === 'azurerm') {
-    return `terraform {
-  required_providers {
-    azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "~> 3.0"
-    }
-  }
-  backend "azurerm" {} # Partial configuration
-}
-
-provider "azurerm" {
+    return `provider "azurerm" {
   features {}
-  # Credentials are sourced from ARM_SUBSCRIPTION_ID, ARM_TENANT_ID, ARM_ACCESS_TOKEN env vars
+  subscription_id = var.user_subscription_id
+  tenant_id       = var.user_tenant_id
+  client_id       = var.user_client_id
+  client_secret   = var.user_client_secret
 }
 `;
   }
@@ -2577,18 +2585,36 @@ variable "subnetwork_name" {
       `;
   } else if (provider === 'azure') {
     variables += `
-# Azure Variables
-variable "subscription_id" {
-  description = "Azure Subscription ID"
+# Azure Deployment Variables (User)
+variable "user_subscription_id" {
+  description = "Target Azure Subscription ID"
   type        = string
 }
 
-variable "tenant_id" {
-  description = "Azure Tenant ID"
+variable "user_tenant_id" {
+  description = "Target Azure Tenant ID"
   type        = string
 }
 
-# Note: client_id and client_secret are handled via env vars (ARM_*)
+variable "user_client_id" {
+  description = "Azure Client ID"
+  type        = string
+  default     = null
+}
+
+variable "user_client_secret" {
+  description = "Azure Client Secret"
+  type        = string
+  sensitive   = true
+  default     = null
+}
+
+variable "user_access_token" {
+  description = "Azure Access Token (for delegated auth)"
+  type        = string
+  sensitive   = true
+  default     = null
+}
 
 variable "location" {
   description = "Azure region"
@@ -3603,7 +3629,10 @@ function getModuleSource(service, provider) {
     backup_retention_days: 'variable "backup_retention_days" {\n  type = number\n  default = 7\n}',
     deletion_protection: 'variable "deletion_protection" {\n  type = bool\n  default = false\n}',
     multi_az: 'variable "multi_az" {\n  type = bool\n  default = false\n}',
-    monitoring_enabled: 'variable "monitoring_enabled" {\n  type = bool\n  default = true\n}'
+    monitoring_enabled: 'variable "monitoring_enabled" {\n  type = bool\n  default = true\n}',
+    bucket_domain_name: 'variable "bucket_domain_name" {\n  type = string\n  default = ""\n}',
+    bucket_name: 'variable "bucket_name" {\n  type = string\n  default = ""\n}',
+    bucket_arn: 'variable "bucket_arn" {\n  type = string\n  default = ""\n}'
   };
 
   const getRequiredVars = (serviceId, serviceArgs = []) => {
@@ -3620,6 +3649,10 @@ function getModuleSource(service, provider) {
         vars += `\n${commonVarDefs[arg]}`;
       }
     });
+
+    if (provider === 'azure' || provider === 'azurerm') {
+      vars += `\nvariable "resource_group_name" { type = string }`;
+    }
 
     return vars;
   };
@@ -5884,7 +5917,7 @@ resource "google_storage_bucket" "log_bucket" {
         return {
           main: `resource "azurerm_container_registry" "acr" {
     name = replace("\${var.project_name}acr", "-", "")
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     location = var.location
     sku = "Standard"
     admin_enabled = true
@@ -5893,7 +5926,7 @@ resource "google_storage_bucket" "log_bucket" {
 resource "azurerm_log_analytics_workspace" "core" {
     name = "\${var.project_name}-logs"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     sku = "PerGB2018"
     retention_in_days = 30
   }
@@ -5901,14 +5934,14 @@ resource "azurerm_log_analytics_workspace" "core" {
 resource "azurerm_container_app_environment" "env" {
     name = "\${var.project_name}-env"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     log_analytics_workspace_id = azurerm_log_analytics_workspace.core.id
   }
 
 resource "azurerm_container_app" "app" {
     name = "\${var.project_name}-app"
     container_app_environment_id = azurerm_container_app_environment.env.id
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     revision_mode = "Single"
 
   template {
@@ -5929,16 +5962,12 @@ resource "azurerm_container_app" "app" {
       }
     }
   }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
-  } `,
+ `,
           variables: getRequiredVars('computecontainer', meta.args),
           outputs: `output "url" { value = azurerm_container_app.app.ingress[0].fqdn }
 output "service_name" { value = azurerm_container_app.app.name }
 output "container_app_name" { value = azurerm_container_app.app.name }
-output "resource_group_name" { value = azurerm_resource_group.rg.name }
+output "resource_group_name" { value = var.resource_group_name }
 output "acr_login_server" { value = azurerm_container_registry.acr.login_server } `
         };
 
@@ -5946,15 +5975,10 @@ output "acr_login_server" { value = azurerm_container_registry.acr.login_server 
         return {
           main: `resource "azurerm_storage_account" "store" {
     name = replace("\${var.project_name}store", "-", "")
-    resource_group_name = "\${var.project_name}-rg"
+    resource_group_name = var.resource_group_name
     location = var.location
     account_tier = "Standard"
     account_replication_type = "LRS"
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars('objectstorage', meta.args),
           outputs: `output "bucket_name" { value = azurerm_storage_account.store.name } `
@@ -5965,7 +5989,7 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_postgresql_server" "db" {
     name = "\${var.project_name}-db"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
 
     sku_name = "GP_Gen5_2"
 
@@ -5978,11 +6002,6 @@ resource "azurerm_resource_group" "rg" {
     administrator_login_password = "ChangeMe123!"
     version = "11"
     ssl_enforcement_enabled = true
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars('relationaldatabase', meta.args),
           outputs: `output "endpoint" { value = azurerm_postgresql_server.db.fqdn } `
@@ -5996,26 +6015,21 @@ resource "azurerm_resource_group" "rg" {
     name = "\${var.project_name}-vnet"
     address_space = ["10.0.0.0/16"]
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
   }
 
 resource "azurerm_subnet" "public" {
     name = "public"
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     virtual_network_name = azurerm_virtual_network.main.name
     address_prefixes = ["10.0.1.0/24"]
   }
 
 resource "azurerm_subnet" "private" {
     name = "private"
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     virtual_network_name = azurerm_virtual_network.main.name
     address_prefixes = ["10.0.2.0/24"]
-  }
-
-resource "azurerm_resource_group" "rg" {
-    name = "\${var.project_name}-rg"
-    location = var.location
   } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "vpc_id" { value = azurerm_virtual_network.main.id }
@@ -6028,7 +6042,7 @@ output "private_subnet_ids" { value = [azurerm_subnet.private.id] } `
           main: `resource "azurerm_redis_cache" "cache" {
     name = "\${var.project_name}-cache"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     capacity = 1
     family = "C"
     sku_name = "Basic"
@@ -6052,7 +6066,7 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_application_insights" "monitoring" {
     name = "\${var.project_name}-insights"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     application_type = "web"
   }
 
@@ -6069,7 +6083,7 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_log_analytics_workspace" "logging" {
     name = "\${var.project_name}-logs"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     sku = "PerGB2018"
     retention_in_days = 30
   }
@@ -6086,7 +6100,7 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_public_ip" "lb" {
     name = "\${var.project_name}-lb-ip"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     allocation_method = "Static"
     sku = "Standard"
   }
@@ -6094,7 +6108,7 @@ resource "azurerm_resource_group" "rg" {
 resource "azurerm_lb" "main" {
     name = "\${var.project_name}-lb"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     sku = "Standard"
 
   frontend_ip_configuration {
@@ -6116,7 +6130,7 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_api_management" "api" {
     name = "\${var.project_name}-apim"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     publisher_name = "Cloudiverse"
     publisher_email = "admin@cloudiverse.com"
     sku_name = "Consumption_0"
@@ -6135,7 +6149,7 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_cdn_profile" "cdn" {
     name = "\${var.project_name}-cdn"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
     sku = "Standard_Microsoft"
   }
 
@@ -6143,7 +6157,7 @@ resource "azurerm_cdn_endpoint" "endpoint" {
     name = "\${var.project_name}-endpoint"
     profile_name = azurerm_cdn_profile.cdn.name
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
 
   origin {
       name = "default-origin"
@@ -6165,7 +6179,7 @@ resource "azurerm_resource_group" "rg" {
           main: `resource "azurerm_user_assigned_identity" "auth" {
     name = "\${var.project_name}-identity"
     location = var.location
-    resource_group_name = azurerm_resource_group.rg.name
+    resource_group_name = var.resource_group_name
   }
 
 resource "azurerm_resource_group" "rg" {
