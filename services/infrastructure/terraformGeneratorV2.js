@@ -2442,18 +2442,8 @@ provider "google-beta" {
 }
 
 provider "azurerm" {
-  subscription_id = var.subscription_id
-  tenant_id       = var.tenant_id
-  client_id       = var.client_id
-  client_secret   = var.client_secret
-  
-  skip_provider_registration = true
-  
-  features {
-    resource_group {
-      prevent_deletion_if_contains_resources = true
-    }
-  }
+  features {}
+  # Credentials are sourced from ARM_SUBSCRIPTION_ID, ARM_TENANT_ID, ARM_ACCESS_TOKEN env vars
 }
 `;
   }
@@ -2586,87 +2576,81 @@ variable "subnetwork_name" {
 
       `;
   } else if (provider === 'azure') {
-
-    variables += `variable "location" {
-        description = "Azure location"
-        type = string
-      }
-
+    variables += `
+# Azure Variables
 variable "subscription_id" {
-        description = "Azure Subscription ID"
-        type = string
-      }
+  description = "Azure Subscription ID"
+  type        = string
+}
 
 variable "tenant_id" {
-        description = "Azure Tenant ID"
-        type = string
-      }
+  description = "Azure Tenant ID"
+  type        = string
+}
 
-variable "client_id" {
-        description = "Azure Client ID"
-        type = string
-      }
+# Note: client_id and client_secret are handled via env vars (ARM_*)
 
-variable "client_secret" {
-        description = "Azure Client Secret"
-        type = string
-        sensitive = true
-      }
+variable "location" {
+  description = "Azure region"
+  type        = string
+  default     = "Central India"
+}
+`;
+  }
 
-
-
+  variables += `
 variable "project_name" {
-        description = "Project name (used for resource naming)"
-        type = string
-      }
+    description = "Project name (used for resource naming)"
+    type = string
+  }
 
 variable "environment" {
-        description = "Environment (dev, staging, production)"
-        type = string
+    description = "Environment (dev, staging, production)"
+    type = string
   default     = "production"
-      }
+  }
 
 variable "resource_group_name" {
-        description = "Azure resource group name"
-        type = string
+    description = "Azure resource group name"
+    type = string
         default     = ""
-      }
-
-      `;
   }
+
+  `;
+
 
   // NFR-driven variables
   variables += `# NFR - Driven Variables
 variable "encryption_at_rest" {
-        description = "Enable encryption at rest for storage services"
-        type = bool
+    description = "Enable encryption at rest for storage services"
+    type = bool
   default     = true
-      }
+  }
 
 variable "backup_retention_days" {
-        description = "Number of days to retain backups"
-        type = number
+    description = "Number of days to retain backups"
+    type = number
   default     = 7
-      }
+  }
 
 variable "deletion_protection" {
-        description = "Enable deletion protection for stateful resources"
-        type = bool
+    description = "Enable deletion protection for stateful resources"
+    type = bool
   default     = true
-      }
+  }
 
 variable "multi_az" {
-        description = "Enable multi-AZ deployment for high availability"
-        type = bool
+    description = "Enable multi-AZ deployment for high availability"
+    type = bool
   default     = false
-      }
+  }
 
 variable "monitoring_enabled" {
-        description = "Enable monitoring and logging"
-        type = bool
+    description = "Enable monitoring and logging"
+    type = bool
   default     = true
-      }
-      `;
+  }
+  `;
 
   return variables;
 }
@@ -2683,7 +2667,7 @@ function generateTfvars(provider, region, projectName, sizing = {}, connectionDa
   if (provider === 'aws') {
     // 🔥 HARD GUARD: Fail if region is malformed (User Requirement)
     if (!/^[a-z]{2}-[a-z]+-\d$/.test(region)) {
-      throw new Error(`[FATAL] Invalid AWS region passed to Terraform generator: ${region}`);
+      throw new Error(`[FATAL] Invalid AWS region passed to Terraform generator: ${region} `);
     }
 
     let normalizedRegion = region;
@@ -2699,7 +2683,7 @@ function generateTfvars(provider, region, projectName, sizing = {}, connectionDa
 
       const ROLE_NAME = "cloudiverse-deploy-role";
       const correctRoleArn = accountId ?
-        `arn:aws:iam::${accountId}:role/${ROLE_NAME}` :
+        `arn: aws: iam::${accountId}: role / ${ROLE_NAME} ` :
         connectionData.role_arn;
 
       tfvars += `role_arn = "${correctRoleArn}"\n`;
@@ -2724,11 +2708,11 @@ function generateTfvars(provider, region, projectName, sizing = {}, connectionDa
   if (sizing) {
     tfvars += `# Sizing & Cost Drivers\n`;
     if (sizing.instance_class) tfvars += `db_instance_class = "${sizing.instance_class}"\n`;
-    if (sizing.storage_gb) tfvars += `db_allocated_storage = ${sizing.storage_gb}\n`;
-    if (sizing.container_cpu) tfvars += `container_cpu = ${sizing.container_cpu}\n`;
-    if (sizing.container_memory) tfvars += `container_memory = ${sizing.container_memory}\n`;
-    if (sizing.function_memory) tfvars += `function_memory = ${sizing.function_memory}\n`;
-    if (sizing.requests_per_month) tfvars += `estimated_requests = ${sizing.requests_per_month}\n`;
+    if (sizing.storage_gb) tfvars += `db_allocated_storage = ${sizing.storage_gb} \n`;
+    if (sizing.container_cpu) tfvars += `container_cpu = ${sizing.container_cpu} \n`;
+    if (sizing.container_memory) tfvars += `container_memory = ${sizing.container_memory} \n`;
+    if (sizing.function_memory) tfvars += `function_memory = ${sizing.function_memory} \n`;
+    if (sizing.requests_per_month) tfvars += `estimated_requests = ${sizing.requests_per_month} \n`;
   }
 
   // NFR-driven values (Defaults since requirements obj is not available in V2 generator yet)
@@ -2758,7 +2742,7 @@ function generateOutputsTf(provider, pattern, services) {
   // Helper to check for service presence (handling snake_case mismatch)
   const hasService = (s) => services.includes(s) || services.includes(s.replace(/_/g, '')) || services.includes(s.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase());
 
-  if (hasService('computecontainer') || hasService('compute_container')) {
+  if (hasService('computecontainer') || hasService('compute_container') || hasService('appcompute') || hasService('app_compute')) {
     targetType = "CONTAINER_SERVICE";
   } else if (hasService('objectstorage') || hasService('object_storage')) {
     // Relaxed: Don't require CDN if it's disabled. 
@@ -2770,25 +2754,26 @@ function generateOutputsTf(provider, pattern, services) {
   }
 
   outputs += `output "deployment_target" {
-  description = "The authoritative deployment contract. Deploy service MUST read this."
-  value = {
-    type     = "${targetType}"
+    description = "The authoritative deployment contract. Deploy service MUST read this."
+    value = {
+      type     = "${targetType}"
     provider = "${provider}"
     region   = var.${provider === 'azure' ? 'location' : 'region'}
 
     static = {
       bucket_name   = ${hasService('objectstorage') ? 'try(module.object_storage.bucket_name, null)' : 'null'}
-      bucket_region = var.${provider === 'azure' ? 'location' : 'region'}
-      cdn_domain    = ${hasService('cdn') ? 'try(module.cdn.endpoint, null)' : 'null'}
+    bucket_region = var.${provider === 'azure' ? 'location' : 'region'
     }
+  cdn_domain = ${hasService('cdn') ? 'try(module.cdn.endpoint, null)' : 'null'}
+}
 
-    container = {
-      cluster_name        = ${services.includes('computecontainer') ? 'try(module.app_container.cluster_name, null)' : 'null'}
-      service_name        = ${services.includes('computecontainer') ? 'try(module.app_container.service_name, null)' : 'null'}
-      container_app_name  = ${services.includes('computecontainer') ? 'try(module.app_container.container_app_name, null)' : 'null'}
-      resource_group_name = ${services.includes('computecontainer') ? 'try(module.app_container.resource_group_name, null)' : 'null'}
-      registry_url        = ${services.includes('computecontainer') ? 'try(module.app_container.ecr_url, module.app_container.acr_login_server, null)' : 'null'}
-      build_project_name  = ${services.includes('computecontainer') ? 'try(module.app_container.codebuild_name, null)' : 'null'}
+container = {
+  cluster_name        = ${hasService('computecontainer') ? 'try(module.app_container.cluster_name, null)' : hasService('appcompute') ? 'try(module.app_compute.cluster_name, null)' : 'null'}
+service_name = ${hasService('computecontainer') ? 'try(module.app_container.service_name, null)' : hasService('appcompute') ? 'try(module.app_compute.service_name, null)' : 'null'}
+container_app_name = ${hasService('computecontainer') ? 'try(module.app_container.container_app_name, null)' : hasService('appcompute') ? 'try(module.app_compute.container_app_name, null)' : 'null'}
+resource_group_name = ${hasService('computecontainer') ? 'try(module.app_container.resource_group_name, null)' : hasService('appcompute') ? 'try(module.app_compute.resource_group_name, null)' : 'null'}
+registry_url = ${hasService('computecontainer') ? 'try(module.app_container.ecr_url, module.app_container.acr_login_server, null)' : hasService('appcompute') ? 'try(module.app_compute.ecr_url, module.app_compute.acr_login_server, null)' : 'null'}
+build_project_name = ${hasService('computecontainer') ? 'try(module.app_container.codebuild_name, null)' : hasService('appcompute') ? 'try(module.app_compute.codebuild_name, null)' : 'null'}
     }
   }
 }
@@ -2894,22 +2879,23 @@ function generateOutputsTf(provider, pattern, services) {
       if (conf) {
         const moduleName = getModuleName(service);
         if (service === 'cdn') {
-          outputs += `output "cdn_endpoint" { value = module.cdn.endpoint }\noutput "cdn_id" { value = module.cdn.id }\n\n`;
+          outputs += `output "cdn_endpoint" { value = module.cdn.endpoint } \noutput "cdn_id" { value = module.cdn.id } \n\n`;
         } else if (conf.fields) {
-          outputs += `output "${conf.name}" {\n  description = "${conf.desc}"\n  value = {\n`;
+          outputs += `output "${conf.name}" {
+  \n  description = "${conf.desc}"\n  value = { \n`;
           Object.entries(conf.fields).forEach(([key, fields]) => {
             // Handle array of fallback fields
             if (Array.isArray(fields)) {
               const valueExpr = fields.map(f => `try(module.${moduleName}.${f}, null)`).join(', ');
-              outputs += `    ${key} = coalesce(${valueExpr}, null)\n`;
+              outputs += `    ${key} = coalesce(${valueExpr}, null) \n`;
             } else {
               // Direct mapping
-              outputs += `    ${key} = module.${moduleName}.${fields}\n`;
+              outputs += `    ${key} = module.${moduleName}.${fields} \n`;
             }
           });
-          outputs += `  }\n}\n\n`;
+          outputs += `  } \n}\n\n`;
         } else {
-          outputs += `output "${conf.name}" {\n  description = "${conf.desc}"\n  value       = module.${moduleName}.${conf.field}\n  ${conf.sensitive ? 'sensitive = true' : ''}\n}\n\n`;
+          outputs += `output "${conf.name}" { \n  description = "${conf.desc}"\n  value = module.${moduleName}.${conf.field} \n  ${conf.sensitive ? 'sensitive = true' : ''} \n } \n\n`;
         }
       }
     });
@@ -2917,12 +2903,12 @@ function generateOutputsTf(provider, pattern, services) {
 
   // Common aliases for Phase 2 code
   if (services.includes('cdn')) {
-    outputs += `output "cloudfront_distribution_id" { value = module.cdn.id }\n\n`;
+    outputs += `output "cloudfront_distribution_id" { value = module.cdn.id } \n\n`;
   }
 
   if (services.includes('networking') || services.includes('vpcnetworking')) {
     const nwModule = getModuleName(services.includes('networking') ? 'networking' : 'vpcnetworking');
-    outputs += `output "vpc_id" { value = module.${nwModule}.vpc_id }\n\n`;
+    outputs += `output "vpc_id" { value = module.${nwModule}.vpc_id } \n\n`;
   }
 
   return outputs;
@@ -2935,7 +2921,7 @@ function generateMainTf(provider, pattern, services) {
   const pLower = String(provider).toLowerCase();
   const regionLabel = regionArgMap[pLower] || 'region';
 
-  console.log(`[TF GENERATOR] generateMainTf: provider=${provider}, regionLabel=${regionLabel}, services=${services.length}`);
+  console.log(`[TF GENERATOR]generateMainTf: provider = ${provider}, regionLabel = ${regionLabel}, services = ${services.length} `);
 
   let mainTf = `# Main Terraform Configuration
 # Pattern: ${pattern}
@@ -2946,7 +2932,7 @@ function generateMainTf(provider, pattern, services) {
 #
 # Generated with regionLabel: ${regionLabel}
 
-      `;
+`;
 
   // 1. Networking Module (Explicit or Implicit)
   // Check if networking is explicitly requested, else might need default
@@ -2966,11 +2952,11 @@ function generateMainTf(provider, pattern, services) {
       const meta = SERVICE_METADATA[service] || {};
 
       mainTf += `module "${moduleName}" {
-    source = "./modules/${moduleName}"
+  source = "./modules/${moduleName}"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    ${pLower === 'azure' ? 'resource_group_name = var.resource_group_name' : ''}\n`;
+    ${pLower === 'azure' ? 'resource_group_name = var.resource_group_name' : ''} \n`;
 
       // 🔥 FIX: Inject CDN Dependency (Intelligent Origin + OAC Variables)
       if (moduleName === 'cdn') {
@@ -2981,22 +2967,22 @@ function generateMainTf(provider, pattern, services) {
         const hasLoadBalancer = serviceList.includes('loadbalancer') || serviceList.includes('load_balancer');
         const hasComputeContainer = hasContainer; // Alias for backward compatibility in logic below
 
-        console.log(`[TF DEBUG] Generating CDN module. hasObjectStorage=\${hasObjectStorage}, hasContainer=\${hasContainer}, hasLoadBalancer=\${hasLoadBalancer}, services=\${JSON.stringify(serviceList)}`);
+        console.log(`[TF DEBUG] Generating CDN module.hasObjectStorage =\${ hasObjectStorage }, hasContainer =\${ hasContainer }, hasLoadBalancer =\${ hasLoadBalancer }, services =\${ JSON.stringify(serviceList) } `);
 
         if (hasObjectStorage) {
           // Static site OR Container with Asset Storage: Always prefer S3 bucket origin if available
           mainTf += `    bucket_domain_name = module.object_storage.bucket_domain_name\n`;
-          mainTf += `    bucket_name        = module.object_storage.bucket_name\n`;
-          mainTf += `    bucket_arn         = module.object_storage.bucket_arn\n`;
+          mainTf += `    bucket_name = module.object_storage.bucket_name\n`;
+          mainTf += `    bucket_arn = module.object_storage.bucket_arn\n`;
         } else if (hasLoadBalancer) {
           mainTf += `    bucket_domain_name = module.load_balancer.dns_name\n`;
-          mainTf += `    bucket_name        = ""\n`;
-          mainTf += `    bucket_arn         = ""\n`;
+          mainTf += `    bucket_name = ""\n`;
+          mainTf += `    bucket_arn = ""\n`;
         } else if (hasComputeContainer && pLower !== 'aws') {
           // GCP/Azure containers have stable URLs directly
           mainTf += `    bucket_domain_name = module.app_container.url\n`;
-          mainTf += `    bucket_name        = ""\n`;
-          mainTf += `    bucket_arn         = ""\n`;
+          mainTf += `    bucket_name = ""\n`;
+          mainTf += `    bucket_arn = ""\n`;
         } else {
           // Fallback or skip if no clear origin
           mainTf += `    # bucket_domain_name injection skipped: No objectstorage or loadbalancer found\n`;
@@ -3045,11 +3031,11 @@ function generateMainTf(provider, pattern, services) {
         envVarsBlock += '        }';
 
         if (hasEnvs && pLower === 'aws') {
-          mainTf += `    extra_env_vars = ${envVarsBlock}\n`;
+          mainTf += `    extra_env_vars = ${envVarsBlock} \n`;
         }
       }
 
-      mainTf += `  }\n\n`;
+      mainTf += `  } \n\n`;
     });
   }
 
@@ -3070,363 +3056,363 @@ function getModuleConfig(service, provider) {
 
   const moduleMap = {
     cdn: `module "cdn" {
-    source = "./modules/cdn"
+  source = "./modules/cdn"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     apigateway: `module "apigateway" {
-    source = "./modules/apigateway"
+  source = "./modules/apigateway"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     computeserverless: `module "serverless_compute" {
-    source = "./modules/serverless_compute"
+  source = "./modules/serverless_compute"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     appcompute: `module "app_compute" {
-    source = "./modules/app_compute"
+  source = "./modules/app_compute"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    vpc_id = module.networking.vpc_id
-    private_subnet_ids = module.networking.private_subnet_ids
-  } `,
+  vpc_id = module.networking.vpc_id
+  private_subnet_ids = module.networking.private_subnet_ids
+} `,
 
     relationaldatabase: `module "relational_db" {
-    source = "./modules/relational_db"
+  source = "./modules/relational_db"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    vpc_id = module.networking.vpc_id
-    private_subnet_ids = module.networking.private_subnet_ids
-    encryption_at_rest = var.encryption_at_rest
-    backup_retention_days = var.backup_retention_days
-    deletion_protection = var.deletion_protection
-    multi_az = var.multi_az
-  } `,
+  vpc_id = module.networking.vpc_id
+  private_subnet_ids = module.networking.private_subnet_ids
+  encryption_at_rest = var.encryption_at_rest
+  backup_retention_days = var.backup_retention_days
+  deletion_protection = var.deletion_protection
+  multi_az = var.multi_az
+} `,
 
     analyticaldatabase: `module "analytical_db" {
-    source = "./modules/analytical_db"
+  source = "./modules/analytical_db"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    encryption_at_rest = var.encryption_at_rest
-  } `,
+  encryption_at_rest = var.encryption_at_rest
+} `,
 
     cache: `module "cache" {
-    source = "./modules/cache"
+  source = "./modules/cache"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    vpc_id = module.networking.vpc_id
-    private_subnet_ids = module.networking.private_subnet_ids
-  } `,
+  vpc_id = module.networking.vpc_id
+  private_subnet_ids = module.networking.private_subnet_ids
+} `,
 
     messagequeue: `module "message_queue" {
-    source = "./modules/mq"
+  source = "./modules/mq"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     objectstorage: `module "object_storage" {
-    source = "./modules/object_storage"
+  source = "./modules/object_storage"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    encryption_at_rest = var.encryption_at_rest
-  } `,
+  encryption_at_rest = var.encryption_at_rest
+} `,
 
     identityauth: `module "auth" {
-    source = "./modules/auth"
+  source = "./modules/auth"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     loadbalancer: `module "load_balancer" {
-    source = "./modules/load_balancer"
+  source = "./modules/load_balancer"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    vpc_id = module.networking.vpc_id
-    public_subnet_ids = module.networking.public_subnet_ids
-  } `,
+  vpc_id = module.networking.vpc_id
+  public_subnet_ids = module.networking.public_subnet_ids
+} `,
 
     monitoring: `module "monitoring" {
-    source = "./modules/monitoring"
+  source = "./modules/monitoring"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    monitoring_enabled = var.monitoring_enabled
-  } `,
+  monitoring_enabled = var.monitoring_enabled
+} `,
 
     logging: `module "logging" {
-    source = "./modules/logging"
+  source = "./modules/logging"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     mlinferenceservice: `module "ml_inference" {
-    source = "./modules/ml_inference"
+  source = "./modules/ml_inference"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    vpc_id = module.networking.vpc_id
-    private_subnet_ids = module.networking.private_subnet_ids
-  } `,
+  vpc_id = module.networking.vpc_id
+  private_subnet_ids = module.networking.private_subnet_ids
+} `,
 
     mlinference: `module "ml_inference" {
-    source = "./modules/ml_inference"
+  source = "./modules/ml_inference"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    vpc_id = module.networking.vpc_id
-    private_subnet_ids = module.networking.private_subnet_ids
-  } `,
+  vpc_id = module.networking.vpc_id
+  private_subnet_ids = module.networking.private_subnet_ids
+} `,
 
     mltraining: `module "ml_training" {
-    source = "./modules/ml_training"
+  source = "./modules/ml_training"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    vpc_id = module.networking.vpc_id
-    private_subnet_ids = module.networking.private_subnet_ids
-  } `,
+  vpc_id = module.networking.vpc_id
+  private_subnet_ids = module.networking.private_subnet_ids
+} `,
 
     // 🔥 AWS Missing Modules Implementation
     searchengine: `module "search" {
-    source = "./modules/search"
-    project_name = var.project_name
+  source = "./modules/search"
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    vpc_id = module.networking.vpc_id
-    private_subnet_ids = module.networking.private_subnet_ids
-    encryption_at_rest = var.encryption_at_rest
-  } `,
+  vpc_id = module.networking.vpc_id
+  private_subnet_ids = module.networking.private_subnet_ids
+  encryption_at_rest = var.encryption_at_rest
+} `,
 
     websocketgateway: `module "websocket" {
-    source = "./modules/websocket"
-    project_name = var.project_name
+  source = "./modules/websocket"
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    vpc_id = module.networking.vpc_id
-    private_subnet_ids = module.networking.private_subnet_ids
-  } `,
+  vpc_id = module.networking.vpc_id
+  private_subnet_ids = module.networking.private_subnet_ids
+} `,
 
     modelregistry: `module "model_registry" {
-    source = "./modules/model_registry"
-    project_name = var.project_name
+  source = "./modules/model_registry"
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     experimenttracking: `module "experiment_tracking" {
-    source = "./modules/experiment_tracking"
-    project_name = var.project_name
+  source = "./modules/experiment_tracking"
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     mlpipelineorchestration: `module "ml_pipeline" {
-    source = "./modules/ml_pipeline"
-    project_name = var.project_name
+  source = "./modules/ml_pipeline"
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     globalloadbalancer: `module "global_lb" {
-    source = "./modules/global_lb"
-    project_name = var.project_name
+  source = "./modules/global_lb"
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     servicediscovery: `module "service_discovery" {
-    source = "./modules/service_discovery"
-    project_name = var.project_name
+  source = "./modules/service_discovery"
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    vpc_id = module.networking.vpc_id
-  } `,
+  vpc_id = module.networking.vpc_id
+} `,
 
     servicemesh: `module "service_mesh" {
-    source = "./modules/service_mesh"
-    project_name = var.project_name
+  source = "./modules/service_mesh"
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    vpc_id = module.networking.vpc_id
-  } `,
+  vpc_id = module.networking.vpc_id
+} `,
 
     batchcompute: `module "batch_compute" {
-    source = "./modules/batch_compute"
+  source = "./modules/batch_compute"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     websocketgateway: `module "websocket" {
-    source = "./modules/websocket"
+  source = "./modules/websocket"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     // 🔥 FIX: Added missing Critical Services
     computecontainer: `module "app_container" {
-    source = "./modules/compute_container"
+  source = "./modules/compute_container"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    vpc_id = module.networking.vpc_id
-    private_subnet_ids = module.networking.private_subnet_ids
+  vpc_id = module.networking.vpc_id
+  private_subnet_ids = module.networking.private_subnet_ids
   # Sizing variables injected by main generator
-  } `,
+} `,
 
     computevm: `module "vm_compute" {
-    source = "./modules/vm_compute"
+  source = "./modules/vm_compute"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    vpc_id = module.networking.vpc_id
-    private_subnet_ids = module.networking.private_subnet_ids
-  } `,
+  vpc_id = module.networking.vpc_id
+  private_subnet_ids = module.networking.private_subnet_ids
+} `,
 
     nosqldatabase: `module "nosql_db" {
-    source = "./modules/nosql_db"
+  source = "./modules/nosql_db"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     blockstorage: `module "block_storage" {
-    source = "./modules/block_storage"
+  source = "./modules/block_storage"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     secretsmanager: `module "secrets" {
-    source = "./modules/secrets_manager"
+  source = "./modules/secrets_manager"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     dns: `module "dns" {
-    source = "./modules/dns"
+  source = "./modules/dns"
 
-    project_name = var.project_name
-  } `,
+  project_name = var.project_name
+} `,
 
     globalloadbalancer: `module "global_lb" {
-    source = "./modules/global_lb"
+  source = "./modules/global_lb"
 
-    project_name = var.project_name
-  } `,
+  project_name = var.project_name
+} `,
 
     waf: `module "waf" {
-    source = "./modules/waf"
+  source = "./modules/waf"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     secretsmanagement: `module "secrets" {
-    source = "./modules/secrets"
+  source = "./modules/secrets"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     block_storage: `module "block_storage" {
-    source = "./modules/block_storage"
+  source = "./modules/block_storage"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     eventbus: `module "event_bus" {
-    source = "./modules/event_bus"
+  source = "./modules/event_bus"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     paymentgateway: `module "payment_gateway" {
-    source = "./modules/payment_gateway"
+  source = "./modules/payment_gateway"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     cdn: `module "cdn" {
-    source = "./modules/cdn"
+  source = "./modules/cdn"
 
-    project_name       = var.project_name
+  project_name = var.project_name
     ${regionLabel}     = var.${regionLabel}
-    bucket_domain_name = module.object_storage.bucket_domain_name
-    bucket_name        = module.object_storage.bucket_name
-    bucket_arn         = module.object_storage.bucket_arn
-  } `,
+  bucket_domain_name = module.object_storage.bucket_domain_name
+  bucket_name = module.object_storage.bucket_name
+  bucket_arn = module.object_storage.bucket_arn
+} `,
 
     contentdeliverynetwork: `module "cdn" {
-    source = "./modules/cdn"
+  source = "./modules/cdn"
 
-    project_name       = var.project_name
+  project_name = var.project_name
     ${regionLabel}     = var.${regionLabel}
-    bucket_domain_name = module.object_storage.bucket_domain_name
-    bucket_name        = module.object_storage.bucket_name
-    bucket_arn         = module.object_storage.bucket_arn
-  } `,
+  bucket_domain_name = module.object_storage.bucket_domain_name
+  bucket_name = module.object_storage.bucket_name
+  bucket_arn = module.object_storage.bucket_arn
+} `,
 
     cloudfront: `module "cdn" {
-    source = "./modules/cdn"
+  source = "./modules/cdn"
 
-    project_name       = var.project_name
+  project_name = var.project_name
     ${regionLabel}     = var.${regionLabel}
-    bucket_domain_name = module.object_storage.bucket_domain_name
-    bucket_name        = module.object_storage.bucket_name
-    bucket_arn         = module.object_storage.bucket_arn
-  } `,
+  bucket_domain_name = module.object_storage.bucket_domain_name
+  bucket_name = module.object_storage.bucket_name
+  bucket_arn = module.object_storage.bucket_arn
+} `,
 
     // 🔥 FIX: Ensure VPC services map to 'networking' module name for cross-module referencing
     vpc: `module "networking" {
-    source = "./modules/networking"
+  source = "./modules/networking"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     vpcnetworking: `module "networking" {
-    source = "./modules/networking"
+  source = "./modules/networking"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     networking: `module "networking" {
-    source = "./modules/networking"
+  source = "./modules/networking"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `
+} `
   };
 
   // 🔥 HARD GUARD: Bypass map lookup for CDN to ensure arguments are passed (including OAC variables)
   if (service === 'cdn' || service === 'contentdeliverynetwork' || service === 'cloudfront') {
     return `module "cdn" {
-    source = "./modules/cdn"
+  source = "./modules/cdn"
 
-    project_name       = var.project_name
+  project_name = var.project_name
     ${regionLabel}     = var.${regionLabel}
-    bucket_domain_name = module.object_storage.bucket_domain_name
-    bucket_name        = module.object_storage.bucket_name
-    bucket_arn         = module.object_storage.bucket_arn
-  }`;
+  bucket_domain_name = module.object_storage.bucket_domain_name
+  bucket_name = module.object_storage.bucket_name
+  bucket_arn = module.object_storage.bucket_arn
+} `;
   }
 
-  return moduleMap[service] || `module "${service}" { source = "./modules/${service}" project_name = var.project_name ${regionLabel} = var.${regionLabel} }`;
+  return moduleMap[service] || `module "${service}" { source = "./modules/${service}" project_name = var.project_name ${regionLabel} = var.${regionLabel} } `;
 }
 
 /**
@@ -3436,22 +3422,22 @@ function generateReadme(projectName, provider, pattern, services) {
   return `# ${projectName} - Terraform Infrastructure
 
 ## Architecture Pattern
-    ** ${pattern}**
+  ** ${pattern}**
 
 ## Cloud Provider
-    ** ${provider.toUpperCase()}**
+  ** ${provider.toUpperCase()}**
 
 ## Services
 ${services.map(s => `- ${s}`).join('\n')}
 
 ## Prerequisites
-    - Terraform >= 1.0
-    - ${provider === 'aws' ? 'AWS CLI configured with credentials' : provider === 'gcp' ? 'GCP CLI (gcloud) authenticated' : 'Azure CLI logged in'}
+  - Terraform >= 1.0
+  - ${provider === 'aws' ? 'AWS CLI configured with credentials' : provider === 'gcp' ? 'GCP CLI (gcloud) authenticated' : 'Azure CLI logged in'}
 
 ## Deployment Instructions
 
 ### 1. Review Configuration
-  Edit \`terraform.tfvars\` to set your project-specific values:
+Edit \`terraform.tfvars\` to set your project-specific values:
 \`\`\`hcl
 ${provider === 'gcp' ? 'project_id = "your-gcp-project-id"' : ''}
 project_name = "${projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')}"

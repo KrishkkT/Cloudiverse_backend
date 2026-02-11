@@ -8,10 +8,25 @@
  */
 
 const { STSClient, AssumeRoleCommand } = require("@aws-sdk/client-sts");
+const msal = require('@azure/msal-node');
 const fs = require('fs').promises;
 const path = require('path');
 
 class CredentialProvider {
+
+    constructor() {
+        // Initialize MSAL Client for Azure Token Refresh
+        if (process.env.AZURE_CLIENT_ID && process.env.AZURE_CLIENT_SECRET) {
+            this.msalConfig = {
+                auth: {
+                    clientId: process.env.AZURE_CLIENT_ID,
+                    clientSecret: process.env.AZURE_CLIENT_SECRET,
+                    authority: "https://login.microsoftonline.com/common"
+                }
+            };
+            this.cca = new msal.ConfidentialClientApplication(this.msalConfig);
+        }
+    }
 
     /**
      * Get credentials for Terraform execution based on provider
@@ -207,13 +222,47 @@ class CredentialProvider {
             envVars.ARM_SUBSCRIPTION_ID = connectionData.credentials.subscription_id || envVars.ARM_SUBSCRIPTION_ID;
             console.log('[CREDENTIAL] Using Azure Service Principal credentials');
         }
-        // Fallback: Environment variables or User Access Token
+        // DELEGATED AUTH: Use User Access Token (with Auto-Refresh)
+        else if (connectionData.tokens?.refreshToken || connectionData.tokens?.refresh_token) {
+            try {
+                const refreshToken = connectionData.tokens.refreshToken || connectionData.tokens.refresh_token;
+                console.log('[CREDENTIAL] Refreshing Azure Access Token for delegated verification...');
+
+                const response = await this.cca.acquireTokenByRefreshToken({
+                    refreshToken: refreshToken,
+                    scopes: ["https://management.azure.com/user_impersonation", "User.Read"]
+                });
+
+                if (response && response.accessToken) {
+                    envVars.ARM_ACCESS_TOKEN = response.accessToken;
+                    console.log('[CREDENTIAL] ✅ Azure Token Refreshed Successfully');
+
+                    // CRITICAL: Unset CLIENT_SECRET to force Terraform to use the ACCESS_TOKEN
+                    delete envVars.ARM_CLIENT_SECRET;
+                } else {
+                    throw new Error("Failed to refresh token: No access token in response");
+                }
+            } catch (refreshErr) {
+                console.warn(`[CREDENTIAL] ⚠️ Token Refresh Failed: ${refreshErr.message}`);
+                // Fallback to existing access token if available (might still work if not expired)
+                if (connectionData.tokens.accessToken) {
+                    envVars.ARM_ACCESS_TOKEN = connectionData.tokens.accessToken;
+                    delete envVars.ARM_CLIENT_SECRET;
+                    console.log('[CREDENTIAL] Using existing Azure Access Token (Fallback)');
+                }
+            }
+        }
+        // Fallback: Backend Identity (Only if no user credentials found)
         else if (process.env.AZURE_CLIENT_SECRET) {
             envVars.ARM_CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET;
-        } else if (connectionData.tokens?.accessToken) {
+            console.log('[CREDENTIAL] Using Backend Service Principal (Fallback)');
+        }
+
+        else if (connectionData.tokens?.accessToken) {
             // Use the user's access token via the standard ARM_ACCESS_TOKEN env var
             envVars.ARM_ACCESS_TOKEN = connectionData.tokens.accessToken;
-            console.log('[CREDENTIAL] Using Azure User Access Token');
+            delete envVars.ARM_CLIENT_SECRET;
+            console.log('[CREDENTIAL] Using Azure User Access Token (No Refresh Token available)');
         }
 
         return { envVars, credentialFiles: [] };

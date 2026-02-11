@@ -432,20 +432,13 @@ class TerraformExecutor {
             );
             credentialFiles = credFiles;
 
-            // INJECT TF_VAR MAPPING FOR AZURE (Explicit Provider Flow)
+            // INJECT TF_VAR MAPPING FOR AZURE
             if (provider === 'azure') {
-                // Map ARM_* vars to standard TF_VAR_* vars
-                if (envVars.ARM_SUBSCRIPTION_ID) envVars.TF_VAR_subscription_id = envVars.ARM_SUBSCRIPTION_ID;
-                if (envVars.ARM_TENANT_ID) envVars.TF_VAR_tenant_id = envVars.ARM_TENANT_ID;
-                if (envVars.ARM_CLIENT_ID) envVars.TF_VAR_client_id = envVars.ARM_CLIENT_ID;
-                if (envVars.ARM_CLIENT_SECRET) envVars.TF_VAR_client_secret = envVars.ARM_CLIENT_SECRET;
-
-                // Inject Resource Group Name (Isolation)
                 // Naming convention: rg-cldv-ws-<workspace_id>
                 const rgName = `rg-cldv-ws-${workspaceId}`;
                 envVars.TF_VAR_resource_group_name = rgName;
 
-                this.addLog(jobId, `Injected Azure credentials & Resource Group: ${rgName}`, 'INFO');
+                this.addLog(jobId, `Injected Azure Resource Group: ${rgName}`, 'INFO');
             }
 
             this.addLog(jobId, 'Credentials obtained successfully', 'SUCCESS');
