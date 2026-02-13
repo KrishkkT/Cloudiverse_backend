@@ -313,14 +313,23 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
 
     const projectFolder = {};
 
+    // 3. CDN Fallback Logic (REVERTED - Always Enforce CDN)
+    const options = {};
+    if (providerLower === 'aws') {
+        // We log capabilities but NO LONGER fallback. User must contact AWS Support if AccessDenied.
+        const capabilities = infraSpec.connection?.capabilities || {};
+        console.log(`[TERRAFORM DEBUG] Capabilities: ${JSON.stringify(capabilities)}`);
+    }
+
     // Generate root files
+    // NOTE: We use deployableServices (filtered) for generation to ensure consistency
     projectFolder['versions.tf'] = terraformGeneratorV2.generateVersionsTf(providerLower);
     projectFolder['providers.tf'] = terraformGeneratorV2.generateProvidersTf(providerLower, resolvedRegion);
-    projectFolder['variables.tf'] = terraformGeneratorV2.generateVariablesTf(providerLower, pattern, normalizedServices);
+    projectFolder['variables.tf'] = terraformGeneratorV2.generateVariablesTf(providerLower, pattern, deployableServices);
     projectFolder['terraform.tfvars'] = terraformGeneratorV2.generateTfvars(providerLower, resolvedRegion, projectName, infraSpec.sizing, infraSpec.connection);
-    projectFolder['main.tf'] = terraformGeneratorV2.generateMainTf(providerLower, pattern, normalizedServices);
-    projectFolder['outputs.tf'] = terraformGeneratorV2.generateOutputsTf(providerLower, pattern, normalizedServices);
-    projectFolder['README.md'] = terraformGeneratorV2.generateReadme(projectName, providerLower, pattern, normalizedServices);
+    projectFolder['main.tf'] = terraformGeneratorV2.generateMainTf(providerLower, pattern, deployableServices, options);
+    projectFolder['outputs.tf'] = terraformGeneratorV2.generateOutputsTf(providerLower, pattern, deployableServices);
+    projectFolder['README.md'] = terraformGeneratorV2.generateReadme(projectName, providerLower, pattern, deployableServices);
 
     // Generate modules
     projectFolder['modules'] = {};

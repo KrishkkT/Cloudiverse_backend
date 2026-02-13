@@ -466,13 +466,18 @@ class TerraformExecutor {
             // ─── STAGE 3: TERRAFORM INIT ────────────────────────────────────────────
             job.stage = 'init';
 
-            // 🔥 CLEANUP: Remove .terraform folder to prevent state poisoning from ~/.aws/config
+            // 🔥 CLEANUP: Remove .terraform folder and STATE to prevent state poisoning from ~/.aws/config or old runs
             const terraformDir = path.join(workDir, '.terraform');
             const terraformLock = path.join(workDir, '.terraform.lock.hcl');
+            const terraformState = path.join(workDir, 'terraform.tfstate');
+            const terraformStateBackup = path.join(workDir, 'terraform.tfstate.backup');
+
             try {
                 await fs.rm(terraformDir, { recursive: true, force: true });
                 await fs.rm(terraformLock, { force: true });
-                this.addLog(jobId, 'Cleaned previous Terraform state/cache', 'INFO');
+                await fs.rm(terraformState, { force: true });
+                await fs.rm(terraformStateBackup, { force: true });
+                this.addLog(jobId, 'Cleaned previous Terraform state/cache (fresh deployment forced)', 'INFO');
             } catch (e) {
                 // ignore
             }
@@ -679,6 +684,29 @@ class TerraformExecutor {
             this.addLog(jobId, '✅ Infrastructure destroyed successfully!', 'SUCCESS');
             job.status = 'completed';
             job.stage = 'finished';
+
+            // ─── RESET STATE IN DB ───────────────────────────────────────────────
+            try {
+                await pool.query(
+                    `UPDATE workspaces 
+                     SET state_json = state_json - 'infra_outputs',
+                         deployment_status = 'DESTROYED',
+                         deployment_history = COALESCE(deployment_history, '[]'::jsonb) || $2::jsonb
+                     WHERE id = $1`,
+                    [
+                        workspaceId,
+                        JSON.stringify([{
+                            action: 'TERRAFORM_DESTROY_SUCCESS',
+                            timestamp: new Date().toISOString(),
+                            job_id: jobId
+                        }])
+                    ]
+                );
+                this.addLog(jobId, 'Infrastructure state cleared from database.', 'SUCCESS');
+            } catch (dbErr) {
+                console.error("DB State Reset Error:", dbErr);
+                this.addLog(jobId, `Warning: Failed to clear state from DB: ${dbErr.message}`, 'WARN');
+            }
 
             // Cleanup workspace directory after successful destroy
             await this.cleanupWorkspace(workDir);

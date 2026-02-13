@@ -2497,16 +2497,7 @@ function generateVariablesTf(provider, pattern, services) {
         type = string
       }
 
-variable "project_name" {
-        description = "Project name (used for resource naming)"
-        type = string
-      }
 
-variable "environment" {
-        description = "Environment (dev, staging, production)"
-        type = string
-  default     = "production"
-      }
 
 variable "vpc_id" {
         description = "VPC ID for resources"
@@ -2551,16 +2542,7 @@ variable "region" {
         type = string
       }
 
-variable "project_name" {
-        description = "Project name (used for resource naming)"
-        type = string
-      }
 
-variable "environment" {
-        description = "Environment (dev, staging, production)"
-        type = string
-  default     = "production"
-      }
 
 variable "network_name" {
         description = "VPC network name"
@@ -2665,16 +2647,8 @@ function generateTfvars(provider, region, projectName, sizing = {}, connectionDa
     tfvars += `region = "${normalizedRegion}"\n`;
 
     if (connectionData && connectionData.role_arn) {
-      // FIX: Enforce Role ARN Name (CloudiverseDeployRole)
-      // Do not trust the name in the DB, only trust the Account ID.
-      let accountId = "";
-      const parts = connectionData.role_arn.split(':');
-      if (parts.length >= 5) accountId = parts[4];
-
-      const ROLE_NAME = "cloudiverse-deploy-role";
-      const correctRoleArn = accountId ?
-        `arn: aws: iam::${accountId}: role / ${ROLE_NAME} ` :
-        connectionData.role_arn;
+      // 🧠 FIX: Trust the Role ARN from connection data (Dynamic assignment)
+      const correctRoleArn = connectionData.role_arn;
 
       tfvars += `role_arn = "${correctRoleArn}"\n`;
       tfvars += `external_id = "${connectionData.external_id}"\n`;
@@ -2729,14 +2703,22 @@ function generateOutputsTf(provider, pattern, services) {
   // 1. Determine Deployment Target (Strict Contract)
   let targetType = "UNKNOWN";
 
-  // Helper to check for service presence (handling snake_case mismatch)
-  const hasService = (s) => services.includes(s) || services.includes(s.replace(/_/g, '')) || services.includes(s.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase());
+  // Normalize services for robust matching (lowercase alphanumeric only)
+  const normalize = (str) => String(str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const normalizedServices = services.map(normalize);
+  const hasService = (s) => normalizedServices.includes(normalize(s));
 
-  if (hasService('computecontainer') || hasService('compute_container') || hasService('appcompute') || hasService('app_compute')) {
-    targetType = "CONTAINER_SERVICE";
-  } else if (hasService('objectstorage') || hasService('object_storage')) {
-    // Relaxed: Don't require CDN if it's disabled. 
+  // Helper to get module reference name - consistent with generateMainTf
+  const getModRef = (s) => {
+    const modName = getModuleName(s);
+    return `module.${modName}`;
+  };
+
+  const p = String(pattern || '').toUpperCase();
+  if (p.includes('STATIC') || hasService('objectstorage') || hasService('cdn')) {
     targetType = "STATIC_STORAGE";
+  } else if (p.includes('CONTAINER') || p.includes('APP') || hasService('computecontainer') || hasService('appcompute')) {
+    targetType = "CONTAINER_SERVICE";
   } else if (hasService('computeserverless')) {
     targetType = "SERVERLESS_FUNCTION";
   } else if (hasService('computevm')) {
@@ -2744,31 +2726,37 @@ function generateOutputsTf(provider, pattern, services) {
   }
 
   outputs += `output "deployment_target" {
-      description = "The authoritative deployment contract. Deploy service MUST read this."
-      value = {
-        type     = "${targetType}"
+  description = "The authoritative deployment contract. Deploy service MUST read this."
+  value = {
+    type     = "${targetType}"
     provider = "${provider}"
     region   = var.${provider === 'azure' ? 'location' : 'region'}
 
-      static = {
-        bucket_name   = ${hasService('objectstorage') ? 'try(module.object_storage.bucket_name, null)' : 'null'}
-      bucket_region = var.${provider === 'azure' ? 'location' : 'region'
+    static = {
+      bucket_name   = ${hasService('objectstorage') ? `try(${getModRef('objectstorage')}.bucket_name, null)` : 'null'}
+      bucket_region = var.${provider === 'azure' ? 'location' : 'region'}
+      cdn_domain    = ${hasService('cdn') ? `try(${getModRef('cdn')}.endpoint, null)` : 'null'}
+      cdn_id        = ${hasService('cdn') ? `try(${getModRef('cdn')}.id, null)` : 'null'}
     }
-    cdn_domain = ${hasService('cdn') ? 'try(module.cdn.endpoint, null)' : 'null'}
-  }
 
-  container = {
-    cluster_name        = ${hasService('computecontainer') ? 'try(module.app_container.cluster_name, null)' : hasService('appcompute') ? 'try(module.app_compute.cluster_name, null)' : 'null'}
-  service_name = ${hasService('computecontainer') ? 'try(module.app_container.service_name, null)' : hasService('appcompute') ? 'try(module.app_compute.service_name, null)' : 'null'}
-  container_app_name = ${hasService('computecontainer') ? 'try(module.app_container.container_app_name, null)' : hasService('appcompute') ? 'try(module.app_compute.container_app_name, null)' : 'null'}
-  resource_group_name = ${hasService('computecontainer') ? 'try(module.app_container.resource_group_name, null)' : hasService('appcompute') ? 'try(module.app_compute.resource_group_name, null)' : 'null'}
-  registry_url = ${hasService('computecontainer') ? 'try(module.app_container.ecr_url, module.app_container.acr_login_server, null)' : hasService('appcompute') ? 'try(module.app_compute.ecr_url, module.app_compute.acr_login_server, null)' : 'null'}
-  build_project_name = ${hasService('computecontainer') ? 'try(module.app_container.codebuild_name, null)' : hasService('appcompute') ? 'try(module.app_compute.codebuild_name, null)' : 'null'}
-}
+    container = {
+      cluster_name        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.cluster_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.cluster_name, null)` : 'null'}
+      service_name        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.service_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.service_name, null)` : 'null'}
+      container_app_name  = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.container_app_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.container_app_name, null)` : 'null'}
+      resource_group_name = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.resource_group_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.resource_group_name, null)` : 'null'}
+      registry_url        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.ecr_url, ${getModRef('computecontainer')}.acr_login_server, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.ecr_url, ${getModRef('appcompute')}.acr_login_server, null)` : 'null'}
+      build_project_name  = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.codebuild_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.codebuild_name, null)` : 'null'}
+      build_bucket        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.build_bucket, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.build_bucket, null)` : 'null'}
+    }
   }
 }
-
 `;
+  outputs += `
+output "static_site_url" {
+    description = "The public URL of the static site (CDN)"
+    value = ${hasService('cdn') ? `try(${getModRef('cdn')}.endpoint, null)` : 'null'}
+  }
+  `;
 
   const outputMap = {
     // Basic Services (Standardized Aliases)
@@ -2865,25 +2853,27 @@ function generateOutputsTf(provider, pattern, services) {
 
   if (Array.isArray(services)) {
     services.forEach(service => {
-      const conf = outputMap[service];
+      const sid = normalize(service);
+      const conf = outputMap[sid] || outputMap[service];
       if (conf) {
         const moduleName = getModuleName(service);
         if (service === 'cdn') {
           outputs += `output "cdn_endpoint" { value = module.cdn.endpoint } \noutput "cdn_id" { value = module.cdn.id } \n\n`;
         } else if (conf.fields) {
           outputs += `output "${conf.name}" {
-  \n  description = "${conf.desc}"\n  value = { \n`;
+    \n  description = "${conf.desc}"\n  value = { \n`;
           Object.entries(conf.fields).forEach(([key, fields]) => {
             // Handle array of fallback fields
             if (Array.isArray(fields)) {
               const valueExpr = fields.map(f => `try(module.${moduleName}.${f}, null)`).join(', ');
-              outputs += `    ${key} = coalesce(${valueExpr}, null) \n`;
+              outputs += `    ${key} = try(coalesce(${valueExpr}), null) \n`;
             } else {
               // Direct mapping
               outputs += `    ${key} = module.${moduleName}.${fields} \n`;
             }
           });
-          outputs += `  } \n}\n\n`;
+          outputs += `  } \n
+} \n\n`;
         } else {
           outputs += `output "${conf.name}" { \n  description = "${conf.desc}"\n  value = module.${moduleName}.${conf.field} \n  ${conf.sensitive ? 'sensitive = true' : ''} \n } \n\n`;
         }
@@ -2907,7 +2897,7 @@ function generateOutputsTf(provider, pattern, services) {
 /**
  * Generate main.tf (ONLY module references, NO direct resources)
  */
-function generateMainTf(provider, pattern, services) {
+function generateMainTf(provider, pattern, services, options = {}) {
   const pLower = String(provider).toLowerCase();
   const regionLabel = regionArgMap[pLower] || 'region';
 
@@ -2948,29 +2938,41 @@ function generateMainTf(provider, pattern, services) {
     ${regionLabel} = var.${regionLabel}
     ${pLower === 'azure' ? 'resource_group_name = var.resource_group_name' : ''} \n`;
 
+
+
       // 🔥 FIX: Inject CDN Dependency (Intelligent Origin + OAC Variables)
       if (moduleName === 'cdn') {
         // Ensure services is an array before checking includes
         const serviceList = Array.isArray(services) ? services : [];
-        const hasObjectStorage = serviceList.includes('objectstorage') || serviceList.includes('object_storage');
-        const hasContainer = serviceList.includes('computecontainer') || serviceList.includes('compute_container');
-        const hasLoadBalancer = serviceList.includes('loadbalancer') || serviceList.includes('load_balancer');
-        const hasComputeContainer = hasContainer; // Alias for backward compatibility in logic below
 
-        console.log(`[TF DEBUG] Generating CDN module.hasObjectStorage =\${ hasObjectStorage }, hasContainer =\${ hasContainer }, hasLoadBalancer =\${ hasLoadBalancer }, services =\${ JSON.stringify(serviceList) } `);
+        // Normalize services for robust matching
+        const normalize = (str) => String(str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const normalizedServices = serviceList.map(normalize);
+        const hasSvc = (s) => normalizedServices.includes(normalize(s));
+
+        const hasObjectStorage = hasSvc('objectstorage');
+        const hasContainer = hasSvc('computecontainer') || hasSvc('appcompute');
+        const hasLoadBalancer = hasSvc('loadbalancer');
+        const hasComputeContainer = hasContainer; // Alias for backward compatibility in logic below
+        const getModRef = (s) => {
+          const mName = getModuleName(s);
+          return `module.${mName}`;
+        };
+
+        console.log(`[TF DEBUG] Generating CDN module.hasObjectStorage = ${hasObjectStorage}, hasContainer = ${hasContainer}, hasLoadBalancer = ${hasLoadBalancer}, services = ${JSON.stringify(serviceList)} `);
 
         if (hasObjectStorage) {
           // Static site OR Container with Asset Storage: Always prefer S3 bucket origin if available
-          mainTf += `    bucket_domain_name = module.object_storage.bucket_domain_name\n`;
-          mainTf += `    bucket_name = module.object_storage.bucket_name\n`;
-          mainTf += `    bucket_arn = module.object_storage.bucket_arn\n`;
+          mainTf += `    bucket_domain_name = ${getModRef('objectstorage')}.bucket_domain_name\n`;
+          mainTf += `    bucket_name = ${getModRef('objectstorage')}.bucket_name\n`;
+          mainTf += `    bucket_arn = ${getModRef('objectstorage')}.bucket_arn\n`;
         } else if (hasLoadBalancer) {
-          mainTf += `    bucket_domain_name = module.load_balancer.dns_name\n`;
+          mainTf += `    bucket_domain_name = ${getModRef('loadbalancer')}.dns_name\n`;
           mainTf += `    bucket_name = ""\n`;
           mainTf += `    bucket_arn = ""\n`;
         } else if (hasComputeContainer && pLower !== 'aws') {
           // GCP/Azure containers have stable URLs directly
-          mainTf += `    bucket_domain_name = module.app_container.url\n`;
+          mainTf += `    bucket_domain_name = ${getModRef('computecontainer')}.url\n`;
           mainTf += `    bucket_name = ""\n`;
           mainTf += `    bucket_arn = ""\n`;
         } else {
@@ -3493,7 +3495,7 @@ async function generateTerraform(canonicalArchitecture, provider, region, projec
     return String(s).toLowerCase();
   });
 
-  const pattern = canonicalArchitecture.pattern || 'custom';
+  const pattern = (canonicalArchitecture.pattern_id || canonicalArchitecture.pattern || 'custom').toUpperCase();
 
   // 🔒 FILTER: Separate deployable services (infra) from external services (variables only)
   // 🔥 TEMPORARY FIX: Filtering out CloudFront and OpenSearch due to unresolvable AWS Account restrictions
@@ -3519,7 +3521,7 @@ async function generateTerraform(canonicalArchitecture, provider, region, projec
   files['providers.tf'] = generateProvidersTf(providerLower, region);
   files['variables.tf'] = generateVariablesTf(providerLower, pattern, services);
   files['terraform.tfvars'] = generateTfvars(providerLower, region, projectName, { ...canonicalArchitecture.sizing, connectionData: options.connectionData });
-  files['outputs.tf'] = generateOutputsTf(providerLower, deployableServices, projectName);
+  files['outputs.tf'] = generateOutputsTf(providerLower, pattern, deployableServices);
   files['main.tf'] = generateMainTf(providerLower, pattern, deployableServices);
   files['README.md'] = generateReadme(projectName, providerLower, pattern, deployableServices);
 
@@ -4266,9 +4268,14 @@ resource "aws_security_group" "batch" {
 # CloudFront CDN with Origin Access Control(OAC) - Production Grade
 # ═══════════════════════════════════════════════════════════════════════════
 
+# 0. Random Suffix for Global Uniqueness (Avoids 409 Conflicts)
+resource "random_id" "oac_suffix" {
+  byte_length = 4
+}
+
 # 1. Origin Access Control(OAC) - Modern replacement for OAI
 resource "aws_cloudfront_origin_access_control" "oac" {
-    name = "\${var.project_name}-oac"
+    name = "\${var.project_name}-oac-\${random_id.oac_suffix.hex}"
     description = "OAC for static site S3 bucket"
     origin_access_control_origin_type = "s3"
     signing_behavior = "always"
@@ -4360,19 +4367,7 @@ resource "aws_s3_bucket_policy" "cloudfront_access" {
 
     depends_on = [aws_cloudfront_distribution.cdn]
   } `,
-          variables: getRequiredVars('cdn', meta.args) + `
-variable "bucket_domain_name" {
-    type = string
-    description = "S3 bucket regional domain name"
-  }
-variable "bucket_name" {
-    type = string
-    description = "S3 bucket name for policy attachment"
-  }
-variable "bucket_arn" {
-    type = string
-    description = "S3 bucket ARN for policy"
-  } `,
+          variables: getRequiredVars('cdn', meta.args),
           outputs: `output "endpoint" { value = aws_cloudfront_distribution.cdn.domain_name }
 output "id" { value = aws_cloudfront_distribution.cdn.id }
 output "arn" { value = aws_cloudfront_distribution.cdn.arn } `
@@ -6402,7 +6397,7 @@ resource "azurerm_cdn_endpoint" "cdn_ep" {
     host_name = var.bucket_domain_name
   }
 }`,
-          variables: getRequiredVars('cdn', meta.args) + '\nvariable "bucket_domain_name" { type = string }',
+          variables: getRequiredVars('cdn', meta.args),
           outputs: `output "endpoint" { value = azurerm_cdn_endpoint.cdn_ep.fqdn }
 output "id" { value = azurerm_cdn_profile.cdn.id }`
         };

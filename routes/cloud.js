@@ -136,19 +136,88 @@ const verifyCloudConnection = async (provider, metadata) => {
 
             const client = new STSClient(clientConfig);
 
-            // 1. Assume Role (The User's Role)
-            const assumeCmd = new AssumeRoleCommand({
-                RoleArn: metadata.role_arn,
-                RoleSessionName: "CloudiverseVerificationSession",
-                ExternalId: metadata.external_id
-            });
+            // 🧠 SMART FALLBACK: Try dynamic role, fall back to legacy if needed
+            const accountIdFromArn = metadata.role_arn.split(':')[4];
+            const rolesToTry = [
+                metadata.role_arn,
+                `arn:aws:iam::${accountIdFromArn}:role/cloudiverse-deploy-role`
+            ];
 
-            let assumed;
-            try {
-                assumed = await client.send(assumeCmd);
-            } catch (stsErr) {
+            let assumed = null;
+            let lastErr = null;
+            let successfulRoleArn = null;
+
+            for (const roleArnToTry of rolesToTry) {
+                try {
+                    console.log(`[AWS_VERIFY] Attempting to assume role: ${roleArnToTry}`);
+                    const assumeCmd = new AssumeRoleCommand({
+                        RoleArn: roleArnToTry,
+                        RoleSessionName: "CloudiverseVerificationSession",
+                        ExternalId: metadata.external_id
+                    });
+                    assumed = await client.send(assumeCmd);
+                    successfulRoleArn = roleArnToTry;
+
+                    // If we successfully assumed a DIFFERENT role than requested, update it in the metadata or just proceed
+                    if (roleArnToTry !== metadata.role_arn) {
+                        console.log(`[AWS_VERIFY] ✅ Success using fallback role ARN '${roleArnToTry}'`);
+                    }
+                    break; // Success!
+                } catch (stsErr) {
+                    console.warn(`[AWS_VERIFY] Failed for ${roleArnToTry}: ${stsErr.message}`);
+                    lastErr = stsErr;
+                    // AWS often returns AccessDenied for non-existent roles in STS to prevent enumeration
+                    // So we continue to try the next candidate regardless.
+                    continue;
+                }
+            }
+
+            if (!assumed) {
+                // 🕵️ ROLE DISCOVERY (Last Resort for "Truly Automatic" experience)
+                try {
+                    console.log(`[AWS_VERIFY] Roles not found. Attempting discovery...`);
+                    const { IAMClient, ListRolesCommand } = require("@aws-sdk/client-iam");
+                    const iam = new IAMClient(clientConfig);
+                    const roles = await iam.send(new ListRolesCommand({ MaxItems: 100 }));
+                    const candidates = roles.Roles.filter(r =>
+                        r.RoleName.toLowerCase().startsWith('cloudiverse')
+                    ).map(r => r.Arn);
+
+                    for (const candidateArn of candidates) {
+                        if (rolesToTry.includes(candidateArn)) continue;
+                        try {
+                            console.log(`[AWS_VERIFY] Discovered: ${candidateArn}. Testing...`);
+                            const assumeCmd = new AssumeRoleCommand({
+                                RoleArn: candidateArn,
+                                RoleSessionName: "CloudiverseVerificationSession",
+                                ExternalId: metadata.external_id
+                            });
+                            assumed = await client.send(assumeCmd);
+                            successfulRoleArn = candidateArn;
+                            console.log(`[AWS_VERIFY] ✅ Discovered and verified: ${candidateArn}`);
+                            break;
+                        } catch (e) { /* continue */ }
+                    }
+                } catch (discoveryErr) {
+                    console.warn("[AWS_VERIFY] Role discovery failed:", discoveryErr.message);
+                }
+            }
+
+            if (!assumed) {
+                const stsErr = lastErr;
+                let identityArn = "unknown";
+                try {
+                    const idRes = await client.send(new GetCallerIdentityCommand({}));
+                    identityArn = idRes.Arn;
+                } catch (e) { /* ignore */ }
+
+                const failedRole = lastErr?.message?.includes('arn:aws:iam') ? 'the targeted roles' : metadata.role_arn;
+
                 if (stsErr.Code === 'AccessDenied' || (stsErr.message && stsErr.message.includes('not authorized to perform: sts:AssumeRole'))) {
-                    throw new Error(`Cloudiverse Backend does not have permission to assume role '${metadata.role_arn}'.\n\nEnsure your role's Trust Policy allows account '${process.env.AWS_ACCOUNT_ID}' (or the backend identity) to assume it.`);
+                    const errorMsg = `Authorization Failed: Backend (${identityArn}) cannot assume role '${failedRole}'.\n\n` +
+                        `1. IDENTITY POLICY: Ensure User '${identityArn}' has permission 'sts:AssumeRole' on '${failedRole}'.\n` +
+                        `2. TRUST POLICY: Ensure the Role '${failedRole}' trusts '${identityArn}' and matches ExternalId '${metadata.external_id}'.`;
+                    throw new Error(errorMsg);
                 }
                 throw stsErr;
             }
@@ -170,10 +239,41 @@ const verifyCloudConnection = async (provider, metadata) => {
                 // We could throw here, but for now we just return the actual found ID
             }
 
+            // 4. Capability Detection (CloudFront)
+            // Some checks to ensure the account is ready for our stack
+            const capabilities = {
+                cloudfront: false
+            };
+
+            try {
+                // We need a separate client for CloudFront (Global Service, us-east-1)
+                const { CloudFrontClient, ListDistributionsCommand } = require("@aws-sdk/client-cloudfront");
+
+                // Use the same credentials as identity verification
+                const cfClient = new CloudFrontClient({
+                    region: "us-east-1", // CloudFront is global, typically accessed via us-east-1
+                    credentials: {
+                        accessKeyId: assumed.Credentials.AccessKeyId,
+                        secretAccessKey: assumed.Credentials.SecretAccessKey,
+                        sessionToken: assumed.Credentials.SessionToken
+                    }
+                });
+
+                console.log("[AWS_CAPABILITY] Checking CloudFront access...");
+                await cfClient.send(new ListDistributionsCommand({ MaxItems: 1 }));
+                console.log("[AWS_CAPABILITY] CloudFront access CONFIRMED.");
+                capabilities.cloudfront = true;
+            } catch (cfErr) {
+                console.warn(`[AWS_CAPABILITY_WARNING] CloudFront access denied or failed: ${cfErr.message}`);
+                // capabilities.cloudfront remains false
+            }
+
             return {
                 verified: true,
                 account_id: identity.Account,
-                region: 'ap-south-1' // Default target
+                role_arn: successfulRoleArn, // 🧠 FIX: Return the ARN that actually worked (Fallback support)
+                region: 'ap-south-1', // Default target
+                capabilities
             };
         }
         else if (provider === 'gcp') {
@@ -244,8 +344,29 @@ router.post('/aws/template', authMiddleware, async (req, res) => {
         const { workspace_id } = req.body;
         if (!workspace_id) return res.status(400).json({ msg: "Workspace ID is required" });
 
-        const externalId = `cloudiverse-${workspace_id}-${Math.random().toString(36).substring(7)}`;
+        // 🧠 CLARITY: Who is the backend?
+        // If we trust the root account, the calling identity must have its own sts:AssumeRole permission.
+        // If we trust the identity ARNs specifically, it works even without explicit user policies.
+        let backendIdentityArn = null;
+        try {
+            const sts = new STSClient({ region: "ap-south-1" });
+            const caller = await sts.send(new GetCallerIdentityCommand({}));
+            backendIdentityArn = caller.Arn;
+            console.log(`[AWS_TEMPLATE] Detected Backend Identity: ${backendIdentityArn}`);
+        } catch (stsErr) {
+            console.warn("[AWS_TEMPLATE] Could not detect backend identity, falling back to account root", stsErr.message);
+        }
+
+        // 🧠 FIX: Use stable ExternalId (cloudiverse-user-{workspace_id})
+        // This matches the strict check in /aws/verify
+        const externalId = `cloudiverse-user-${workspace_id}`;
         const accountId = process.env.AWS_ACCOUNT_ID || "123456789012";
+
+        // Construct Principal list
+        const principals = [accountId];
+        if (backendIdentityArn && !principals.includes(backendIdentityArn)) {
+            principals.push(backendIdentityArn);
+        }
 
         const yamlContent = `
 AWSTemplateFormatVersion: '2010-09-09'
@@ -257,7 +378,7 @@ Parameters:
     Default: '${externalId}'
   CloudiverseAccountId:
     Type: String
-    Description: 'The Cloudiverse AWS Account ID'
+    Description: 'The Cloudiverse AWS Account ID (Root)'
     Default: '${accountId}'
 Resources:
   CloudiverseAccessRole:
@@ -269,11 +390,16 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              AWS: !Ref CloudiverseAccountId
+              AWS:
+                - !Ref CloudiverseAccountId
+                ${backendIdentityArn ? `- '${backendIdentityArn}'` : ''}
             Action: 'sts:AssumeRole'
             Condition:
               StringEquals:
                 'sts:ExternalId': !Ref ExternalId
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
+        - 'arn:aws:iam::aws:policy/CloudFrontFullAccess'
       Policies:
         - PolicyName: 'CloudiversePowerUserAccess'
           PolicyDocument:
@@ -297,6 +423,80 @@ Outputs:
     } catch (err) {
         console.error("Template Gen Error:", err);
         res.status(500).send("Server Error");
+    }
+});
+
+// AWS Template Download Route (Used for manual upload to CloudFormation)
+router.get('/aws/template/download/:workspace_id', async (req, res) => {
+    try {
+        const { workspace_id } = req.params;
+
+        // 1. Get Backend Identity
+        let backendIdentityArn = null;
+        try {
+            const sts = new STSClient({ region: "ap-south-1" });
+            const caller = await sts.send(new GetCallerIdentityCommand({}));
+            backendIdentityArn = caller.Arn;
+        } catch (stsErr) {
+            console.warn("[AWS_DOWNLOAD] Could not detect backend identity", stsErr.message);
+        }
+
+        const externalId = `cloudiverse-user-${workspace_id}`;
+        const accountId = process.env.AWS_ACCOUNT_ID || "123456789012";
+
+        const yamlContent = `
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Cloudiverse Cross-Account Access Role'
+Parameters:
+  ExternalId:
+    Type: String
+    Description: 'The External ID for security'
+    Default: '${externalId}'
+  CloudiverseAccountId:
+    Type: String
+    Description: 'The Cloudiverse AWS Account ID (Root)'
+    Default: '${accountId}'
+Resources:
+  CloudiverseAccessRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub 'CloudiverseAccessRole-\${ExternalId}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Ref CloudiverseAccountId
+                ${backendIdentityArn ? `- '${backendIdentityArn}'` : ''}
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'sts:ExternalId': !Ref ExternalId
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
+        - 'arn:aws:iam::aws:policy/CloudFrontFullAccess'
+      Policies:
+        - PolicyName: 'CloudiversePowerUserAccess'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: '*'
+                Resource: '*'
+Outputs:
+  RoleArn:
+    Description: 'The ARN of the role to paste into Cloudiverse'
+    Value: !GetAtt CloudiverseAccessRole.Arn
+`;
+
+        res.setHeader('Content-Type', 'text/yaml');
+        res.setHeader('Content-Disposition', `attachment; filename=cloudiverse-aws-setup-${workspace_id}.yaml`);
+        res.send(yamlContent);
+
+    } catch (err) {
+        console.error("Download Error:", err);
+        res.status(500).send("Failed to generate download");
     }
 });
 
@@ -411,17 +611,24 @@ router.post('/:provider/connect', authMiddleware, async (req, res) => {
 
             const externalId = stableExternalId;
 
-            // 🚀 CLOUDFORMATION DEEP LINK
-            // Assuming this template creates role: CloudiverseDeployRole
-            const templateUri = "https://cloudiverse-cloudformation.s3.ap-south-1.amazonaws.com/aws-trust-role.yaml";
+            // 🚀 CLOUDFORMATION SETUP
+            // Since we are running on localhost, AWS cannot fetch the template automatically. 
+            // We provide a direct download URL for the dynamic template.
+            const downloadUrl = `${process.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/cloud/aws/template/download/${workspace_id}`;
             const accountId = process.env.AWS_ACCOUNT_ID;
 
             if (!accountId) throw new Error("AWS_ACCOUNT_ID is not configured in backend .env");
 
             const uniqueStackName = `CloudiverseAccess-${safeWorkspaceId.substring(0, 8)}`;
-            // Use 'CloudiverseDeployRole' as parameter if template supports it, or rely on template hardcoding it.
-            // We pass account ID so the role trusts US.
-            authUrl = `https://console.aws.amazon.com/cloudformation/home?region=ap-south-1#/stacks/create/review?templateURL=${encodeURIComponent(templateUri)}&stackName=${uniqueStackName}&param_ExternalId=${externalId}&param_CloudiverseAccountId=${accountId}`;
+
+            // 🚀 CLOUDFORMATION DEEP LINK (AUTOMATIC)
+            const templateUri = "https://cloudiverse-cloudformation.s3.ap-south-1.amazonaws.com/aws-trust-role.yaml";
+
+            const roleName = `CloudiverseAccessRole-${externalId}`;
+
+            // We pass all parameters, including proposed RoleName. 
+            // The current S3 template will ignore RoleName, but future ones will use it.
+            authUrl = `https://console.aws.amazon.com/cloudformation/home?region=ap-south-1#/stacks/create/review?templateURL=${encodeURIComponent(templateUri)}&stackName=${uniqueStackName}&param_ExternalId=${externalId}&param_CloudiverseAccountId=${accountId}&param_RoleName=${roleName}`;
 
             extra = { externalId, accountId };
         }
@@ -777,12 +984,10 @@ router.post('/aws/delete-stack', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'account_id and external_id required' });
         }
 
-        // Stack name pattern from /aws/connect: CloudiverseAccess-${workspaceId.substring(0,8)}
-        // Role name from S3 template: cloudiverse-deploy-role (hardcoded)
-        // External ID pattern: cloudiverse-user-{workspace_id}
+        // 🧠 FIX: Role Name Consistency (Must match template)
         const workspaceIdFromExtId = external_id.replace('cloudiverse-user-', '');
         const STACK_NAME = `CloudiverseAccess-${workspaceIdFromExtId.substring(0, 8)}`;
-        const roleArn = `arn:aws:iam::${account_id}:role/cloudiverse-deploy-role`;
+        const roleArn = `arn:aws:iam::${account_id}:role/CloudiverseAccessRole-${external_id}`;
         const externalId = external_id;
 
         console.log(`[AWS] Attempting to delete CloudFormation stack '${STACK_NAME}' in account ${account_id}`);
@@ -800,12 +1005,21 @@ router.post('/aws/delete-stack', authMiddleware, async (req, res) => {
             }));
             credentials = assumeRoleRes.Credentials;
         } catch (assumeErr) {
+            let identityArn = "unknown";
+            try {
+                const idRes = await stsClient.send(new GetCallerIdentityCommand({}));
+                identityArn = idRes.Arn;
+            } catch (e) { /* ignore */ }
+
             console.error('[AWS] Failed to assume role for stack deletion:', assumeErr.message);
-            // If we can't assume the role, the stack may need manual deletion
             return res.status(400).json({
-                error: 'Cannot assume role - stack may need manual deletion',
+                error: `Backend (${identityArn}) is NOT authorized to assume role '${roleArn}'.`,
                 details: assumeErr.message,
-                manual_steps: `Go to AWS Console > CloudFormation > Delete stack '${STACK_NAME}'`
+                manual_steps: [
+                    `1. Identity Policy: Grant User '${identityArn}' permission 'sts:AssumeRole' on '${roleArn}'.`,
+                    `2. Trust Policy: Add '${identityArn}' to the Trust Relationship of Role '${roleArn}'.`,
+                    `3. Manual: Delete stack '${STACK_NAME}' in AWS Console.`
+                ].join('\n')
             });
         }
 
@@ -872,32 +1086,64 @@ router.post('/:provider/verify', authMiddleware, async (req, res) => {
                 return res.status(400).json({ msg: "AWS Account ID is required for verification" });
             }
 
-            // 🧠 FIX 1: STRICT STABLE EXTERNAL ID (Ignore DB stale data)
-            // The DB might have old random IDs ('...4zqjte'). We MUST match what we enforce in /connect.
-            const strictExternalId = `cloudiverse-user-${workspace_id}`;
+            // 🧠 FIX 1.5: REUSE SAVED CONNECTION EXTERNAL ID IF EXISTS
+            // If the user already has a verified AWS connection, we should reuse THAT external ID
+            // so they don't need to update their stack for every new project.
+            let reusedConnection = false;
+            try {
+                if (req.user && req.user.id) {
+                    const savedConn = await getUserConnection(req.user.id, 'aws');
+                    if (savedConn && savedConn.external_id && savedConn.role_arn) {
+                        // If user provided account_id, check match. If not provided, assume they want the saved one.
+                        const requestAccountId = account_id;
+                        const savedAccountId = savedConn.account_id;
 
-            // 🧠 FIX 3: Lifecycle Guard & Sanity Check
-            if (metadata.status === 'connected' && metadata.verified) {
-                console.log("[AWS] Already connected. Proceeding with existing verification.");
+                        // Flexible matching:
+                        // 1. If request has ID, it must match saved ID
+                        // 2. If request has NO ID, we default to saved ID (e.g. from "Connect" button directly)
+                        if (!requestAccountId || requestAccountId === savedAccountId) {
+                            console.log(`[AWS] Found verified connection for Account ${savedAccountId}. REUSING CREDENTIALS.`);
+
+                            // OVERRIDE METADATA WITH SAVED CREDENTIALS
+                            // This is the key fix: We ignore the workspace-specific external_id 
+                            // and use the one that actually works (the saved one).
+                            metadata = {
+                                ...metadata,
+                                account_id: savedAccountId,
+                                role_arn: savedConn.role_arn,
+                                external_id: savedConn.external_id,
+                                status: 'connected',
+                                verified: true
+                            };
+                            reusedConnection = true;
+                        } else {
+                            console.log(`[AWS] Saved connection exists for Account ${savedAccountId}, but request is for ${requestAccountId}. Cannot reuse.`);
+                        }
+                    }
+                }
+            } catch (reuseErr) {
+                console.warn("[AWS] Failed to check for reusable connection", reuseErr);
             }
 
-            // 🧠 FIX 2: Role Name Consistency
-            // Contract: The S3 CloudFormation template creates role named 'cloudiverse-deploy-role' (hardcoded)
-            // See: https://cloudiverse-cloudformation.s3.ap-south-1.amazonaws.com/aws-trust-role.yaml
-            const derivedRoleArn = `arn:aws:iam::${account_id}:role/cloudiverse-deploy-role`;
+            if (!reusedConnection) {
+                // If we didn't reuse, we must enforce the workspace-specific strict ID
+                // ensuring new users follow the pattern.
+                const strictExternalId = `cloudiverse-user-${workspace_id}`;
 
-            metadata = {
-                ...metadata,
-                account_id,
-                role_arn: derivedRoleArn,
-                external_id: strictExternalId // Force the correct ID associated with this workspace
-            };
+                // 🧠 FIX 2: Role Name Consistency (Must match CloudFormation template)
+                const derivedRoleArn = `arn:aws:iam::${account_id}:role/CloudiverseAccessRole-${strictExternalId}`;
 
-            // 🧠 FIX 4: Log Backend Caller Identity (Once)
-            // Ensures we are who we think we are (031179588466).
-            // Logic moved into verifyCloudConnection or logged here if we had the client. 
-            // We'll trust verifyCloudConnection to log failures, but let's log our intent.
-            console.log(`[AWS_VERIFY_INTENT] Role: ${derivedRoleArn}, ExtID: ${strictExternalId}`);
+                metadata = {
+                    ...metadata,
+                    account_id,
+                    role_arn: derivedRoleArn,
+                    external_id: strictExternalId
+                };
+
+                console.log(`[AWS_VERIFY_INTENT] New Connection Setup. Role: ${derivedRoleArn}, ExtID: ${strictExternalId}`);
+            } else {
+                console.log(`[AWS_VERIFY_INTENT] Reusing Existing Connection. Role: ${metadata.role_arn}, ExtID: ${metadata.external_id}`);
+            }
         }
 
         const verifyRes = await verifyCloudConnection(provider.toLowerCase(), metadata);
@@ -908,10 +1154,12 @@ router.post('/:provider/verify', authMiddleware, async (req, res) => {
             status: 'connected',
             verified: true,
             account_id: verifyRes.account_id || metadata.account_id,
+            role_arn: verifyRes.role_arn || metadata.role_arn, // 🧠 FIX: Persist the role that worked
             subscription_id: verifyRes.subscription_id || metadata.subscription_id,
             tenant_id: verifyRes.tenant_id || metadata.tenant_id,
             project_id: verifyRes.project_id || metadata.project_id,
             region: verifyRes.region || metadata.region,
+            capabilities: verifyRes.capabilities, // 🧠 FIX: Persist Capabilities
             connected_at: new Date().toISOString()
         };
 

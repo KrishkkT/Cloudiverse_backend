@@ -87,18 +87,8 @@ class CredentialProvider {
         };
         const region = normalizeAwsRegion(rawRegion);
 
-        // FIX 2: Enforce Role ARN Name (CloudiverseDeployRole)
-        // Do not trust the name in the DB, only trust the Account ID.
-        let accountId = connectionData.account_id;
-        if (!accountId && connectionData.role_arn) {
-            const parts = connectionData.role_arn.split(':');
-            if (parts.length >= 5) accountId = parts[4];
-        }
-
-        const ROLE_NAME = "cloudiverse-deploy-role";
-        const correctRoleArn = accountId ?
-            `arn:aws:iam::${accountId}:role/${ROLE_NAME}` :
-            connectionData.role_arn; // Fallback if no account ID (should fail elsewhere)
+        // FIX 2: Trust Role ARN from connection (Dynamic assignment)
+        const correctRoleArn = connectionData.role_arn;
 
         console.log(`[CREDENTIAL] Using Region: ${region}, Role: ${correctRoleArn}`);
 

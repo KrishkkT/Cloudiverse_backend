@@ -55,6 +55,27 @@ router.get('/:id/status', authMiddleware, async (req, res) => {
     }
 });
 
+// GET /api/deploy/workspace/:workspaceId/latest
+// Fetch the most recent deployment for a workspace (to hydrate logs)
+router.get('/workspace/:workspaceId/latest', authMiddleware, async (req, res) => {
+    try {
+        const { workspaceId } = req.params;
+        const result = await pool.query(
+            'SELECT * FROM deployments WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 1',
+            [workspaceId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: "No deployments found for this workspace" });
+        }
+
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error("Latest Deploy Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DESTROY ENDPOINTS
 // ═══════════════════════════════════════════════════════════════════════════════

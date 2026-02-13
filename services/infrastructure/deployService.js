@@ -937,8 +937,8 @@ const deployFromGithub = async (deploymentId, workspace, config) => {
 
                 // Use build_project_name from contract, or fallback to global outputs if old state
                 const cbProject = containerMeta.build_project_name || infraOutputs.codebuild_name?.value;
-                // Need build bucket too. If not in contract, check globals.
-                const buildBucket = infraOutputs.build_bucket?.value || infraOutputs.computecontainer?.value?.build_bucket;
+                // Need build bucket too. Try contract first, then globals.
+                const buildBucket = containerMeta.build_bucket || infraOutputs.build_bucket?.value || infraOutputs.computecontainer?.value?.build_bucket;
 
                 if (!cbProject || !buildBucket) {
                     throw new Error("Missing AWS Build Infrastructure (connection to CodeBuild Project/Bucket). Ensure Terraform state is recent.");
@@ -1036,12 +1036,13 @@ const deployFromDocker = async (deploymentId, workspace, config) => {
 
         const conn = workspace.state_json.connection;
         const infraOutputs = workspace.state_json.infra_outputs || {};
-        const target = infraOutputs.deployment_target?.value || "unknown";
+        const deploymentTarget = infraOutputs.deployment_target?.value || infraOutputs.deployment_target;
+        const targetType = (typeof deploymentTarget === 'object') ? deploymentTarget.type : (infraOutputs.deployment_target?.value || "unknown");
 
         // 1. Strict infra matching for Docker choice
-        const allowedTargets = ["ecs", "cloud_run", "app_service", "container", "app_runner", "lambda"];
-        if (!allowedTargets.includes(target)) {
-            throw new Error(`Architectural Mismatch: Direct Docker deployment is not compatible with ${target.toUpperCase()} infrastructure. Use GitHub path for static sites.`);
+        const allowedTargets = ["ecs", "cloud_run", "app_service", "container", "app_runner", "lambda", "CONTAINER_SERVICE"];
+        if (!allowedTargets.includes(targetType)) {
+            throw new Error(`Architectural Mismatch: Direct Docker deployment is not compatible with ${targetType.toUpperCase()} infrastructure. Use GitHub path for static sites.`);
         }
 
         await appendLog(deploymentId, `✅ Infra compatibility verified. Updating running service...`);
