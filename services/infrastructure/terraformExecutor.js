@@ -12,6 +12,21 @@ const ENABLE_REAL_TERRAFORM = process.env.ENABLE_REAL_TERRAFORM === 'true';
 const TERRAFORM_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const TERRAFORM_WORK_DIR = path.join(os.tmpdir(), 'cloudiverse-tf');
 
+// Resolve Terraform binary path:
+// 1. TERRAFORM_BIN env var (explicit override)
+// 2. Render build script install location
+// 3. System PATH (local dev / standard install)
+const TERRAFORM_BIN = (() => {
+    if (process.env.TERRAFORM_BIN) return process.env.TERRAFORM_BIN;
+    const renderPath = path.join(__dirname, '../../terraform_bin');
+    try {
+        const fsSync = require('fs');
+        if (fsSync.existsSync(renderPath)) return renderPath;
+    } catch (e) { /* ignore */ }
+    return 'terraform'; // fallback to system PATH
+})();
+console.log(`[TERRAFORM] Binary path resolved: ${TERRAFORM_BIN}`);
+
 const isAzure = (p) => ['azure', 'azurerm'].includes(String(p).toLowerCase());
 
 // In-memory job store (resets on server restart)
@@ -329,7 +344,7 @@ class TerraformExecutor {
                 return resolve({ success: false, exitCode: 1 });
             }
 
-            const proc = spawn('terraform', [command, ...args], {
+            const proc = spawn(TERRAFORM_BIN, [command, ...args], {
                 cwd: workDir,
                 env: {
                     ...process.env,
