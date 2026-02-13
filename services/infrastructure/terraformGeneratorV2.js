@@ -3731,8 +3731,12 @@ output "arn" { value = aws_lb.main.arn }`
 }
 
 resource "aws_db_subnet_group" "default" {
-  name       = "\${var.project_name}-db-subnet-group"
-  subnet_ids = var.private_subnet_ids
+  name_prefix = "\${var.project_name}-db-"
+  subnet_ids  = var.private_subnet_ids
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_security_group" "db_sg" {
@@ -3769,8 +3773,12 @@ output "username" { value = aws_db_instance.default.username }`
 }
 
 resource "aws_elasticache_subnet_group" "default" {
-  name       = "\${var.project_name}-cache-subnet"
-  subnet_ids = var.private_subnet_ids
+  name_prefix = "\${var.project_name}-cache-"
+  subnet_ids  = var.private_subnet_ids
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_security_group" "redis_sg" {

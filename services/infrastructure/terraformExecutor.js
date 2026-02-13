@@ -481,18 +481,15 @@ class TerraformExecutor {
             // ─── STAGE 3: TERRAFORM INIT ────────────────────────────────────────────
             job.stage = 'init';
 
-            // 🔥 CLEANUP: Remove .terraform folder and STATE to prevent state poisoning from ~/.aws/config or old runs
+            // 🔥 CLEANUP: Remove .terraform folder and lock to allow fresh init,
+            // but PRESERVE terraform.tfstate so re-deploys don't orphan resources
             const terraformDir = path.join(workDir, '.terraform');
             const terraformLock = path.join(workDir, '.terraform.lock.hcl');
-            const terraformState = path.join(workDir, 'terraform.tfstate');
-            const terraformStateBackup = path.join(workDir, 'terraform.tfstate.backup');
 
             try {
                 await fs.rm(terraformDir, { recursive: true, force: true });
                 await fs.rm(terraformLock, { force: true });
-                await fs.rm(terraformState, { force: true });
-                await fs.rm(terraformStateBackup, { force: true });
-                this.addLog(jobId, 'Cleaned previous Terraform state/cache (fresh deployment forced)', 'INFO');
+                this.addLog(jobId, 'Cleaned Terraform cache (state preserved for idempotent re-deploy)', 'INFO');
             } catch (e) {
                 // ignore
             }
