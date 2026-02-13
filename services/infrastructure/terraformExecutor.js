@@ -560,7 +560,7 @@ class TerraformExecutor {
             this.addLog(jobId, 'Capturing infrastructure outputs...', 'CMD');
 
             const outputData = await new Promise((resolve, reject) => {
-                const proc = spawn('terraform', ['output', '-json'], {
+                const proc = spawn(TERRAFORM_BIN, ['output', '-json'], {
                     cwd: workDir,
                     shell: true,
                     env: { ...process.env, ...envVars }
