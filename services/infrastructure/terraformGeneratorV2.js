@@ -5976,8 +5976,7 @@ output "bucket_arn" { value = azurerm_storage_account.store.id } `
           variables: getRequiredVars('relationaldatabase', meta.args),
           outputs: `output "endpoint" { value = azurerm_postgresql_server.db.fqdn }
 output "port" { value = 5432 }
-output "name" { value = "${var.project_name
-        } - db" }
+output "name" { value = "\${var.project_name}-db" }
 output "username" { value = azurerm_postgresql_server.db.administrator_login } `
         };
 
