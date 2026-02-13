@@ -140,8 +140,11 @@ const verifyCloudConnection = async (provider, metadata) => {
             const accountIdFromArn = metadata.role_arn.split(':')[4];
             const rolesToTry = [
                 metadata.role_arn,
-                `arn:aws:iam::${accountIdFromArn}:role/cloudiverse-deploy-role`
-            ];
+                // Include the fallback role ARN if provided (covers both S3 and dynamic templates)
+                ...(metadata.role_arn_fallback ? [metadata.role_arn_fallback] : []),
+                `arn:aws:iam::${accountIdFromArn}:role/cloudiverse-deploy-role`,
+                `arn:aws:iam::${accountIdFromArn}:role/CloudiverseAccessRole-${metadata.external_id}`
+            ].filter((v, i, a) => a.indexOf(v) === i); // deduplicate
 
             let assumed = null;
             let lastErr = null;
@@ -1126,21 +1129,25 @@ router.post('/:provider/verify', authMiddleware, async (req, res) => {
             }
 
             if (!reusedConnection) {
-                // If we didn't reuse, we must enforce the workspace-specific strict ID
-                // ensuring new users follow the pattern.
+                // If we didn't reuse, we must try BOTH role naming conventions:
+                // 1. S3 template creates: cloudiverse-deploy-role (hardcoded)
+                // 2. Dynamic template creates: CloudiverseAccessRole-{externalId}
                 const strictExternalId = `cloudiverse-user-${workspace_id}`;
 
-                // 🧠 FIX 2: Role Name Consistency (Must match CloudFormation template)
-                const derivedRoleArn = `arn:aws:iam::${account_id}:role/CloudiverseAccessRole-${strictExternalId}`;
+                // Primary: S3 template's hardcoded role name (what most users will have)
+                const s3RoleArn = `arn:aws:iam::${account_id}:role/cloudiverse-deploy-role`;
+                // Fallback: Dynamic template's parameterized role name
+                const dynamicRoleArn = `arn:aws:iam::${account_id}:role/CloudiverseAccessRole-${strictExternalId}`;
 
                 metadata = {
                     ...metadata,
                     account_id,
-                    role_arn: derivedRoleArn,
+                    role_arn: s3RoleArn,  // Primary: matches S3 template
+                    role_arn_fallback: dynamicRoleArn,  // Fallback: matches dynamic template
                     external_id: strictExternalId
                 };
 
-                console.log(`[AWS_VERIFY_INTENT] New Connection Setup. Role: ${derivedRoleArn}, ExtID: ${strictExternalId}`);
+                console.log(`[AWS_VERIFY_INTENT] New Connection Setup. Primary Role: ${s3RoleArn}, Fallback: ${dynamicRoleArn}, ExtID: ${strictExternalId}`);
             } else {
                 console.log(`[AWS_VERIFY_INTENT] Reusing Existing Connection. Role: ${metadata.role_arn}, ExtID: ${metadata.external_id}`);
             }
