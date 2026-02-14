@@ -2383,6 +2383,10 @@ function generateVersionsTf(provider) {
       source  = "${config.source}"
       version = "${config.version}"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 `;
 
@@ -2891,6 +2895,21 @@ output "static_site_url" {
     const nwModule = getModuleName(services.includes('networking') ? 'networking' : 'vpcnetworking');
     outputs += `output "vpc_id" { value = try(module.${nwModule}.vpc_id, null) } \n\n`;
   }
+
+  // 4. 🚀 Canonical Aliases (For Frontend / Backend Alignment)
+  // Ensures getVal(key) in deployService works with flat keys
+  outputs += `
+# ═══════════════════════════════════════════════════════════════════════════
+# 🚀 Canonical Aliases (For Deployer alignment)
+# ═══════════════════════════════════════════════════════════════════════════
+output "bucket_name" { value = ${hasService('objectstorage') ? `try(${getModRef('objectstorage')}.bucket_name, null)` : 'null'} }
+output "bucket_domain_name" { value = ${hasService('objectstorage') ? `try(${getModRef('objectstorage')}.bucket_domain_name, null)` : 'null'} }
+output "bucket_region" { value = var.${provider === 'azure' ? 'location' : 'region'} }
+output "database_endpoint" { value = ${hasService('relationaldatabase') ? `try(${getModRef('relationaldatabase')}.endpoint, null)` : 'null'} }
+output "cache_endpoint" { value = ${hasService('cache') ? `try(${getModRef('cache')}.endpoint, null)` : 'null'} }
+output "api_endpoint" { value = ${hasService('apigateway') ? `try(${getModRef('apigateway')}.endpoint, null)` : 'null'} }
+output "auth_client_id" { value = ${hasService('auth') ? `try(${getModRef('auth')}.client_id, null)` : hasService('identityauth') ? `try(${getModRef('identityauth')}.client_id, null)` : 'null'} }
+`;
 
   return outputs;
 }
@@ -3731,12 +3750,8 @@ output "arn" { value = aws_lb.main.arn }`
 }
 
 resource "aws_db_subnet_group" "default" {
-  name_prefix = "\${var.project_name}-db-"
-  subnet_ids  = var.private_subnet_ids
-
-  lifecycle {
-    create_before_destroy = true
-  }
+  name       = "\${var.project_name}-db-subnet-group"
+  subnet_ids = var.private_subnet_ids
 }
 
 resource "aws_security_group" "db_sg" {
@@ -3773,12 +3788,8 @@ output "username" { value = aws_db_instance.default.username }`
 }
 
 resource "aws_elasticache_subnet_group" "default" {
-  name_prefix = "\${var.project_name}-cache-"
-  subnet_ids  = var.private_subnet_ids
-
-  lifecycle {
-    create_before_destroy = true
-  }
+  name       = "\${var.project_name}-cache-subnet"
+  subnet_ids = var.private_subnet_ids
 }
 
 resource "aws_security_group" "redis_sg" {
@@ -3798,8 +3809,12 @@ output "port" { value = aws_elasticache_cluster.redis.cache_nodes.0.port }`
 
       case 'objectstorage':
         return {
-          main: `resource "aws_s3_bucket" "main" {
-  bucket_prefix = "\${substr(var.project_name, 0, min(length(var.project_name), 36))}-"
+          main: `resource "random_id" "bucket_suffix" {
+  byte_length = 4
+}
+
+resource "aws_s3_bucket" "main" {
+  bucket        = "\${substr(replace(lower(var.project_name), "/[^a-z0-9.]/", "-"), 0, 54)}-\${random_id.bucket_suffix.hex}"
   force_destroy = true
 }
 
@@ -4282,13 +4297,13 @@ resource "aws_security_group" "batch" {
 # ═══════════════════════════════════════════════════════════════════════════
 
 # 0. Random Suffix for Global Uniqueness (Avoids 409 Conflicts)
-resource "random_id" "oac_suffix" {
+resource "random_id" "cdn_suffix" {
   byte_length = 4
 }
 
 # 1. Origin Access Control(OAC) - Modern replacement for OAI
 resource "aws_cloudfront_origin_access_control" "oac" {
-    name = "\${var.project_name}-oac-\${random_id.oac_suffix.hex}"
+    name = "\${substr(replace(lower(var.project_name), "/[^a-z0-9]/", "-"), 0, 50)}-oac-\${random_id.cdn_suffix.hex}"
     description = "OAC for static site S3 bucket"
     origin_access_control_origin_type = "s3"
     signing_behavior = "always"
@@ -4299,7 +4314,7 @@ resource "aws_cloudfront_origin_access_control" "oac" {
 resource "aws_cloudfront_distribution" "cdn" {
     enabled = true
     default_root_object = "index.html"
-    comment = "\${var.project_name} Static Site CDN"
+    comment = "\${var.project_name} CDN (\${random_id.cdn_suffix.hex})"
 
   origin {
       domain_name = var.bucket_domain_name
@@ -5280,8 +5295,12 @@ output "private_subnet_ids" { value = [google_compute_subnetwork.private.id] } `
 
       case 'objectstorage':
         return {
-          main: `resource "google_storage_bucket" "store" {
-    name = "\${var.project_name}-assets"
+          main: `resource "random_id" "bucket_suffix" {
+    byte_length = 4
+  }
+
+resource "google_storage_bucket" "store" {
+    name = "\${var.project_name}-assets-\${random_id.bucket_suffix.hex}"
     location = var.region
     force_destroy = true
   } `,
@@ -5464,9 +5483,13 @@ resource "google_api_gateway_api_config" "api_cfg" {
 
       case 'cdn':
         return {
-          main: `resource "google_compute_backend_bucket" "cdn" {
-    name = "\${var.project_name}-cdn-backend"
-    bucket_name = "\${var.project_name}-assets"
+          main: `resource "random_id" "cdn_suffix" {
+    byte_length = 4
+  }
+
+resource "google_compute_backend_bucket" "cdn" {
+    name = "\${var.project_name}-cdn-\${random_id.cdn_suffix.hex}"
+    bucket_name = var.bucket_name
     enable_cdn = true
   } `,
           variables: getRequiredVars(service, meta.args),
@@ -5891,8 +5914,12 @@ resource "google_storage_bucket" "log_bucket" {
     switch (service) {
       case 'computecontainer':
         return {
-          main: `resource "azurerm_container_registry" "acr" {
-    name = replace("\${var.project_name}acr", "-", "")
+          main: `resource "random_id" "acr_suffix" {
+    byte_length = 4
+  }
+
+resource "azurerm_container_registry" "acr" {
+    name = "\${substr(replace(lower(var.project_name), "-", ""), 0, 13)}acr\${random_id.acr_suffix.hex}"
     resource_group_name = var.resource_group_name
     location = var.location
     sku = "Standard"
@@ -5949,8 +5976,12 @@ output "acr_login_server" { value = azurerm_container_registry.acr.login_server 
 
       case 'objectstorage':
         return {
-          main: `resource "azurerm_storage_account" "store" {
-    name = replace("\${var.project_name}store", "-", "")
+          main: `resource "random_id" "storage_suffix" {
+    byte_length = 4
+  }
+
+resource "azurerm_storage_account" "store" {
+    name = "\${substr(replace(lower(var.project_name), "-", ""), 0, 16)}\${random_id.storage_suffix.hex}"
     resource_group_name = var.resource_group_name
     location = var.location
     account_tier = "Standard"
@@ -6103,15 +6134,19 @@ resource "azurerm_lb" "main" {
 
       case 'cdn':
         return {
-          main: `resource "azurerm_cdn_profile" "cdn" {
-          name = "\${var.project_name}-cdn"
+          main: `resource "random_id" "cdn_suffix" {
+    byte_length = 4
+  }
+
+resource "azurerm_cdn_profile" "cdn" {
+          name = "\${var.project_name}-cdn-\${random_id.cdn_suffix.hex}"
           location = var.location
           resource_group_name = var.resource_group_name
           sku = "Standard_Microsoft"
         }
 
 resource "azurerm_cdn_endpoint" "endpoint" {
-          name = "\${var.project_name}-endpoint"
+          name = "\${var.project_name}-ep-\${random_id.cdn_suffix.hex}"
           profile_name = azurerm_cdn_profile.cdn.name
           location = var.location
           resource_group_name = var.resource_group_name
@@ -6217,7 +6252,7 @@ resource "azurerm_linux_virtual_machine" "vm" {
       case 'computeserverless':
         return {
           main: `resource "azurerm_storage_account" "func_store" {
-          name = replace("\${var.project_name}fsa", "-", "")
+          name = "\${substr(replace(lower(var.project_name), "-", ""), 0, 13)}fsa\${random_id.storage_suffix.hex}"
           resource_group_name = var.resource_group_name
           location = var.location
           account_tier = "Standard"
@@ -6361,7 +6396,7 @@ resource "azurerm_kusto_database" "main" {
         }
 
 resource "azurerm_storage_account" "synapse" {
-          name = replace("\${var.project_name}synsa", "-", "")
+          name = "\${substr(replace(lower(var.project_name), "-", ""), 0, 11)}synsa\${random_id.storage_suffix.hex}"
           resource_group_name = var.resource_group_name
           location = var.location
           account_tier = "Standard"
@@ -6381,7 +6416,7 @@ resource "azurerm_storage_data_lake_gen2_filesystem" "main" {
       case 'datalake':
         return {
           main: `resource "azurerm_storage_account" "lake" {
-          name = replace("\${var.project_name}lake", "-", "")
+          name = "\${substr(replace(lower(var.project_name), "-", ""), 0, 12)}lake\${random_id.storage_suffix.hex}"
           resource_group_name = var.resource_group_name
           location = var.location
           account_tier = "Standard"
@@ -6400,15 +6435,19 @@ resource "azurerm_storage_data_lake_gen2_filesystem" "lake" {
 
       case 'cdn':
         return {
-          main: `resource "azurerm_cdn_profile" "cdn" {
-          name = "\${var.project_name}-cdn"
+          main: `resource "random_id" "cdn_suffix" {
+    byte_length = 4
+  }
+
+resource "azurerm_cdn_profile" "cdn" {
+          name = "\${var.project_name}-cdn-\${random_id.cdn_suffix.hex}"
           location = "global"
           resource_group_name = var.resource_group_name
           sku = "Standard_Microsoft"
         }
 
 resource "azurerm_cdn_endpoint" "cdn_ep" {
-          name = "\${var.project_name}-cdn-ep"
+          name = "\${var.project_name}-cdn-ep-\${random_id.cdn_suffix.hex}"
           profile_name = azurerm_cdn_profile.cdn.name
           location = "global"
           resource_group_name = var.resource_group_name
@@ -7032,8 +7071,12 @@ resource "azurerm_cdn_frontdoor_endpoint" "fd_ep" {
         return {
           main: `data "azurerm_client_config" "current" { }
 
+resource "random_id" "ml_suffix" {
+    byte_length = 4
+  }
+
 resource "azurerm_storage_account" "ml_storage" {
-          name = replace("\${var.project_name}mlst", "-", "")
+          name = "\${substr(replace(lower(var.project_name), "-", ""), 0, 12)}mlst\${random_id.ml_suffix.hex}"
           location = var.location
           resource_group_name = var.resource_group_name
           account_tier = "Standard"

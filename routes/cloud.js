@@ -401,11 +401,10 @@ Resources:
               StringEquals:
                 'sts:ExternalId': !Ref ExternalId
       ManagedPolicyArns:
-        - 'arn:aws:iam::aws:policy/AdministratorAccess'
         - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
         - 'arn:aws:iam::aws:policy/CloudFrontFullAccess'
       Policies:
-        - PolicyName: 'CloudiverseAdministratorAccess'
+        - PolicyName: 'CloudiversePowerUserAccess'
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -478,11 +477,10 @@ Resources:
               StringEquals:
                 'sts:ExternalId': !Ref ExternalId
       ManagedPolicyArns:
-        - 'arn:aws:iam::aws:policy/AdministratorAccess'
         - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
         - 'arn:aws:iam::aws:policy/CloudFrontFullAccess'
       Policies:
-        - PolicyName: 'CloudiverseAdministratorAccess'
+        - PolicyName: 'CloudiversePowerUserAccess'
           PolicyDocument:
             Version: '2012-10-17'
             Statement:

@@ -356,6 +356,8 @@ const updateDeploymentStatus = async (deploymentId, status, url = null, logs = [
                 await pool.query(
                     `UPDATE workspaces 
                      SET deployment_status = 'DEPLOYED',
+                         step = 'deployed',
+                         state_json = state_json || jsonb_build_object('is_live', true, 'is_deployed', true),
                          deployed_at = NOW(),
                          deployment_history = COALESCE(deployment_history, '[]'::jsonb) || $1::jsonb,
                          updated_at = NOW()
