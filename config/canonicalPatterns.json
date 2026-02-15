@@ -237,9 +237,11 @@
             "forbidden_capabilities": [],
             "services": [
                 "computecontainer",
-                "computeserverless",
                 "logging",
                 "monitoring"
+            ],
+            "optional_services": [
+                "computeserverless"
             ],
             "score_weights": {
                 "data_persistence": 0.8,

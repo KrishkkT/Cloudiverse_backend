@@ -1,7 +1,8 @@
 const { STSClient, AssumeRoleCommand } = require("@aws-sdk/client-sts");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const { CloudFrontClient, CreateInvalidationCommand } = require("@aws-sdk/client-cloudfront");
-const { ECSClient, RegisterTaskDefinitionCommand, UpdateServiceCommand, DescribeTaskDefinitionCommand } = require("@aws-sdk/client-ecs");
+const { ECSClient, RegisterTaskDefinitionCommand, UpdateServiceCommand, DescribeTaskDefinitionCommand, DescribeServicesCommand } = require("@aws-sdk/client-ecs");
+const { LambdaClient, UpdateFunctionCodeCommand, GetFunctionCommand } = require("@aws-sdk/client-lambda");
 const { CodeBuildClient, StartBuildCommand, BatchGetBuildsCommand } = require("@aws-sdk/client-codebuild");
 const { Storage } = require('@google-cloud/storage');
 const { BlobServiceClient, BlockBlobClient } = require("@azure/storage-blob");
@@ -105,8 +106,9 @@ async function deployImageToProvider(deploymentId, workspace, conn, provider, im
         envVars['DB_HOST'] = dbEndpoint;
         envVars['DB_PORT'] = '5432'; // Default for now
         envVars['DB_NAME'] = 'app_db';
-        // Placeholder credential - in production this would be replaced by Secrets Manager retrieval or IAM Auth
-        envVars['DATABASE_URL'] = `postgres://user:password@${dbEndpoint}:5432/app_db`;
+        // Use password from outputs or default
+        const dbPass = infraOutputs.relationaldatabase?.value?.password || 'ChangeMe123!';
+        envVars['DATABASE_URL'] = `postgres://\${infraOutputs.relationaldatabase?.value?.username || 'dbadmin'}:\${dbPass}@\${dbEndpoint}:5432/app_db`;
     } else if (infraOutputs.relationaldatabase?.value?.endpoint) {
         // Fallback for V1
         const db = infraOutputs.relationaldatabase.value;
@@ -134,7 +136,8 @@ async function deployImageToProvider(deploymentId, workspace, conn, provider, im
     const authClientId = getVal('auth_client_id');
     if (authClientId) {
         envVars['AUTH_CLIENT_ID'] = authClientId;
-        envVars['AUTH_ISSUER'] = `https://${authClientId}.auth0.com`; // Placeholder assumption
+        // Use issuer_url from outputs or construct Cognito URL
+        envVars['AUTH_ISSUER'] = infraOutputs.auth?.value?.issuer_url || infraOutputs.identityauth?.value?.issuer_url || `https://cognito-idp.\${region}.amazonaws.com/unknown_pool`;
     }
 
     // 5. API Gateway / CDN
@@ -749,10 +752,50 @@ function ensureCloudNativeArtifacts(dir, runtime, provider) {
             content = `FROM node:18-alpine
 WORKDIR /app
 COPY package*.json ./
-RUN npm install --production
+RUN npm install
 COPY . .
+RUN npm run build --if-present
 EXPOSE 80 8080 3000
 CMD ["npm", "start"]`;
+        } else if (runtime === 'next' || runtime === 'react' || runtime === 'vue') {
+            // Detect package manager
+            const hasYarn = fs.existsSync(path.join(dir, 'yarn.lock'));
+            const hasPnpm = fs.existsSync(path.join(dir, 'pnpm-lock.yaml'));
+
+            let installCmd = 'npm install';
+            let buildCmd = 'npm run build';
+            let runnerCmd = 'npm start';
+            let copyLockfile = 'COPY package*.json ./';
+
+            if (hasYarn) {
+                installCmd = 'yarn install';
+                buildCmd = 'yarn build';
+                runnerCmd = 'yarn start';
+                copyLockfile = 'COPY package.json yarn.lock ./';
+            } else if (hasPnpm) {
+                installCmd = 'npm install -g pnpm && pnpm install';
+                buildCmd = 'pnpm run build';
+                runnerCmd = 'pnpm start';
+                copyLockfile = 'COPY package.json pnpm-lock.yaml ./';
+            }
+
+            // Optimized Next.js / Frontend Containerfile
+            content = `FROM node:18-alpine AS builder
+WORKDIR /app
+${copyLockfile}
+RUN ${installCmd}
+COPY . .
+RUN ${buildCmd}
+
+FROM node:18-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV production
+${copyLockfile}
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/node_modules ./node_modules
+EXPOSE 3000
+CMD ["sh", "-c", "${runnerCmd} -H 0.0.0.0"]`;
         } else if (runtime === 'python') {
             content = `FROM python:3.9-slim
 WORKDIR /app
@@ -781,6 +824,9 @@ CMD ["java", "-jar", "target/app.jar"]`;
         if (!fs.existsSync(buildspecPath)) {
             const buildspec = `version: 0.2
 phases:
+  install:
+    runtime-versions:
+      nodejs: 18
   pre_build:
     commands:
       - echo Logging in to Amazon ECR...
@@ -796,7 +842,7 @@ phases:
       - echo Pushing the Docker image...
       - docker push $IMAGE_REPO_URL:$IMAGE_TAG`;
             fs.writeFileSync(buildspecPath, buildspec);
-            console.log(`[INFO] Generated default buildspec.yml for AWS`);
+            console.log(`[INFO] Generated optimized buildspec.yml for AWS (Node 18)`);
         }
     }
 }
@@ -918,7 +964,7 @@ const deployFromGithub = async (deploymentId, workspace, config) => {
             await verifyLiveSite(deploymentId, liveUrl, 10);
             await updateDeploymentStatus(deploymentId, 'success', liveUrl, [{ message: `🚀 Static deployment successful! Verified: ${liveUrl}` }]);
 
-        } else if (targetType === 'CONTAINER_SERVICE') {
+        } else if (targetType === 'CONTAINER' || targetType === 'CONTAINER_SERVICE') {
             if (projectInfo.type !== 'CONTAINER') {
                 throw new Error(`Architectural Mismatch: Project detected as ${projectInfo.type} but Infrastructure is CONTAINER_SERVICE.`);
             }
@@ -928,7 +974,8 @@ const deployFromGithub = async (deploymentId, workspace, config) => {
 
             await appendLog(deploymentId, `🏗️ Orchestrating Cloud-Native Container Build for ${deploymentTarget.provider.toUpperCase()}...`);
             const containerMeta = deploymentTarget.container;
-            if (!containerMeta) throw new Error("Contract Violation: CONTAINER_SERVICE target missing 'container' metadata.");
+            console.log("CONTAINER METADATA:", containerMeta);
+            if (!containerMeta || !containerMeta.registry_url) throw new Error("Contract Violation: CONTAINER target missing 'container' metadata or 'registry_url'.");
 
             let imageTag = "";
 
@@ -991,6 +1038,46 @@ const deployFromGithub = async (deploymentId, workspace, config) => {
             const appUrl = await deployImageToProvider(deploymentId, workspace, conn, deploymentTarget.provider, imageTag);
             await updateDeploymentStatus(deploymentId, 'success', appUrl, [{ message: `🚀 Cloud-Native Container Build & Deploy successful!` }]);
 
+
+
+        } else if (targetType === 'SERVERLESS') {
+            await appendLog(deploymentId, `⚡ Deploying Serverless Function...`);
+
+            // 1. Prepare Archive
+            const zipBuffer = await zipDirectory(tempDir);
+
+            // 2. Identify Function & Provider
+            if (deploymentTarget.provider === 'aws') {
+                // Try Contract -> Global -> Legacy
+                const funcName = deploymentTarget.serverless?.function_name
+                    || infraOutputs.serverless?.function_name
+                    || infraOutputs.computeserverless?.value?.function_name
+                    || infraOutputs.lambda_function_name?.value;
+
+                if (!funcName) throw new Error("Missing AWS Lambda Function Name. Ensure infrastructure is deployed.");
+
+                const lambda = await createAwsClient(LambdaClient, region, conn.role_arn, conn.external_id);
+
+                await appendLog(deploymentId, `📤 Updating Lambda Function Code: ${funcName}...`);
+                await lambda.send(new UpdateFunctionCodeCommand({
+                    FunctionName: funcName,
+                    ZipFile: zipBuffer,
+                    Publish: true
+                }));
+
+                await appendLog(deploymentId, `✅ Lambda Function Updated.`);
+
+                // Get URL if available
+                const url = deploymentTarget.serverless?.url
+                    || infraOutputs.serverless_url?.value
+                    || infraOutputs.computeserverless?.value?.url;
+
+                await updateDeploymentStatus(deploymentId, 'success', url, [{ message: `🚀 Serverless Function Deployed! URL: ${url || 'N/A'}` }]);
+
+            } else {
+                throw new Error(`Serverless deployment for provider ${deploymentTarget.provider} is not yet implemented.`);
+            }
+
         } else {
             throw new Error(`Deployment target ${targetType} is not supported or automated yet.`);
         }
@@ -1016,6 +1103,150 @@ const getDeploymentStatus = async (id) => {
     const result = await pool.query('SELECT * FROM deployments WHERE id = $1', [id]);
     return result.rows[0];
 };
+
+/**
+ * Helper: Trigger GCP Cloud Build
+ */
+async function triggerGcpCloudBuild(deploymentId, credentials, projectId, bucketName, objectName, imageName, region) {
+    await appendLog(deploymentId, `🚀 Starting GCP Cloud Build...`);
+
+    // Authenticate
+    const auth = new google.auth.GoogleAuth({
+        credentials,
+        scopes: ['https://www.googleapis.com/auth/cloud-platform']
+    });
+    const cloudbuild = google.cloudbuild({ version: 'v1', auth });
+
+    // Create Build Request
+    const request = {
+        projectId,
+        requestBody: {
+            steps: [
+                {
+                    name: 'gcr.io/cloud-builders/docker',
+                    args: ['build', '-t', imageName, '.']
+                },
+                {
+                    name: 'gcr.io/cloud-builders/docker',
+                    args: ['push', imageName]
+                }
+            ],
+            source: {
+                storageSource: {
+                    bucket: bucketName,
+                    object: objectName
+                }
+            },
+            timeout: '600s'
+        }
+    };
+
+    const res = await cloudbuild.projects.builds.create(request);
+    const buildId = res.data.metadata.build.id;
+    await appendLog(deploymentId, `🏗️ Cloud Build started. ID: ${buildId}`);
+
+    // Poll
+    let status = 'QUEUED';
+    while (['QUEUED', 'WORKING'].includes(status)) {
+        await new Promise(r => setTimeout(r, 5000));
+        const statusRes = await cloudbuild.projects.builds.get({ projectId, id: buildId });
+        status = statusRes.data.status;
+
+        if (status === 'SUCCESS') {
+            await appendLog(deploymentId, "✅ GCP Cloud Build SUCCEEDED.");
+            break;
+        } else if (['FAILURE', 'INTERNAL_ERROR', 'TIMEOUT', 'CANCELLED'].includes(status)) {
+            throw new Error(`Cloud Build failed with status ${status}.`);
+        }
+        await appendLog(deploymentId, `⏳ Build status: ${status}...`);
+    }
+    return imageName;
+}
+
+/**
+ * Helper: Update Provider Service (ECS, ContainerApps, CloudRun)
+ */
+async function deployImageToProvider(deploymentId, workspace, conn, provider, imageTag) {
+    const infraOutputs = workspace.state_json.infra_outputs || {};
+    // Ensure normalization
+    const cc = infraOutputs.computecontainer || infraOutputs.compute_container || {};
+
+    // fallback for legacy
+    const clusterName = cc.cluster_name || infraOutputs.cluster_name?.value;
+    const serviceName = cc.service_name || infraOutputs.service_name?.value;
+
+    let liveUrl = "";
+
+    if (provider === 'aws') {
+        if (!clusterName || !serviceName) throw new Error("Missing cluster_name or service_name for AWS ECS deployment.");
+
+        const ecs = await createAwsClient(ECSClient, workspace.state_json.region || 'ap-south-1', conn.role_arn, conn.external_id);
+
+        // Force new deployment to pick up 'latest' tag
+        await appendLog(deploymentId, `🔄 Updating ECS Service: ${serviceName} (Force New Deployment)...`);
+        await ecs.send(new UpdateServiceCommand({
+            cluster: clusterName,
+            service: serviceName,
+            forceNewDeployment: true
+        }));
+
+        // Construct LB URL if available
+        liveUrl = infraOutputs.load_balancer_dns?.value || infraOutputs.alb_dns_name?.value || `http://${serviceName}-lb`; // fallback
+
+    } else if (provider === 'azure') {
+        const rgName = cc.resource_group_name || infraOutputs.resource_group_name?.value;
+        const appName = cc.container_app_name || infraOutputs.container_app_name?.value;
+
+        if (!rgName || !appName) throw new Error("Missing resource_group_name or container_app_name for Azure deployment.");
+
+        await appendLog(deploymentId, `🔄 Updating Azure Container App: ${appName}...`);
+
+        const creds = new ClientSecretCredential(
+            process.env.ARM_TENANT_ID || conn.credentials.tenant_id,
+            process.env.ARM_CLIENT_ID || conn.credentials.client_id,
+            process.env.ARM_CLIENT_SECRET || conn.credentials.client_secret
+        );
+        const client = new ContainerAppsAPIClient(creds, process.env.ARM_SUBSCRIPTION_ID || conn.credentials.subscription_id);
+
+        // Fetch current to keep other settings? 
+        // For now, just update the image in the first container of the first template
+        const currentParams = await client.containerApps.get(rgName, appName);
+        if (currentParams.template && currentParams.template.containers && currentParams.template.containers.length > 0) {
+            currentParams.template.containers[0].image = imageTag;
+            await client.containerApps.beginCreateOrUpdateAndWait(rgName, appName, currentParams);
+        } else {
+            throw new Error("Could not find container template in Azure Container App.");
+        }
+
+        liveUrl = `https://${currentParams.configuration?.ingress?.fqdn}`;
+
+    } else if (provider === 'gcp') {
+        // GCP Cloud Run Update
+        const svcName = cc.service_name || infraOutputs.service_name?.value || workspace.name;
+        await appendLog(deploymentId, `🔄 Updating Cloud Run Service: ${svcName}...`);
+
+        const auth = new google.auth.GoogleAuth({
+            credentials: conn.credentials,
+            scopes: ['https://www.googleapis.com/auth/cloud-platform']
+        });
+        const run = google.run({ version: 'v1', auth });
+        const parent = `projects/${conn.project_id}/locations/${workspace.state_json.region || 'us-central1'}/services/${svcName}`;
+
+        const current = await run.projects.locations.services.get({ name: parent });
+        if (current.data && current.data.spec && current.data.spec.template) {
+            current.data.spec.template.spec.containers[0].image = imageTag;
+            await run.projects.locations.services.replaceService({
+                name: parent,
+                requestBody: current.data
+            });
+        }
+
+        liveUrl = current.data.status.url;
+    }
+
+    await appendLog(deploymentId, `✅ Service Updated. Live URL: ${liveUrl}`);
+    return liveUrl;
+}
 
 // Helper: Validate Docker Image Format
 function validateDockerImage(image) {

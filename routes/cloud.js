@@ -136,49 +136,45 @@ const verifyCloudConnection = async (provider, metadata) => {
 
             const client = new STSClient(clientConfig);
 
-            // 🧠 SMART FALLBACK: Try dynamic role, fall back to legacy if needed
+            // 🧠 FIX: Use credential_pairs to try each (role, externalId) combo independently
+            const credentialPairs = metadata.credential_pairs || [
+                { role_arn: metadata.role_arn, external_id: metadata.external_id, source: 'default' },
+                ...(metadata.role_arn_fallback ? [{ role_arn: metadata.role_arn_fallback, external_id: metadata.external_id, source: 'fallback' }] : [])
+            ];
+
+            // Also build a deduped flat list for discovery fallback
             const accountIdFromArn = metadata.role_arn.split(':')[4];
-            const rolesToTry = [
-                metadata.role_arn,
-                // Include the fallback role ARN if provided (covers both S3 and dynamic templates)
-                ...(metadata.role_arn_fallback ? [metadata.role_arn_fallback] : []),
-                `arn:aws:iam::${accountIdFromArn}:role/cloudiverse-deploy-role`,
-                `arn:aws:iam::${accountIdFromArn}:role/CloudiverseAccessRole-${metadata.external_id}`
-            ].filter((v, i, a) => a.indexOf(v) === i); // deduplicate
+            const externalIdsToTry = [...new Set(credentialPairs.map(p => p.external_id))];
 
             let assumed = null;
             let lastErr = null;
             let successfulRoleArn = null;
 
-            for (const roleArnToTry of rolesToTry) {
+            // Phase 1: Try each credential pair with its CORRECT ExternalId
+            for (const pair of credentialPairs) {
                 try {
-                    console.log(`[AWS_VERIFY] Attempting to assume role: ${roleArnToTry}`);
+                    console.log(`[AWS_VERIFY] Trying ${pair.source}: ${pair.role_arn} (ExtID: ${pair.external_id})`);
                     const assumeCmd = new AssumeRoleCommand({
-                        RoleArn: roleArnToTry,
+                        RoleArn: pair.role_arn,
                         RoleSessionName: "CloudiverseVerificationSession",
-                        ExternalId: metadata.external_id
+                        ExternalId: pair.external_id
                     });
                     assumed = await client.send(assumeCmd);
-                    successfulRoleArn = roleArnToTry;
-
-                    // If we successfully assumed a DIFFERENT role than requested, update it in the metadata or just proceed
-                    if (roleArnToTry !== metadata.role_arn) {
-                        console.log(`[AWS_VERIFY] ✅ Success using fallback role ARN '${roleArnToTry}'`);
-                    }
-                    break; // Success!
+                    successfulRoleArn = pair.role_arn;
+                    metadata.external_id = pair.external_id; // Update metadata with the working ExternalId
+                    console.log(`[AWS_VERIFY] ✅ Success: ${pair.role_arn} (${pair.source})`);
+                    break;
                 } catch (stsErr) {
-                    console.warn(`[AWS_VERIFY] Failed for ${roleArnToTry}: ${stsErr.message}`);
+                    console.warn(`[AWS_VERIFY] Failed for ${pair.role_arn}: ${stsErr.message}`);
                     lastErr = stsErr;
-                    // AWS often returns AccessDenied for non-existent roles in STS to prevent enumeration
-                    // So we continue to try the next candidate regardless.
                     continue;
                 }
             }
 
+            // Phase 2: Role Discovery (Last Resort) — try each ExternalId with discovered roles
             if (!assumed) {
-                // 🕵️ ROLE DISCOVERY (Last Resort for "Truly Automatic" experience)
                 try {
-                    console.log(`[AWS_VERIFY] Roles not found. Attempting discovery...`);
+                    console.log(`[AWS_VERIFY] All pairs failed. Attempting role discovery...`);
                     const { IAMClient, ListRolesCommand } = require("@aws-sdk/client-iam");
                     const iam = new IAMClient(clientConfig);
                     const roles = await iam.send(new ListRolesCommand({ MaxItems: 100 }));
@@ -186,20 +182,27 @@ const verifyCloudConnection = async (provider, metadata) => {
                         r.RoleName.toLowerCase().startsWith('cloudiverse')
                     ).map(r => r.Arn);
 
+                    const triedArns = new Set(credentialPairs.map(p => p.role_arn));
+
                     for (const candidateArn of candidates) {
-                        if (rolesToTry.includes(candidateArn)) continue;
-                        try {
-                            console.log(`[AWS_VERIFY] Discovered: ${candidateArn}. Testing...`);
-                            const assumeCmd = new AssumeRoleCommand({
-                                RoleArn: candidateArn,
-                                RoleSessionName: "CloudiverseVerificationSession",
-                                ExternalId: metadata.external_id
-                            });
-                            assumed = await client.send(assumeCmd);
-                            successfulRoleArn = candidateArn;
-                            console.log(`[AWS_VERIFY] ✅ Discovered and verified: ${candidateArn}`);
-                            break;
-                        } catch (e) { /* continue */ }
+                        if (triedArns.has(candidateArn)) continue;
+                        // Try each discovered role with ALL known ExternalIds
+                        for (const extId of externalIdsToTry) {
+                            try {
+                                console.log(`[AWS_VERIFY] Discovered: ${candidateArn}. Testing with ExtID: ${extId}...`);
+                                const assumeCmd = new AssumeRoleCommand({
+                                    RoleArn: candidateArn,
+                                    RoleSessionName: "CloudiverseVerificationSession",
+                                    ExternalId: extId
+                                });
+                                assumed = await client.send(assumeCmd);
+                                successfulRoleArn = candidateArn;
+                                metadata.external_id = extId;
+                                console.log(`[AWS_VERIFY] ✅ Discovered and verified: ${candidateArn} with ExtID: ${extId}`);
+                                break;
+                            } catch (e) { /* continue */ }
+                        }
+                        if (assumed) break;
                     }
                 } catch (discoveryErr) {
                     console.warn("[AWS_VERIFY] Role discovery failed:", discoveryErr.message);
@@ -1089,68 +1092,60 @@ router.post('/:provider/verify', authMiddleware, async (req, res) => {
                 return res.status(400).json({ msg: "AWS Account ID is required for verification" });
             }
 
-            // 🧠 FIX 1.5: REUSE SAVED CONNECTION EXTERNAL ID IF EXISTS
-            // If the user already has a verified AWS connection, we should reuse THAT external ID
-            // so they don't need to update their stack for every new project.
-            let reusedConnection = false;
+            // 🧠 FIX: Build a priority-ordered list of credential pairs to try
+            // Instead of blindly overriding with saved credentials, try BOTH saved AND workspace-specific
+            const workspaceExternalId = `cloudiverse-user-${workspace_id}`;
+            const workspaceRoleArn = `arn:aws:iam::${account_id}:role/CloudiverseAccessRole-${workspaceExternalId}`;
+            const s3RoleArn = `arn:aws:iam::${account_id}:role/cloudiverse-deploy-role`;
+
+            // Start with workspace-specific credentials (these are what the user just created)
+            const credentialPairs = [
+                { role_arn: workspaceRoleArn, external_id: workspaceExternalId, source: 'workspace' },
+                { role_arn: s3RoleArn, external_id: workspaceExternalId, source: 's3_template' }
+            ];
+
+            // Check for saved connection and add those credentials to the list
             try {
                 if (req.user && req.user.id) {
                     const savedConn = await getUserConnection(req.user.id, 'aws');
                     if (savedConn && savedConn.external_id && savedConn.role_arn) {
-                        // If user provided account_id, check match. If not provided, assume they want the saved one.
-                        const requestAccountId = account_id;
                         const savedAccountId = savedConn.account_id;
-
-                        // Flexible matching:
-                        // 1. If request has ID, it must match saved ID
-                        // 2. If request has NO ID, we default to saved ID (e.g. from "Connect" button directly)
-                        if (!requestAccountId || requestAccountId === savedAccountId) {
-                            console.log(`[AWS] Found verified connection for Account ${savedAccountId}. REUSING CREDENTIALS.`);
-
-                            // OVERRIDE METADATA WITH SAVED CREDENTIALS
-                            // This is the key fix: We ignore the workspace-specific external_id 
-                            // and use the one that actually works (the saved one).
-                            metadata = {
-                                ...metadata,
-                                account_id: savedAccountId,
+                        if (!account_id || account_id === savedAccountId) {
+                            console.log(`[AWS] Found saved connection for Account ${savedAccountId}. Adding to credential candidates.`);
+                            // Add saved credentials as ADDITIONAL candidates, not as overrides
+                            credentialPairs.unshift({
                                 role_arn: savedConn.role_arn,
                                 external_id: savedConn.external_id,
-                                status: 'connected',
-                                verified: true
-                            };
-                            reusedConnection = true;
-                        } else {
-                            console.log(`[AWS] Saved connection exists for Account ${savedAccountId}, but request is for ${requestAccountId}. Cannot reuse.`);
+                                source: 'saved_connection'
+                            });
                         }
                     }
                 }
             } catch (reuseErr) {
-                console.warn("[AWS] Failed to check for reusable connection", reuseErr);
+                console.warn("[AWS] Failed to check for saved connection", reuseErr);
             }
 
-            if (!reusedConnection) {
-                // If we didn't reuse, we must try BOTH role naming conventions:
-                // 1. S3 template creates: cloudiverse-deploy-role (hardcoded)
-                // 2. Dynamic template creates: CloudiverseAccessRole-{externalId}
-                const strictExternalId = `cloudiverse-user-${workspace_id}`;
+            // Deduplicate by role_arn+external_id combo
+            const seen = new Set();
+            const uniquePairs = credentialPairs.filter(pair => {
+                const key = `${pair.role_arn}|${pair.external_id}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
 
-                // Primary: S3 template's hardcoded role name (what most users will have)
-                const s3RoleArn = `arn:aws:iam::${account_id}:role/cloudiverse-deploy-role`;
-                // Fallback: Dynamic template's parameterized role name
-                const dynamicRoleArn = `arn:aws:iam::${account_id}:role/CloudiverseAccessRole-${strictExternalId}`;
+            // Pass ALL candidate pairs to verifyCloudConnection
+            metadata = {
+                ...metadata,
+                account_id,
+                role_arn: uniquePairs[0].role_arn,
+                external_id: uniquePairs[0].external_id,
+                credential_pairs: uniquePairs, // 🧠 All candidates for the verify function
+                workspace_external_id: workspaceExternalId // For discovery fallback
+            };
 
-                metadata = {
-                    ...metadata,
-                    account_id,
-                    role_arn: s3RoleArn,  // Primary: matches S3 template
-                    role_arn_fallback: dynamicRoleArn,  // Fallback: matches dynamic template
-                    external_id: strictExternalId
-                };
-
-                console.log(`[AWS_VERIFY_INTENT] New Connection Setup. Primary Role: ${s3RoleArn}, Fallback: ${dynamicRoleArn}, ExtID: ${strictExternalId}`);
-            } else {
-                console.log(`[AWS_VERIFY_INTENT] Reusing Existing Connection. Role: ${metadata.role_arn}, ExtID: ${metadata.external_id}`);
-            }
+            console.log(`[AWS_VERIFY_INTENT] ${uniquePairs.length} credential pairs to try:`,
+                uniquePairs.map(p => `${p.source}: ${p.role_arn} (ExtID: ${p.external_id})`));
         }
 
         const verifyRes = await verifyCloudConnection(provider.toLowerCase(), metadata);

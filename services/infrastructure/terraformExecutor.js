@@ -489,10 +489,11 @@ class TerraformExecutor {
 
             try {
                 await fs.rm(terraformDir, { recursive: true, force: true });
-                await fs.rm(terraformLock, { force: true });
-                await fs.rm(terraformState, { force: true });
-                await fs.rm(terraformStateBackup, { force: true });
-                this.addLog(jobId, 'Cleaned previous Terraform state/cache (fresh deployment forced)', 'INFO');
+                // await fs.rm(terraformLock, { force: true });
+                // 🔥 CRITICAL FIX: Do NOT delete state file, or we lose knowledge of existing resources!
+                // await fs.rm(terraformState, { force: true });
+                // await fs.rm(terraformStateBackup, { force: true });
+                this.addLog(jobId, 'Cleaned Terraform cache (state preserved for updates)', 'INFO');
             } catch (e) {
                 // ignore
             }

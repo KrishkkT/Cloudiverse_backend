@@ -44,6 +44,7 @@ IMPORTANT PRINCIPLES:
 - AUTHORITATIVE SOURCE: If the user provides both a description and domain hints, the DESCRIPTION is the primary source of truth. Use domain hints only for general context; do not let them override explicit requirements in the description.
 - Do NOT assume 'ecommerce' unless explicitly stated (e.g. 'shop', 'store', 'sell'). For generic APIs, use 'api_backend' or 'saas'.
 - If user mentions 'app_compute', 'containers', or 'cluster', prefer 'managed_services_pref' or 'kubernetes_pref' for ops_model.
+- **CRITICAL WORKLOAD RULE**: If the description mentions a backend runtime (e.g., Node.js, Python, Go, Java, Docker, Container), the workload_type MUST be 'web_application' or 'api_backend'. Do NOT classify as 'static_site' merely because 'static assets' or 'S3' are mentioned. 'static_site' is ONLY for HTML/CSS/JS without a backend.
 
 -----------------
 DECISION AXES & CATEGORIES

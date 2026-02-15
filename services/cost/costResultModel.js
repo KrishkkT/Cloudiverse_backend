@@ -357,6 +357,33 @@ function deriveWeights(usage, pattern) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SERVICE CATEGORY HELPER
+// ═══════════════════════════════════════════════════════════════════════════
+function getCategoryForService(svc) {
+    const categories = {
+        compute_serverless: 'Compute', computeserverless: 'Compute',
+        compute_container: 'Compute', computecontainer: 'Compute',
+        compute_vm: 'Compute', computevm: 'Compute',
+        relational_database: 'Database', relationaldatabase: 'Database',
+        nosql_database: 'Database', nosqldatabase: 'Database',
+        cache: 'Database',
+        object_storage: 'Storage', objectstorage: 'Storage',
+        block_storage: 'Storage', blockstorage: 'Storage',
+        cdn: 'Networking', dns: 'Networking',
+        api_gateway: 'Networking', apigateway: 'Networking',
+        load_balancer: 'Networking', loadbalancer: 'Networking',
+        identity_auth: 'Security', identityauth: 'Security',
+        secrets_management: 'Security', secretsmanagement: 'Security',
+        waf: 'Security',
+        monitoring: 'Monitoring', logging: 'Monitoring',
+        message_queue: 'Messaging', messagequeue: 'Messaging',
+        event_bus: 'Messaging', eventbus: 'Messaging',
+        payment_gateway: 'External', paymentgateway: 'External'
+    };
+    return categories[svc] || 'Infrastructure';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // BUILD CANONICAL CostResult (ENGINE ALREADY APPLIED MULTIPLIER)
 // ═══════════════════════════════════════════════════════════════════════════
 function buildCostResult(provider, pattern, totalCost, genericServices, usage = {}) {
@@ -392,10 +419,23 @@ function buildCostResult(provider, pattern, totalCost, genericServices, usage = 
         const normalizedWeight = allocatedWeight > 0 ? (weight / allocatedWeight) : weight;
         const serviceCost = totalCost * normalizedWeight;  // Use engine cost directly
 
+        const cloudService = SERVICE_MAP[providerLower]?.[svc] || svc;
+        const displayName = cloudService !== svc
+            ? cloudService
+            : svc.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
         services.push({
+            service_class: svc,
             generic_name: svc,
-            cloud_service: SERVICE_MAP[providerLower]?.[svc] || svc,
-            cost: parseFloat(serviceCost.toFixed(2)),
+            cloud_service: cloudService,
+            display_name: displayName,
+            category: getCategoryForService(svc),
+            pricing_status: serviceCost > 0 ? 'PRICED' : 'FREE_TIER',
+            monthly_cost: parseFloat(serviceCost.toFixed(2)),
+            cost: {
+                monthly: parseFloat(serviceCost.toFixed(2)),
+                formatted: `$${serviceCost.toFixed(2)}/mo`
+            },
             percentage: parseFloat((normalizedWeight * 100).toFixed(1)),
             reason: getServiceReason(svc, usage)
         });

@@ -2658,10 +2658,14 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
                 // Recommended provider with safe fallback
                 recommended: {
                     provider: safeProvider,
-                    monthly_cost: safeDetails.total_monthly_cost ?? safeDetails.total ?? 0,
-                    formatted_cost: safeDetails.formatted_cost ?? '$0.00',
-                    service_count: safeDetails.service_count ?? 0,
+                    monthly_cost: safeDetails.total_monthly_cost ?? safeDetails.total ?? costAnalysis.recommended?.monthly_cost ?? 0,
+                    formatted_cost: safeDetails.formatted_cost ?? costAnalysis.recommended?.formatted_cost ?? '$0.00',
+                    service_count: safeDetails.service_count ?? costAnalysis.recommended?.services?.length ?? 0,
                     cost_range: safeRange,
+                    // 🔒 FIX: Ensure services are passed for 'View Included Services' dropdown
+                    services: costAnalysis.recommended?.services ||
+                        costAnalysis.services ||
+                        safeDetails.services || [],
                     // 🔒 FIX: Ensure drivers are passed with proper fallbacks
                     drivers: costAnalysis.recommended?.drivers ||
                         costAnalysis.drivers ||
@@ -2688,6 +2692,8 @@ router.post('/cost-analysis', authMiddleware, async (req, res) => {
 
                 // Per-service costs with cloud-specific names and reasons
                 services_breakdown: costAnalysis.services || [],
+                // 🔥 FIX: Alias for CostBreakdown component which reads 'services'
+                services: costAnalysis.services || [],
 
                 // Cost drivers (quantified with values + impact)
                 drivers: costAnalysis.drivers || [],

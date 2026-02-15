@@ -364,6 +364,208 @@ output "function_arn"  { value = aws_lambda_function.main.arn }
   return generateMinimalModule(p, 'compute_serverless');
 }
 
+function module_compute_container(provider) {
+  const p = assertProvider(provider);
+
+  // AWS ECS Fargate + ALB baseline
+  if (p === 'aws') {
+    return {
+      mainTf: `
+# --- ECS Cluster ---
+resource "aws_ecs_cluster" "main" {
+  name = "\${var.project_name}-cluster"
+  
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
+
+  tags = { Name = "\${var.project_name}-cluster" }
+}
+
+resource "aws_cloudwatch_log_group" "main" {
+  name              = "/ecs/\${var.project_name}"
+  retention_in_days = 14
+}
+
+# --- Networking & Security ---
+# ALB Security Group: Allow HTTP from anywhere
+resource "aws_security_group" "alb" {
+  name        = "\${var.project_name}-alb-sg"
+  description = "ALB Public Access"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# ECS Security Group: Allow traffic only from ALB
+resource "aws_security_group" "ecs" {
+  name        = "\${var.project_name}-ecs-sg"
+  description = "ECS Task Access"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port       = 3000
+    to_port         = 3000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# --- Load Balancer ---
+resource "aws_lb" "main" {
+  name               = "\${var.project_name}-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb.id]
+  subnets            = var.public_subnet_ids
+  
+  enable_deletion_protection = false
+}
+
+resource "aws_lb_target_group" "main" {
+  name        = "\${var.project_name}-tg"
+  port        = 3000
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+
+  health_check {
+    path                = "/"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 5
+    matcher             = "200"
+  }
+}
+
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.main.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.main.arn
+  }
+}
+
+# --- IAM Roles ---
+resource "aws_iam_role" "execution_role" {
+  name = "\${var.project_name}-exec-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "execution_role_policy" {
+  role       = aws_iam_role.execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+# --- ECS Task & Service ---
+resource "aws_ecs_task_definition" "main" {
+  family                   = var.project_name
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = var.cpu
+  memory                   = var.memory
+  execution_role_arn       = aws_iam_role.execution_role.arn
+  task_role_arn            = aws_iam_role.execution_role.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "app"
+      image     = var.container_image
+      essential = true
+      portMappings = [
+        {
+          containerPort = 3000
+          hostPort      = 3000
+        }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.main.name
+          awslogs-region        = var.region
+          awslogs-stream-prefix = "ecs"
+        }
+      }
+      environment = []
+    }
+  ])
+}
+
+resource "aws_ecs_service" "main" {
+  name            = "\${var.project_name}-service"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.main.arn
+  desired_count   = var.desired_count
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets         = var.public_subnet_ids # Using public subnets for Fargate to pull images easily without NAT Gateway
+    security_groups = [aws_security_group.ecs.id]
+    assign_public_ip = true
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.main.arn
+    container_name   = "app"
+    container_port   = 3000
+  }
+
+  depends_on = [aws_lb_listener.http]
+}
+`.trim(),
+      variablesTf: `
+\${renderStandardVariables('aws')}
+variable "vpc_id" { type = string }
+variable "public_subnet_ids" { type = list(string) }
+variable "container_image" { type = string default = "nginx:latest" }
+variable "cpu" { type = number default = 256 }
+variable "memory" { type = number default = 512 }
+variable "desired_count" { type = number default = 1 }
+`.trim(),
+      outputsTf: `
+output "cluster_name" { value = aws_ecs_cluster.main.name }
+output "service_name" { value = aws_ecs_service.main.name }
+output "service_endpoint" { value = aws_lb.main.dns_name }
+output "load_balancer_dns" { value = aws_lb.main.dns_name }
+`.trim()
+    };
+  }
+
+  return generateMinimalModule(p, 'compute_container');
+}
+
 function module_object_storage(provider) {
   const p = assertProvider(provider);
 
@@ -518,8 +720,8 @@ const MODULE_FAMILIES = {
   relationaldatabase: module_relational_database,
 
   // Common aliases
-  computecontainer: (p) => generateMinimalModule(p, 'computecontainer'),
-  appcompute: (p) => generateMinimalModule(p, 'computecontainer'),
+  computecontainer: module_compute_container,
+  appcompute: module_compute_container,
   loadbalancer: (p) => generateMinimalModule(p, 'loadbalancer'),
   cdn: (p) => generateMinimalModule(p, 'cdn'),
   dns: (p) => generateMinimalModule(p, 'dns'),

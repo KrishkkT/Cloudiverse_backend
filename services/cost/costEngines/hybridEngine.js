@@ -27,7 +27,8 @@ const PROVIDER_PRICING = {
         app_compute: { base: 24, per_gb_hour: 0.076, per_request: 0.0000009 },
         api_gateway: { base: 9, per_million_requests: 3.0 },
         load_balancer: { base: 18, per_gb: 0.007 },
-        relational_db: { base: 42, per_gb_storage: 0.10, per_iops: 0.09 },
+        // DEBUG: Changed 42 -> 9999 to confirm source
+        relational_db: { base: 9999, per_gb_storage: 0.10, per_iops: 0.09 },
         cache: { base: 32, per_gb: 0.047 },
         websocket: { base: 14, per_million_messages: 0.9 },
         message_queue: { base: 0, per_million_requests: 0.40 },
@@ -55,14 +56,15 @@ const PROVIDER_PRICING = {
  * Calculate cost for HYBRID_PLATFORM pattern
  */
 async function calculate(usageProfile, options = {}) {
+    console.trace('[HYBRID_ENGINE] HIT! Computing hybrid cost');
     const { costProfile = 'cost_effective' } = options;
-    
+
     // Extract usage metrics
     const monthlyUsers = getUsageValue(usageProfile.monthly_users, 5000);
     const requestsPerUser = getUsageValue(usageProfile.requests_per_user, 30);
     const dataTransferGB = getUsageValue(usageProfile.data_transfer_gb, 500);
     const dataStorageGB = getUsageValue(usageProfile.data_storage_gb, 100);
-    
+
     // Calculate derived metrics
     const totalRequests = monthlyUsers * requestsPerUser;
     const totalRequestsMillions = totalRequests / 1_000_000;
@@ -70,56 +72,56 @@ async function calculate(usageProfile, options = {}) {
     const databaseStorageGB = Math.max(10, dataStorageGB * 0.6); // 60% of storage in DB
     const cacheGB = Math.min(16, Math.max(1, monthlyUsers / 500)); // Scale cache with users
     const logDataGB = Math.max(5, totalRequestsMillions * 0.5); // 500MB per million requests
-    
+
     console.log(`[HYBRID ENGINE] Users: ${monthlyUsers}, Requests: ${totalRequests}, Transfer: ${dataTransferGB}GB, Storage: ${dataStorageGB}GB`);
-    
+
     const cost_estimates = {};
-    
+
     for (const [provider, pricing] of Object.entries(PROVIDER_PRICING)) {
         // Calculate component costs
         const costs = {
-            app_compute: pricing.app_compute.base + 
-                        (computeGBHours * pricing.app_compute.per_gb_hour) +
-                        (totalRequestsMillions * pricing.app_compute.per_request * 1_000_000),
-            
-            api_gateway: pricing.api_gateway.base + 
-                        (totalRequestsMillions * pricing.api_gateway.per_million_requests),
-            
-            load_balancer: pricing.load_balancer.base + 
-                          (dataTransferGB * pricing.load_balancer.per_gb),
-            
-            relational_db: pricing.relational_db.base + 
-                          (databaseStorageGB * pricing.relational_db.per_gb_storage),
-            
+            app_compute: pricing.app_compute.base +
+                (computeGBHours * pricing.app_compute.per_gb_hour) +
+                (totalRequestsMillions * pricing.app_compute.per_request * 1_000_000),
+
+            api_gateway: pricing.api_gateway.base +
+                (totalRequestsMillions * pricing.api_gateway.per_million_requests),
+
+            load_balancer: pricing.load_balancer.base +
+                (dataTransferGB * pricing.load_balancer.per_gb),
+
+            relational_db: pricing.relational_db.base +
+                (databaseStorageGB * pricing.relational_db.per_gb_storage),
+
             cache: pricing.cache.base + (cacheGB * pricing.cache.per_gb),
-            
-            websocket: pricing.websocket.base + 
-                      (totalRequestsMillions * 0.2 * pricing.websocket.per_million_messages), // 20% realtime
-            
-            message_queue: pricing.message_queue.base + 
-                          (totalRequestsMillions * 0.3 * pricing.message_queue.per_million_requests), // 30% async
-            
-            object_storage: pricing.object_storage.base + 
-                           (dataStorageGB * 0.4 * pricing.object_storage.per_gb) + // 40% in object storage
-                           (totalRequestsMillions * 10 * pricing.object_storage.per_1k_requests), // 10k per million
-            
-            authentication: pricing.authentication.base + 
-                           (monthlyUsers * pricing.authentication.per_mau),
-            
-            observability: pricing.observability.base + 
-                          (logDataGB * pricing.observability.per_gb_logs),
-            
+
+            websocket: pricing.websocket.base +
+                (totalRequestsMillions * 0.2 * pricing.websocket.per_million_messages), // 20% realtime
+
+            message_queue: pricing.message_queue.base +
+                (totalRequestsMillions * 0.3 * pricing.message_queue.per_million_requests), // 30% async
+
+            object_storage: pricing.object_storage.base +
+                (dataStorageGB * 0.4 * pricing.object_storage.per_gb) + // 40% in object storage
+                (totalRequestsMillions * 10 * pricing.object_storage.per_1k_requests), // 10k per million
+
+            authentication: pricing.authentication.base +
+                (monthlyUsers * pricing.authentication.per_mau),
+
+            observability: pricing.observability.base +
+                (logDataGB * pricing.observability.per_gb_logs),
+
             bandwidth: dataTransferGB * pricing.bandwidth.per_gb
         };
-        
+
         const totalCost = Object.values(costs).reduce((sum, cost) => sum + cost, 0);
-        
+
         // Apply cost profile multipliers
-        const multiplier = (costProfile === 'cost_effective' || costProfile === 'COST_EFFECTIVE') ? 0.85 : 
-                          (costProfile === 'high_performance' || costProfile === 'HIGH_PERFORMANCE') ? 1.4 : 1.0;
-        
+        const multiplier = (costProfile === 'cost_effective' || costProfile === 'COST_EFFECTIVE') ? 0.85 :
+            (costProfile === 'high_performance' || costProfile === 'HIGH_PERFORMANCE') ? 1.4 : 1.0;
+
         const adjustedCost = totalCost * multiplier;
-        
+
         // Format matches what infracostService expects
         cost_estimates[provider.toLowerCase()] = {
             total: parseFloat(adjustedCost.toFixed(2)),
@@ -137,10 +139,10 @@ async function calculate(usageProfile, options = {}) {
             confidence: 0.78,
             cost_profile: costProfile
         };
-        
+
         console.log(`[HYBRID ENGINE] ${provider}: $${adjustedCost.toFixed(2)}/mo`);
     }
-    
+
     // Return in format expected by infracostService
     return {
         cost_estimates,

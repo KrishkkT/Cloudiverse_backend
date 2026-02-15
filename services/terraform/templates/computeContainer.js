@@ -28,6 +28,108 @@ resource "aws_ecs_cluster" "main" {
   }
 }
 
+# --- Networking & Security ---
+# ALB Security Group: Allow HTTP from anywhere
+resource "aws_security_group" "alb" {
+  name        = "\${var.project_name}-alb-sg"
+  description = "ALB Public Access"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "\${var.project_name}-alb-sg"
+    Environment = var.environment
+  }
+}
+
+# ECS Security Group: Allow traffic only from ALB
+resource "aws_security_group" "ecs" {
+  name        = "\${var.project_name}-ecs-sg"
+  description = "ECS Task Access"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port       = var.container_port
+    to_port         = var.container_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "\${var.project_name}-ecs-sg"
+    Environment = var.environment
+  }
+}
+
+# --- Load Balancer ---
+resource "aws_lb" "main" {
+  name               = "\${var.project_name}-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb.id]
+  subnets            = var.public_subnet_ids
+  
+  enable_deletion_protection = false
+
+  tags = {
+    Name        = "\${var.project_name}-alb"
+    Environment = var.environment
+  }
+}
+
+resource "aws_lb_target_group" "main" {
+  name        = "\${var.project_name}-tg"
+  port        = var.container_port
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+
+  health_check {
+    path                = "/"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 5
+    matcher             = "200"
+  }
+
+  tags = {
+    Name        = "\${var.project_name}-tg"
+    Environment = var.environment
+  }
+}
+
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.main.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.main.arn
+  }
+}
+
 # ECS Task Definition (Fargate)
 resource "aws_ecs_task_definition" "app" {
   family                   = "\${var.project_name}-task"
@@ -36,6 +138,7 @@ resource "aws_ecs_task_definition" "app" {
   cpu                      = var.container_cpu
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
+  task_role_arn            = aws_iam_role.ecs_execution.arn
 
   container_definitions = jsonencode([{
     name      = "\${var.project_name}-container"
@@ -93,9 +196,32 @@ resource "aws_cloudwatch_log_group" "ecs" {
     Environment = var.environment
   }
 }
+
+# ECS Service
+resource "aws_ecs_service" "app" {
+  name            = "\${var.project_name}-service"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.app.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = var.public_subnet_ids # Using public subnets for Fargate to avoid NAT Gateway costs/complexity for now
+    security_groups  = [aws_security_group.ecs.id]
+    assign_public_ip = true
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.main.arn
+    container_name   = "\${var.project_name}-container"
+    container_port   = var.container_port
+  }
+
+  depends_on = [aws_lb_listener.http]
+}
 `.trim(),
       variablesTf: `
-${renderStandardVariables('aws')}
+\${renderStandardVariables('aws')}
 
 variable "container_cpu" {
   type    = number
@@ -123,7 +249,6 @@ variable "container_port" {
 
 variable "vpc_id" {
   type        = string
-  default     = ""
   description = "VPC ID for container networking"
 }
 
@@ -156,8 +281,18 @@ output "task_definition_arn" {
 }
 
 output "url" {
-  value       = "" 
-  description = "URL (placeholder for Load Balancer integration)"
+  value       = aws_lb.main.dns_name
+  description = "Load Balancer DNS Name"
+}
+
+output "load_balancer_dns" {
+  value       = aws_lb.main.dns_name
+  description = "Load Balancer DNS Name"
+}
+
+output "service_endpoint" {
+  value       = aws_lb.main.dns_name
+  description = "Service Endpoint"
 }
 `.trim()
     };

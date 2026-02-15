@@ -48,7 +48,7 @@ router.post('/save', authMiddleware, async (req, res) => {
         // Prioritize Generated Summary, then User Input, then Default
         const msgDescription = state?.infraSpec?.project_summary || state?.description || "Auto-saved draft";
         await pool.query(
-          "UPDATE projects SET name = $1, description = $2 WHERE id = $3",
+          "UPDATE projects SET name = COALESCE($1, name), description = $2 WHERE id = $3",
           [name, msgDescription, updatedWs.project_id]
         );
 

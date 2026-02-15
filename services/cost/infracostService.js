@@ -274,6 +274,7 @@ function classifyWorkload(intent, infraSpec) {
  * Calculate costs for different cost modes
  */
 async function calculateCostForMode(costMode, infraSpec, intent, costProfile, usageProfile) {
+  console.log(`[INFRACOST_SERVICE] calculateCostForMode: ${costMode}`);
   try {
     switch (costMode) {
       case COST_MODES.INFRASTRUCTURE_COST:
@@ -420,9 +421,17 @@ async function calculateInfrastructureCost(infraSpec, intent, costProfile, usage
   const description = intent?.intent_classification?.project_description?.toLowerCase() || '';
   const pattern = infraSpec.canonical_architecture?.pattern || '';
 
-  // 🔒 GOLD STANDARD FIX: Static Site Bypass
-  if (pattern === 'STATIC_SITE' || pattern === 'STATIC_WEB_HOSTING' || description.includes('static site')) {
-    console.log('[COST ENGINE] 🔒 STATIC_SITE_BYPASS Triggered');
+  // 🔥 FIX: Extract deployable services early to check for advanced components
+  const deployableServices = extractDeployableServices(infraSpec);
+  const ADVANCED_SERVICES = ['relationaldatabase', 'nosqldatabase', 'computecontainer', 'computevm', 'cache', 'searchengine'];
+  const hasAdvancedServices = deployableServices.some(s =>
+    ADVANCED_SERVICES.includes(s.replace(/_/g, '').toLowerCase())
+  );
+
+  // 🔒 GOLD STANDARD FIX: Static Site Bypass (Strict Mode)
+  // Only bypass if we don't have advanced components like databases or compute
+  if ((pattern === 'STATIC_SITE' || pattern === 'STATIC_WEB_HOSTING' || description.includes('static site')) && !hasAdvancedServices) {
+    console.log('[COST ENGINE] 🔒 STATIC_SITE_BYPASS Triggered (Pure Static)');
     const staticResult = await handleStaticWebsiteCost(infraSpec, intent, usageProfile);
     // Ensure we return the expected cost_mode for verification
     return {
@@ -616,10 +625,12 @@ async function generateCostEstimate(provider, infraSpec, deployableServices, usa
 
   // If no billable services, return early (but respect External count)
   if (billableServices.length === 0) {
+    console.log(`[INFRACOST_SERVICE] generateCostEstimate: No billable services found. Returning zero cost.`);
     return createZeroCostResult(provider, classification, costProfile);
   }
 
   try {
+    console.log(`[INFRACOST_SERVICE] generateCostEstimate: Starting Infracost run for ${provider}`);
     cleanProviderDir(providerDir);
 
     // 2. GENERATE PRICING TERRAFORM (Strict Mode)
@@ -2499,8 +2510,16 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
   // 🔒 STATIC SITE BYPASS - Formula only, no Terraform
   // Static sites don't need compute resources, use formula-based costing
   const pattern = infraSpec.serviceclasses?.pattern || infraSpec.service_classes?.pattern;
-  if (pattern === 'STATICWEBHOSTING' || pattern === 'STATICSITEWITHAUTH' ||
-    pattern === 'STATIC_WEB_HOSTING' || pattern === 'STATIC_SITE_WITH_AUTH') {
+
+  // 🔥 FIX: Use the already extracted deployableServices if available, or extract here
+  const currentServices = deployableServices || extractDeployableServices(infraSpec);
+  const ADVANCED_SERVICES = ['relationaldatabase', 'nosqldatabase', 'computecontainer', 'computevm', 'cache', 'searchengine'];
+  const hasAdvancedServices = currentServices.some(s =>
+    ADVANCED_SERVICES.includes(s.replace(/_/g, '').toLowerCase())
+  );
+
+  if ((pattern === 'STATICWEBHOSTING' || pattern === 'STATICSITEWITHAUTH' ||
+    pattern === 'STATIC_WEB_HOSTING' || pattern === 'STATIC_SITE_WITH_AUTH') && !hasAdvancedServices) {
     console.log('COST ENGINE: STATIC SITE DETECTED - Using formula bypass');
     const usageProfile = usageOverrides || {
       expected: { storage_gb: 2, data_transfer_gb: 10 }
@@ -2726,11 +2745,13 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
 async function calculateScenarios(infraSpec, intent, usageProfile) {
   console.log('[SCENARIOS] Building canonical cost scenarios...');
 
-  // ═══════════════════════════════════════════════════════════════════
   // STEP 1: CLASSIFY WORKLOAD INTO COST MODE
   // This determines the pricing approach to use
   // ═══════════════════════════════════════════════════════════════════
   const costMode = classifyWorkload(intent, infraSpec);
+
+  // ═══════════════════════════════════════════════════════════════════
+
   console.log(`[SCENARIOS] Cost Mode: ${costMode}`);
 
   // 🔵 PHASE 3.1: Extract deployable services ONLY
@@ -3763,36 +3784,7 @@ function writeProjectFolder(folder, basePath) {
   });
 }
 
-/**
- * Helper: Run Infracost CLI
- */
-function runInfracost(dir, usageFile) {
-  try {
-    // Check if usage file exists
-    let cmd = `infracost breakdown --path . --format json --show-skipped`;
-    if (fs.existsSync(usageFile)) {
-      cmd += ` --usage-file ${path.basename(usageFile)}`;
-    }
 
-    console.log(`[INFRACOST] Executing: ${cmd} in ${dir}`);
-    // Increase buffer size for large outputs
-    const stdout = execSync(cmd, { cwd: dir, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
-    return JSON.parse(stdout);
-  } catch (e) {
-    console.warn(`[INFRACOST] CLI failed: ${e.message}`);
-    // If it's just a status code 1 (cost > 0 but some error?), sometimes Infracost exits 1 on warnings?
-    // But usually it exits 0.
-    // If output available in e.stdout, try to parse it.
-    if (e.stdout) {
-      try {
-        return JSON.parse(e.stdout.toString());
-      } catch (parseErr) {
-        // ignore
-      }
-    }
-    throw e;
-  }
-}
 
 
 /**

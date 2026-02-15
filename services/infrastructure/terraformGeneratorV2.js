@@ -132,6 +132,27 @@ const SERVICE_TO_MODULE_NAME = {
 };
 
 /**
+ * SHARED MODULE SOURCES (Enterprise Architecture)
+ * Maps Cloudiverse services to their relative path in the shared-modules library.
+ */
+const SHARED_MODULE_SOURCES = {
+  networking: 'networking/vpc',
+  vpcnetworking: 'networking/vpc',
+  vpc: 'networking/vpc',
+  loadbalancer: 'networking/alb',
+  computecontainer: 'compute/ecs-fargate',
+  compute_container: 'compute/ecs-fargate',
+  computeserverless: 'compute/lambda',
+  relationaldatabase: 'database/rds',
+  nosqldatabase: 'database/dynamodb',
+  objectstorage: 'storage/s3',
+  identityauth: 'security/cognito',
+  auth: 'security/cognito',
+  ecr: 'devops/ecr',
+  codebuild: 'devops/codebuild'
+};
+
+/**
  * SERVICE METADATA
  * Defines dependencies and common arguments for each service.
  */
@@ -154,19 +175,15 @@ const SERVICE_METADATA = {
   // Compute
   computebatch: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
   computeedge: { args: [] },
-  computeserverless: { args: [] },
-  compute_container: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  computeserverless: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  compute_container: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'public_subnet_ids'] },
+  computecontainer: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'public_subnet_ids'] },
   computevm: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
   filestorage: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
   datalake: { args: ['encryption_at_rest'] },
   backup: { args: ['backup_retention_days'] },
 
-  // Compute
-  compute_container: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
-  computevm: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
-  computebatch: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
-  computeserverless: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
-  computecontainer: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'public_subnet_ids'] },
+
 
   // Network
   loadbalancer: { deps: ['networking'], args: ['vpc_id', 'public_subnet_ids'] },
@@ -2355,7 +2372,7 @@ resource "azurerm_security_center_subscription_pricing" "defender" {
 /**
  * Generate versions.tf
  */
-function generateVersionsTf(provider) {
+function generateVersionsTf(provider, region = "ap-south-1", projectName = "default") {
   const providerConfigs = {
     aws: {
       source: 'hashicorp/aws',
@@ -2388,12 +2405,16 @@ function generateVersionsTf(provider) {
       version = "~> 3.0"
     }
   }
-`;
 
-  /* 
-  # Backend config removed to allow local state (default)
-  # This fixes the 'no such host' error for the missing storage account
-  */
+  # 💉 Remote Backend (Injected for Production Stability)
+  # backend "s3" {
+  #   bucket         = "cloudiverse-state-..."
+  #   key            = "workload/${projectName}/terraform.tfstate"
+  #   region         = "${region}"
+  #   dynamodb_table = "cloudiverse-state-lock"
+  #   encrypt        = true
+  # }
+`;
 
   tf += `}\n`;
   return tf;
@@ -2484,56 +2505,66 @@ function generateVariablesTf(provider, pattern, services) {
     }
   });
 
+  // Inject Container Variables if Container Service Present
+  if (services.some(s => ['computecontainer', 'compute_container', 'appcompute', 'computekubernetes', 'containerizedwebapp'].includes(s))) {
+    variables += `
+variable "container_image" {
+  description = "Container image to deploy"
+  type        = string
+  default     = "nginx:latest"
+}
+variable "container_port" {
+  description = "Port exposed by the container"
+  type        = number
+  default     = 80
+}
+variable "container_cpu" {
+  description = "CPU units/cores"
+  type        = any
+  default     = 256
+}
+variable "container_memory" {
+  description = "Memory in MB/GB"
+  type        = any
+  default     = 512
+}
+`;
+  }
+
   // Common variables
   if (provider === 'aws') {
     variables += `variable "role_arn" {
-      description = "Assumed Role ARN"
-      type        = string
-    }
-    variable "external_id" {
-      description = "Cross-account External ID"
-      type        = string
-    }
-    `;
-
-    variables += `variable "region" {
-        description = "AWS region"
-        type = string
-      }
-
-
-
+  description = "Assumed Role ARN for provider connection"
+  type        = string
+}
+variable "external_id" {
+  description = "External ID for provider connection"
+  type        = string
+}
+variable "execution_role_arn" {
+  description = "Standard execution role for all workloads (from Landing Zone)"
+  type        = string
+}
+variable "region" {
+  description = "AWS region"
+  type        = string
+}
 variable "vpc_id" {
-        description = "VPC ID for resources"
-        type = string
-        default     = ""
-      }
-
+  description = "VPC ID for resources"
+  type        = string
+  default     = ""
+}
 variable "subnet_ids" {
-        description = "List of subnet IDs for resources"
-        type = list(string)
-        default     = []
-      }
-
-variable "security_group_id" {
-        description = "Security group ID for resources"
-        type = string
-        default     = ""
-      }
-
+  description = "List of subnet IDs for resources"
+  type        = list(string)
+  default     = []
+}
 variable "domain_name" {
-        description = "Domain name for DNS resources"
-        type = string
-        default     = ""
-      }
-
-variable "ecs_execution_role_arn" {
-        description = "ARN of the ECS task execution role"
-        type = string
-        default     = ""
-      }
-
-      `;
+  description = "Domain name for DNS resources"
+  type        = string
+  default     = ""
+}
+`;
   } else if (provider === 'gcp') {
 
     variables += `variable "project_id" {
@@ -2656,6 +2687,7 @@ function generateTfvars(provider, region, projectName, sizing = {}, connectionDa
 
       tfvars += `role_arn = "${correctRoleArn}"\n`;
       tfvars += `external_id = "${connectionData.external_id}"\n`;
+      tfvars += `execution_role_arn = "${correctRoleArn}"\n`;
     } else {
       // Fallback or comment for debugging
       tfvars += `# role_arn and external_id missing from connection data\n`;
@@ -2679,6 +2711,8 @@ function generateTfvars(provider, region, projectName, sizing = {}, connectionDa
     if (sizing.storage_gb) tfvars += `db_allocated_storage = ${sizing.storage_gb} \n`;
     if (sizing.container_cpu) tfvars += `container_cpu = ${sizing.container_cpu} \n`;
     if (sizing.container_memory) tfvars += `container_memory = ${sizing.container_memory} \n`;
+    if (sizing.container_image) tfvars += `container_image = "${sizing.container_image}" \n`;
+    if (sizing.container_port) tfvars += `container_port = ${sizing.container_port} \n`;
     if (sizing.function_memory) tfvars += `function_memory = ${sizing.function_memory} \n`;
     if (sizing.requests_per_month) tfvars += `estimated_requests = ${sizing.requests_per_month} \n`;
   }
@@ -2704,9 +2738,6 @@ function generateTfvars(provider, region, projectName, sizing = {}, connectionDa
 function generateOutputsTf(provider, pattern, services) {
   let outputs = `# 🏰 Canonical Deployment Contract\n\n`;
 
-  // 1. Determine Deployment Target (Strict Contract)
-  let targetType = "UNKNOWN";
-
   // Normalize services for robust matching (lowercase alphanumeric only)
   const normalize = (str) => String(str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const normalizedServices = services.map(normalize);
@@ -2718,18 +2749,26 @@ function generateOutputsTf(provider, pattern, services) {
     return `module.${modName}`;
   };
 
+  // 1. Determine Deployment Target (Strict Contract)
+  // 1. Determine Deployment Target (Strict Contract)
+  // 🟢 PRIORITY FIX: Check Compute types FIRST. Static/Storage is a fallback.
+  let targetType = "UNKNOWN";
   const p = String(pattern || '').toUpperCase();
-  if (p.includes('STATIC') || hasService('objectstorage') || hasService('cdn')) {
-    targetType = "STATIC_STORAGE";
-  } else if (p.includes('CONTAINER') || p.includes('APP') || hasService('computecontainer') || hasService('appcompute')) {
-    targetType = "CONTAINER_SERVICE";
-  } else if (hasService('computeserverless')) {
-    targetType = "SERVERLESS_FUNCTION";
+
+  if (hasService('computecontainer') || hasService('appcompute') || hasService('compute_container') || p.includes('CONTAINER')) {
+    targetType = "CONTAINER"; // Normalized to CONTAINER
+  } else if (hasService('computeserverless') || hasService('serverless_compute')) {
+    targetType = "SERVERLESS"; // Normalized to SERVERLESS
   } else if (hasService('computevm')) {
     targetType = "VM";
+  } else if (hasService('objectstorage') || hasService('cdn') || p.includes('STATIC')) {
+    targetType = "STATIC_STORAGE";
   }
 
-  outputs += `output "deployment_target" {
+  // 2. Output Aliases for backward compatibility -> MOVED to end of file to prevent duplicates
+
+  outputs += `
+output "deployment_target" {
   description = "The authoritative deployment contract. Deploy service MUST read this."
   value = {
     type     = "${targetType}"
@@ -2747,20 +2786,26 @@ function generateOutputsTf(provider, pattern, services) {
       cluster_name        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.cluster_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.cluster_name, null)` : 'null'}
       service_name        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.service_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.service_name, null)` : 'null'}
       container_app_name  = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.container_app_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.container_app_name, null)` : 'null'}
-      resource_group_name = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.resource_group_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.resource_group_name, null)` : 'null'}
-      registry_url        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.ecr_url, ${getModRef('computecontainer')}.acr_login_server, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.ecr_url, ${getModRef('appcompute')}.acr_login_server, null)` : 'null'}
-      build_project_name  = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.codebuild_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.codebuild_name, null)` : 'null'}
-      build_bucket        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.build_bucket, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.build_bucket, null)` : 'null'}
+      resource_group_name = ${provider === 'azure' ? 'var.resource_group_name' : 'null'}
+      registry_url        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.ecr_url, try(${getModRef('computecontainer')}.artifact_registry, try(${getModRef('computecontainer')}.acr_login_server, null)))` : hasService('ecr') ? `try(${getModRef('ecr')}.repository_url, null)` : 'null'}
+      build_project_name  = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.codebuild_name, null)` : hasService('codebuild') ? `try(${getModRef('codebuild')}.project_name, null)` : 'null'}
+      build_bucket        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.build_bucket, null)` : 'null'}
+    }
+
+    serverless = {
+      function_name = ${hasService('computeserverless') ? `try(${getModRef('computeserverless')}.function_name, null)` : 'null'}
+      url           = ${hasService('computeserverless') ? `try(${getModRef('computeserverless')}.url, null)` : 'null'}
+      region        = var.${provider === 'azure' ? 'location' : 'region'}
     }
   }
 }
 `;
   outputs += `
 output "static_site_url" {
-    description = "The public URL of the static site (CDN)"
-    value = ${hasService('cdn') ? `try(${getModRef('cdn')}.endpoint, null)` : 'null'}
-  }
-  `;
+  description = "The public URL of the static site (CDN)"
+  value = ${hasService('cdn') ? `try(${getModRef('cdn')}.endpoint, null)` : 'null'}
+}
+`;
 
   const outputMap = {
     // Basic Services (Standardized Aliases)
@@ -2773,7 +2818,8 @@ output "static_site_url" {
         endpoint: 'endpoint',
         port: 'port',
         name: 'name',
-        username: 'username'
+        username: 'username',
+        password: 'password'
       },
       desc: 'Relational Database connection details'
     },
@@ -2825,7 +2871,16 @@ output "static_site_url" {
       },
       desc: 'Container deployment metadata'
     },
-    computeserverless: { name: 'serverless_url', field: 'url', desc: 'Serverless function URL' },
+    computeserverless: {
+      name: 'serverless_compute',
+      fields: {
+        url: 'url',
+        function_name: 'function_name',
+        function_arn: 'function_arn',
+        invoke_arn: 'invoke_arn'
+      },
+      desc: 'Serverless Function details'
+    },
     computevm: { name: 'vm_ip', field: 'public_ip', desc: 'VM Public IP' },
 
     // Database & Cache
@@ -2841,8 +2896,25 @@ output "static_site_url" {
     messagequeue: { name: 'mq_endpoint', field: 'endpoint', desc: 'Message queue endpoint' },
 
     // Identity & Security
-    auth: { name: 'auth_client_id', field: 'client_id', desc: 'Auth client ID' },
-    identityauth: { name: 'auth_client_id', field: 'client_id', desc: 'Auth client ID' },
+    auth: {
+      name: 'auth',
+      fields: {
+        client_id: 'client_id',
+        user_pool_id: 'user_pool_id',
+        issuer_url: 'issuer_url'
+      },
+      desc: 'Authentication Details'
+    },
+    identityauth: {
+      name: 'auth',
+      fields: {
+        client_id: 'client_id',
+        user_pool_id: 'user_pool_id',
+        issuer_url: 'issuer_url'
+      },
+      desc: 'Authentication Details (Identity)'
+    },
+
     waf: { name: 'waf_acl_id', field: 'web_acl_id', desc: 'WAF Web ACL ID' },
     secretsmanagement: { name: 'secrets_arn', field: 'arn', desc: 'Secrets manager ARN' },
 
@@ -2866,7 +2938,7 @@ output "static_site_url" {
           outputs += `output "cdn_endpoint" { value = try(module.cdn.endpoint, null) } \noutput "cdn_id" { value = try(module.cdn.id, null) } \n\n`;
         } else if (conf.fields) {
           outputs += `output "${conf.name}" {
-    \n  description = "${conf.desc}"\n  value = { \n`;
+  \n  description = "${conf.desc}"\n  value = { \n`;
           Object.entries(conf.fields).forEach(([key, fields]) => {
             // Handle array of fallback fields
             if (Array.isArray(fields)) {
@@ -2900,7 +2972,7 @@ output "static_site_url" {
   // Ensures getVal(key) in deployService works with flat keys
   outputs += `
 # ═══════════════════════════════════════════════════════════════════════════
-# 🚀 Canonical Aliases (For Deployer alignment)
+# 🚀 Canonical Aliases(For Deployer alignment)
 # ═══════════════════════════════════════════════════════════════════════════
 output "bucket_name" { value = ${hasService('objectstorage') ? `try(${getModRef('objectstorage')}.bucket_name, null)` : 'null'} }
 output "bucket_domain_name" { value = ${hasService('objectstorage') ? `try(${getModRef('objectstorage')}.bucket_domain_name, null)` : 'null'} }
@@ -2950,13 +3022,18 @@ function generateMainTf(provider, pattern, services, options = {}) {
 
       const moduleName = getModuleName(service);
       const meta = SERVICE_METADATA[service] || {};
+      const sharedSource = SHARED_MODULE_SOURCES[service];
+
+      // Use generated local modules for self-containment
+      const sourcePath = `./modules/${moduleName}`;
 
       mainTf += `module "${moduleName}" {
-  source = "./modules/${moduleName}"
+  source = "${sourcePath}"
 
   project_name = var.project_name
-    ${regionLabel} = var.${regionLabel}
-    ${pLower === 'azure' ? 'resource_group_name = var.resource_group_name' : ''} \n`;
+  ${regionLabel} = var.${regionLabel}
+  ${pLower === 'azure' ? 'resource_group_name = var.resource_group_name' : ''}
+  ${pLower === 'aws' && ['computeserverless', 'computecontainer', 'appcompute'].includes(service) ? 'execution_role_arn = var.execution_role_arn' : ''} \n`;
 
 
 
@@ -3010,6 +3087,12 @@ function generateMainTf(provider, pattern, services, options = {}) {
         if (meta.args?.includes('public_subnet_ids')) {
           mainTf += `    public_subnet_ids = module.networking.public_subnet_ids\n`;
         }
+      }
+
+      // 💉 LB Dependency Injection (ECS)
+      if ((service === 'computecontainer' || service === 'appcompute' || service === 'compute_container') &&
+        (services.includes('loadbalancer') || services.includes('alb'))) {
+        mainTf += `    alb_listener_arn = module.load_balancer.http_listener_arn\n`;
       }
 
       // 🛡️ NFR Injection
@@ -3263,12 +3346,7 @@ function getModuleConfig(service, provider) {
     ${regionLabel} = var.${regionLabel}
 } `,
 
-    websocketgateway: `module "websocket" {
-  source = "./modules/websocket"
 
-  project_name = var.project_name
-    ${regionLabel} = var.${regionLabel}
-} `,
 
     // 🔥 FIX: Added missing Critical Services
     computecontainer: `module "app_container" {
@@ -3278,150 +3356,155 @@ function getModuleConfig(service, provider) {
     ${regionLabel} = var.${regionLabel}
   vpc_id = module.networking.vpc_id
   private_subnet_ids = module.networking.private_subnet_ids
-  # Sizing variables injected by main generator
+  public_subnet_ids = module.networking.public_subnet_ids
+
+  container_image = var.container_image
+  container_port = var.container_port
+  container_cpu = var.container_cpu
+  container_memory = var.container_memory
 } `,
 
     computevm: `module "vm_compute" {
-  source = "./modules/vm_compute"
+    source = "./modules/vm_compute"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  vpc_id = module.networking.vpc_id
-  private_subnet_ids = module.networking.private_subnet_ids
-} `,
+    vpc_id = module.networking.vpc_id
+    private_subnet_ids = module.networking.private_subnet_ids
+  } `,
 
     nosqldatabase: `module "nosql_db" {
-  source = "./modules/nosql_db"
+    source = "./modules/nosql_db"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-} `,
+  } `,
 
     blockstorage: `module "block_storage" {
-  source = "./modules/block_storage"
+    source = "./modules/block_storage"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-} `,
+  } `,
 
     secretsmanager: `module "secrets" {
-  source = "./modules/secrets_manager"
+    source = "./modules/secrets_manager"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-} `,
+  } `,
 
     dns: `module "dns" {
-  source = "./modules/dns"
+    source = "./modules/dns"
 
-  project_name = var.project_name
-} `,
+    project_name = var.project_name
+  } `,
 
     globalloadbalancer: `module "global_lb" {
-  source = "./modules/global_lb"
+    source = "./modules/global_lb"
 
-  project_name = var.project_name
-} `,
+    project_name = var.project_name
+  } `,
 
     waf: `module "waf" {
-  source = "./modules/waf"
+    source = "./modules/waf"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-} `,
+  } `,
 
     secretsmanagement: `module "secrets" {
-  source = "./modules/secrets"
+    source = "./modules/secrets"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-} `,
+  } `,
 
     block_storage: `module "block_storage" {
-  source = "./modules/block_storage"
+    source = "./modules/block_storage"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-} `,
+  } `,
 
     eventbus: `module "event_bus" {
-  source = "./modules/event_bus"
+    source = "./modules/event_bus"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-} `,
+  } `,
 
     paymentgateway: `module "payment_gateway" {
-  source = "./modules/payment_gateway"
+    source = "./modules/payment_gateway"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-} `,
+  } `,
 
     cdn: `module "cdn" {
-  source = "./modules/cdn"
+    source = "./modules/cdn"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel}     = var.${regionLabel}
-  bucket_domain_name = module.object_storage.bucket_domain_name
-  bucket_name = module.object_storage.bucket_name
-  bucket_arn = module.object_storage.bucket_arn
-} `,
+    bucket_domain_name = module.object_storage.bucket_domain_name
+    bucket_name = module.object_storage.bucket_name
+    bucket_arn = module.object_storage.bucket_arn
+  } `,
 
     contentdeliverynetwork: `module "cdn" {
-  source = "./modules/cdn"
+    source = "./modules/cdn"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel}     = var.${regionLabel}
-  bucket_domain_name = module.object_storage.bucket_domain_name
-  bucket_name = module.object_storage.bucket_name
-  bucket_arn = module.object_storage.bucket_arn
-} `,
+    bucket_domain_name = module.object_storage.bucket_domain_name
+    bucket_name = module.object_storage.bucket_name
+    bucket_arn = module.object_storage.bucket_arn
+  } `,
 
     cloudfront: `module "cdn" {
-  source = "./modules/cdn"
+    source = "./modules/cdn"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel}     = var.${regionLabel}
-  bucket_domain_name = module.object_storage.bucket_domain_name
-  bucket_name = module.object_storage.bucket_name
-  bucket_arn = module.object_storage.bucket_arn
-} `,
+    bucket_domain_name = module.object_storage.bucket_domain_name
+    bucket_name = module.object_storage.bucket_name
+    bucket_arn = module.object_storage.bucket_arn
+  } `,
 
     // 🔥 FIX: Ensure VPC services map to 'networking' module name for cross-module referencing
     vpc: `module "networking" {
-  source = "./modules/networking"
+    source = "./modules/networking"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-} `,
+  } `,
 
     vpcnetworking: `module "networking" {
-  source = "./modules/networking"
+    source = "./modules/networking"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-} `,
+  } `,
 
     networking: `module "networking" {
-  source = "./modules/networking"
+    source = "./modules/networking"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-} `
+  } `
   };
 
   // 🔥 HARD GUARD: Bypass map lookup for CDN to ensure arguments are passed (including OAC variables)
   if (service === 'cdn' || service === 'contentdeliverynetwork' || service === 'cloudfront') {
     return `module "cdn" {
-  source = "./modules/cdn"
+    source = "./modules/cdn"
 
-  project_name = var.project_name
+    project_name = var.project_name
     ${regionLabel}     = var.${regionLabel}
-  bucket_domain_name = module.object_storage.bucket_domain_name
-  bucket_name = module.object_storage.bucket_name
-  bucket_arn = module.object_storage.bucket_arn
-} `;
+    bucket_domain_name = module.object_storage.bucket_domain_name
+    bucket_name = module.object_storage.bucket_name
+    bucket_arn = module.object_storage.bucket_arn
+  } `;
   }
 
   return moduleMap[service] || `module "${service}" { source = "./modules/${service}" project_name = var.project_name ${regionLabel} = var.${regionLabel} } `;
@@ -3434,22 +3517,22 @@ function generateReadme(projectName, provider, pattern, services) {
   return `# ${projectName} - Terraform Infrastructure
 
 ## Architecture Pattern
-  ** ${pattern}**
+    ** ${pattern}**
 
 ## Cloud Provider
-  ** ${provider.toUpperCase()}**
+    ** ${provider.toUpperCase()}**
 
 ## Services
 ${services.map(s => `- ${s}`).join('\n')}
 
 ## Prerequisites
-  - Terraform >= 1.0
-  - ${provider === 'aws' ? 'AWS CLI configured with credentials' : provider === 'gcp' ? 'GCP CLI (gcloud) authenticated' : 'Azure CLI logged in'}
+    - Terraform >= 1.0
+    - ${provider === 'aws' ? 'AWS CLI configured with credentials' : provider === 'gcp' ? 'GCP CLI (gcloud) authenticated' : 'Azure CLI logged in'}
 
 ## Deployment Instructions
 
 ### 1. Review Configuration
-Edit \`terraform.tfvars\` to set your project-specific values:
+  Edit \`terraform.tfvars\` to set your project-specific values:
 \`\`\`hcl
 ${provider === 'gcp' ? 'project_id = "your-gcp-project-id"' : ''}
 project_name = "${projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')}"
@@ -3521,7 +3604,17 @@ async function generateTerraform(canonicalArchitecture, provider, region, projec
   // 🔥 TEMPORARY FIX: Filtering out CloudFront and OpenSearch due to unresolvable AWS Account restrictions
   // 🔒 FILTER: Separate deployable services (infra) from external services (variables only)
   // Re-enabled searchengine and cdn since generators are now implemented
-  const deployableServices = services.filter(s => !EXTERNAL_SERVICES.includes(s));
+  let deployableServices = services.filter(s => !EXTERNAL_SERVICES.includes(s));
+
+  // 🔒 PATTERN ISOLATION: Enforce strict boundaries between Container and Serverless patterns
+  // Prevent Lambda (computeserverless) from leaking into Container patterns (computecontainer)
+  const hasContainer = deployableServices.includes('computecontainer') || deployableServices.includes('app_container');
+  const hasLambda = deployableServices.includes('computeserverless') || deployableServices.includes('serverless_compute');
+
+  if (hasContainer && hasLambda && (pattern.includes('CONTAINER') || pattern.includes('WEB') || pattern.includes('PLATFORM'))) {
+    console.log('[TERRAFORM V2] 🔒 Pattern Isolation: Removing ambiguous Lambda service from Container pattern');
+    deployableServices = deployableServices.filter(s => s !== 'computeserverless' && s !== 'serverless_compute');
+  }
 
   // 💉 INJECT: Setup module for GCP (APIs)
   if (providerLower === 'gcp') {
@@ -3537,16 +3630,20 @@ async function generateTerraform(canonicalArchitecture, provider, region, projec
   }
 
   // 1. Generate Root Config
-  files['versions.tf'] = generateVersionsTf(providerLower);
+  files['versions.tf'] = generateVersionsTf(providerLower, region, projectName);
   files['providers.tf'] = generateProvidersTf(providerLower, region);
   files['variables.tf'] = generateVariablesTf(providerLower, pattern, services);
-  files['terraform.tfvars'] = generateTfvars(providerLower, region, projectName, { ...canonicalArchitecture.sizing, connectionData: options.connectionData });
+  files['terraform.tfvars'] = generateTfvars(providerLower, region, projectName, canonicalArchitecture.sizing || {}, options.connectionData);
   files['outputs.tf'] = generateOutputsTf(providerLower, pattern, deployableServices);
   files['main.tf'] = generateMainTf(providerLower, pattern, deployableServices);
   files['README.md'] = generateReadme(projectName, providerLower, pattern, deployableServices);
 
+  console.log('[TERRAFORM V2 DEBUG] Files generated so far:', Object.keys(files));
+
   // 2. Generate Modules (Full Implementation)
-  files = { ...files, ...generateModules(deployableServices, providerLower, region, projectName) };
+  const modules = generateModules(deployableServices, providerLower, region, projectName);
+  console.log('[TERRAFORM V2 DEBUG] Generated modules:', Object.keys(modules));
+  files = { ...files, ...modules };
 
   // 3. Helper Files (Dummy source for functions/apis to ensure plan succeeds)
   if (services.includes('apigateway') && providerLower === 'gcp') {
@@ -3618,7 +3715,8 @@ function getModuleSource(service, provider) {
     monitoring_enabled: 'variable "monitoring_enabled" {\n  type = bool\n  default = true\n}',
     bucket_domain_name: 'variable "bucket_domain_name" {\n  type = string\n  default = ""\n}',
     bucket_name: 'variable "bucket_name" {\n  type = string\n  default = ""\n}',
-    bucket_arn: 'variable "bucket_arn" {\n  type = string\n  default = ""\n}'
+    bucket_arn: 'variable "bucket_arn" {\n  type = string\n  default = ""\n}',
+    execution_role_arn: 'variable "execution_role_arn" {\n  type = string\n  default = ""\n}'
   };
 
   const getRequiredVars = (serviceId, serviceArgs = []) => {
@@ -3627,6 +3725,7 @@ function getModuleSource(service, provider) {
     // Add AWS-specific extra_env_vars if applicable
     if (provider === 'aws' && (serviceId === 'computeserverless' || serviceId === 'computecontainer' || serviceId === 'appcompute')) {
       vars += `\nvariable "extra_env_vars" {\n  type = map(string)\n  default = {}\n}`;
+      vars += `\nvariable "execution_role_arn" {\n  type = string\n  default = ""\n}`;
     }
 
     // Add meta-defined args
@@ -3647,17 +3746,17 @@ function getModuleSource(service, provider) {
     const map = {
       cdn: 'output "endpoint" { value = "" }\\noutput "id" { value = "" }',
       apigateway: 'output "endpoint" { value = "" }',
-      relationaldatabase: 'output "endpoint" { value = "" }\\noutput "port" { value = 5432 }\\noutput "name" { value = "" }\\noutput "username" { value = "" }',
+      relationaldatabase: 'output "endpoint" { value = "" }\\noutput "port" { value = 5432 }\\noutput "name" { value = "" }\\noutput "username" { value = "" }\\noutput "password" { value = "" }',
       objectstorage: 'output "bucket_name" { value = "" }\\noutput "bucket_domain_name" { value = "" }\\noutput "bucket_arn" { value = "" }',
       computecontainer: 'output "cluster_name" { value = "" }\\noutput "service_name" { value = "" }',
       containerregistry: 'output "repository_url" { value = "" }',
-      computeserverless: 'output "url" { value = "" }',
+      computeserverless: 'output "url" { value = "" }\\noutput "function_name" { value = "" }\\noutput "function_arn" { value = "" }\\noutput "invoke_arn" { value = "" }',
       computevm: 'output "public_ip" { value = "" }',
       cache: 'output "endpoint" { value = "" }\\noutput "port" { value = 6379 }',
       nosqldatabase: 'output "endpoint" { value = "" }',
       messagequeue: 'output "endpoint" { value = "" }',
-      auth: 'output "client_id" { value = "" }',
-      identityauth: 'output "client_id" { value = "" }',
+      auth: 'output "client_id" { value = "" }\\noutput "user_pool_id" { value = "" }\\noutput "issuer_url" { value = "" }',
+      identityauth: 'output "client_id" { value = "" }\\noutput "user_pool_id" { value = "" }\\noutput "issuer_url" { value = "" }',
       waf: 'output "web_acl_id" { value = "" }',
       secretsmanagement: 'output "arn" { value = "" }',
       loadbalancer: 'output "dns_name" { value = "" }',
@@ -3749,8 +3848,12 @@ output "arn" { value = aws_lb.main.arn }`
   multi_az               = false  # Free tier compatible (single AZ only)
 }
 
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+
 resource "aws_db_subnet_group" "default" {
-  name       = "\${var.project_name}-db-subnet-group"
+  name       = "\${var.project_name}-db-subnet-group-\${random_id.suffix.hex}"
   subnet_ids = var.private_subnet_ids
 }
 
@@ -3770,7 +3873,8 @@ resource "aws_security_group" "db_sg" {
           outputs: `output "endpoint" { value = aws_db_instance.default.address }
 output "port" { value = aws_db_instance.default.port }
 output "name" { value = aws_db_instance.default.db_name }
-output "username" { value = aws_db_instance.default.username }`
+output "username" { value = aws_db_instance.default.username }
+output "password" { value = "ChangeMe123!" }`
         };
 
       case 'cache':
@@ -3809,12 +3913,8 @@ output "port" { value = aws_elasticache_cluster.redis.cache_nodes.0.port }`
 
       case 'objectstorage':
         return {
-          main: `resource "random_id" "bucket_suffix" {
-  byte_length = 4
-}
-
-resource "aws_s3_bucket" "main" {
-  bucket        = "\${substr(replace(lower(var.project_name), "/[^a-z0-9.]/", "-"), 0, 54)}-\${random_id.bucket_suffix.hex}"
+          main: `resource "aws_s3_bucket" "main" {
+  bucket_prefix = "\${substr(replace(lower(var.project_name), "/[^a-z0-9]/", "-"), 0, 37)}-"
   force_destroy = true
 }
 
@@ -3937,8 +4037,15 @@ resource "aws_apigatewayv2_stage" "stage" {
 
       case 'computecontainer':
         return {
-          main: `resource "aws_ecs_cluster" "main" {
-  name = "\${var.project_name}-cluster"
+          main: `resource "random_id" "suffix" {
+    byte_length = 4
+  }
+
+  resource "aws_ecs_cluster" "main" {
+  name = "\${var.project_name}-cluster-\${random_id.suffix.hex}"
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_ecr_repository" "repo" {
@@ -3952,38 +4059,37 @@ resource "aws_s3_bucket" "builds" {
   force_destroy = true
 }
 
-resource "aws_iam_role" "codebuild_role" {
-  name = "\${var.project_name}-codebuild-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{ Action = "sts:AssumeRole", Effect = "Allow", Principal = { Service = "codebuild.amazonaws.com" } }]
-  })
-}
+  resource "aws_iam_role" "codebuild_role" {
+    name = "\${var.project_name}-codebuild-role-\${random_id.suffix.hex}"
 
-resource "aws_iam_role_policy_attachment" "codebuild_logs" {
-  role       = aws_iam_role.codebuild_role.name
-  policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
-}
+    assume_role_policy = jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Action = "sts:AssumeRole"
+          Effect = "Allow"
+          Principal = {
+            Service = "codebuild.amazonaws.com"
+          }
+        }
+      ]
+    })
+  }
 
-resource "aws_iam_role_policy_attachment" "codebuild_ecr" {
-  role       = aws_iam_role.codebuild_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
-}
+  resource "aws_iam_role_policy_attachment" "codebuild_policy" {
+    role       = aws_iam_role.codebuild_role.name
+    policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+  }
 
-resource "aws_iam_role_policy_attachment" "codebuild_s3" {
-  role       = aws_iam_role.codebuild_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
-}
-
-resource "aws_codebuild_project" "build" {
-  name          = "\${var.project_name}-build"
-  service_role  = aws_iam_role.codebuild_role.arn
+  resource "aws_codebuild_project" "build" {
+    name          = "\${var.project_name}-build-\${random_id.suffix.hex}"
+    service_role  = aws_iam_role.codebuild_role.arn
 
   artifacts { type = "NO_ARTIFACTS" }
 
   environment {
     compute_type                = "BUILD_GENERAL1_SMALL"
-    image                       = "aws/codebuild/amazonlinux2-x86_64-standard:4.0"
+    image                       = "aws/codebuild/standard:7.0"
     type                        = "LINUX_CONTAINER"
     privileged_mode             = true
     image_pull_credentials_type = "CODEBUILD"
@@ -3995,26 +4101,14 @@ resource "aws_codebuild_project" "build" {
   }
 }
 
-resource "aws_iam_role" "execution_role" {
-  name = "\${var.project_name}-execution-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{ Action = "sts:AssumeRole", Effect = "Allow", Principal = { Service = "ecs-tasks.amazonaws.com" } }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "execution_role_policy" {
-  role       = aws_iam_role.execution_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-}
-
 resource "aws_ecs_task_definition" "app" {
   family                   = "\${var.project_name}-task"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = 512
   memory                   = 1024
-  execution_role_arn       = aws_iam_role.execution_role.arn
+  execution_role_arn       = var.execution_role_arn
+  task_role_arn            = var.execution_role_arn
   container_definitions    = jsonencode([{
     name  = "app"
     image = "\${aws_ecr_repository.repo.repository_url}:latest"
@@ -4037,8 +4131,9 @@ resource "aws_cloudwatch_log_group" "logs" {
 }
 
 resource "aws_ecs_service" "app" {
-  name = "\${var.project_name}-service"
+  name = "\${var.project_name}-service-\${random_id.suffix.hex}"
   cluster = aws_ecs_cluster.main.id
+  depends_on = [aws_ecs_cluster.main]
   task_definition = aws_ecs_task_definition.app.arn
   desired_count = 1
   launch_type = "FARGATE"
@@ -4233,6 +4328,79 @@ resource "aws_iam_role_policy_attachment" "glue_service" {
 }`,
           variables: getRequiredVars('datalake', meta.args),
           outputs: `output "bucket_name" { value = aws_s3_bucket.lake.id }`
+        };
+
+      case 'auth':
+      case 'identityauth':
+        return {
+          main: `resource "aws_cognito_user_pool" "main" {
+  name = "\${var.project_name}-user-pool"
+  password_policy {
+    minimum_length    = 8
+    require_lowercase = true
+    require_numbers   = true
+    require_symbols   = true
+    require_uppercase = true
+  }
+}
+
+resource "aws_cognito_user_pool_client" "client" {
+  name = "\${var.project_name}-client"
+  user_pool_id = aws_cognito_user_pool.main.id
+  generate_secret = false
+  explicit_auth_flows = ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]
+}`,
+          variables: getRequiredVars('auth', meta.args),
+          outputs: `output "client_id" { value = aws_cognito_user_pool_client.client.id }
+output "user_pool_id" { value = aws_cognito_user_pool.main.id }
+output "issuer_url" { value = "https://cognito-idp.\${var.region}.amazonaws.com/\${aws_cognito_user_pool.main.id}" }`
+        };
+
+      case 'computeserverless':
+        return {
+          main: `data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = "\${path.module}/index.js"
+  output_path = "\${path.module}/index.zip"
+}
+
+resource "aws_lambda_function" "main" {
+  function_name    = "\${var.project_name}-function"
+  role             = aws_iam_role.lambda_exec.arn
+  handler          = "index.handler"
+  runtime          = "nodejs18.x"
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  timeout          = 10
+  memory_size      = 128
+
+  environment {
+    variables = var.extra_env_vars
+  }
+}
+
+resource "aws_lambda_function_url" "main" {
+  function_name      = aws_lambda_function.main.function_name
+  authorization_type = "NONE"
+}
+
+resource "aws_iam_role" "lambda_exec" {
+  name = "\${var.project_name}-lambda-exec-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{ Action = "sts:AssumeRole", Effect = "Allow", Principal = { Service = "lambda.amazonaws.com" } }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_basic" {
+  role       = aws_iam_role.lambda_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}`,
+          variables: getRequiredVars('computeserverless', meta.args),
+          outputs: `output "url" { value = aws_lambda_function_url.main.function_url }
+output "function_name" { value = aws_lambda_function.main.function_name }
+output "function_arn" { value = aws_lambda_function.main.arn }
+output "invoke_arn" { value = aws_lambda_function.main.invoke_arn }`
         };
 
       case 'computebatch':
@@ -4520,37 +4688,11 @@ output "private_ip" { value = aws_instance.app.private_ip } `
 
       case 'computeserverless':
         return {
-          main: `resource "aws_iam_role" "lambda_role" {
-    name = "\${var.project_name}-lambda-role"
-    assume_role_policy = jsonencode({
-      Version = "2012-10-17"
-    Statement =[{
-        Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = { Service = "lambda.amazonaws.com" }
-      }]
-    })
+          main: `resource "random_id" "suffix" {
+    byte_length = 4
   }
 
-resource "aws_iam_role_policy_attachment" "lambda_basic" {
-    role       = aws_iam_role.lambda_role.name
-    policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-  }
-
-resource "aws_iam_role_policy_attachment" "lambda_vpc" {
-    role       = aws_iam_role.lambda_role.name
-    policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-  }
-
-resource "time_sleep" "wait_for_role" {
-  create_duration = "15s"
-  depends_on = [
-    aws_iam_role_policy_attachment.lambda_basic,
-    aws_iam_role_policy_attachment.lambda_vpc
-  ]
-}
-
-data "archive_file" "lambda_zip" {
+  data "archive_file" "lambda_zip" {
     type = "zip"
     source_file = "\${path.module}/index.js"
     output_path = "\${path.module}/function.zip"
@@ -4559,8 +4701,8 @@ data "archive_file" "lambda_zip" {
 resource "aws_lambda_function" "app" {
     filename = data.archive_file.lambda_zip.output_path
     source_code_hash = data.archive_file.lambda_zip.output_base64sha256
-    function_name = "\${var.project_name}-function"
-    role = aws_iam_role.lambda_role.arn
+    function_name = "\${var.project_name}-function-\${random_id.suffix.hex}"
+    role = var.execution_role_arn
     handler = "index.handler"
     runtime = "nodejs18.x"
 
@@ -4568,10 +4710,6 @@ resource "aws_lambda_function" "app" {
       subnet_ids = var.private_subnet_ids
       security_group_ids = [aws_security_group.lambda_sg.id]
     }
-
-    depends_on = [
-      time_sleep.wait_for_role
-    ]
   }
 
 resource "aws_security_group" "lambda_sg" {
@@ -4625,9 +4763,14 @@ resource "aws_security_group" "lambda_sg" {
     Statement =[{
         Action = "sts:AssumeRole"
       Effect = "Allow"
-      Principal = { Service = "ec2.amazonaws.com" }
+      Principal = { Service = ["ec2.amazonaws.com", "codebuild.amazonaws.com", "lambda.amazonaws.com", "ecs-tasks.amazonaws.com"] }
       }]
     })
+  }
+
+  resource "aws_iam_role_policy_attachment" "lambda_vpc" {
+    role       = aws_iam_role.app_role.name
+    policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
   } `,
           variables: getRequiredVars(service, meta.args),
           outputs: `output "client_id" { value = aws_iam_role.app_role.arn } `

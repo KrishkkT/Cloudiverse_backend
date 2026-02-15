@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/auth');
 const deployService = require('../services/infrastructure/deployService');
+const preflightService = require('../services/infrastructure/preflightService');
+const { getUserConnection } = require('./cloud');
 const pool = require('../config/db');
 
 // POST /api/deploy
@@ -20,9 +22,26 @@ router.post('/', authMiddleware, async (req, res) => {
         if (wsRes.rows.length === 0) return res.status(404).json({ error: "Workspace not found" });
         const workspace = wsRes.rows[0];
 
-        // Debug: Log state_json to verify infra_outputs
-        console.log(`[DEPLOY ROUTE DEBUG] Workspace ${workspace_id} state_json keys:`, Object.keys(workspace.state_json || {}));
-        console.log(`[DEPLOY ROUTE DEBUG] infra_outputs keys:`, Object.keys(workspace.state_json?.infra_outputs || {}));
+        // 🛡️ PREFLIGHT VALIDATION (3-Layer Refactor Layer 3)
+        const provider = workspace.state_json?.infraSpec?.resolved_region?.provider || workspace.state_json?.connection?.provider || 'aws';
+        if (provider === 'aws') {
+            console.log(`[PREFLIGHT] Starting AWS validation for workspace ${workspace_id}...`);
+            const conn = await getUserConnection(userId, 'aws');
+            if (!conn) {
+                return res.status(400).json({ error: "No AWS connection found. Please connect your cloud account first." });
+            }
+
+            // Extract services for targeted preflight checks
+            const services = workspace.state_json?.infraSpec?.services?.map(s => s.service_id) || [];
+            const preflight = await preflightService.validateAWS(workspace.state_json?.region || 'ap-south-1', conn, services);
+            if (!preflight.valid) {
+                return res.status(403).json({
+                    error: "Preflight Validation Failed",
+                    details: preflight.checks.filter(c => c.status === 'FAIL')
+                });
+            }
+            console.log(`[PREFLIGHT] AWS validation PASSED.`);
+        }
 
         // 2. Create Deployment Record
         const deploymentId = await deployService.createDeployment(workspace_id, source, config);
