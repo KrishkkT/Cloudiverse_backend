@@ -8,8 +8,9 @@
  * not blindly assume all services exist.
  */
 
-// Refactored to use Catalog
 const { getServiceDefinition } = require('../../catalog/terraform/utils');
+const yaml = require('js-yaml');
+const { resolveServiceId } = require('../../config/aliases');
 
 /**
  * Normalize usage profile into Infracost-compatible resource usage.
@@ -46,18 +47,22 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // COMPUTE SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    // 🔥 FIX: Normalize service names to lowercase for comparison
+    // 🔥 FIX: Normalize service names using the central resolver
     const normalizedServices = deployableServices.map(s => {
-        if (typeof s === 'string') return s.toLowerCase();
-        const name = s.service_id || s.service || s.canonical_type || s.name || s.service_class;
-        return name ? name.toLowerCase() : null;
+        let name = s;
+        if (typeof s === 'object') {
+            name = s.service_id || s.service || s.canonical_type || s.name || s.service_class;
+        }
+        return name ? resolveServiceId(name.toLowerCase()) : null;
     }).filter(Boolean);
 
     // Helper to check for service presence (handles both formats)
-    const hasService = (id) => normalizedServices.includes(id.toLowerCase());
+    const hasService = (id) => {
+        const canonical = resolveServiceId(id.toLowerCase());
+        return normalizedServices.includes(canonical);
+    };
 
-    if (hasService('computeserverless') || hasService('compute_serverless') ||
-        hasService('app_compute')) {
+    if (hasService('computeserverless')) {
 
         switch (provider) {
             case 'AWS':
@@ -89,19 +94,17 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         }
     }
 
-    if (hasService('computecontainer') || hasService('compute_container')) {
+    if (hasService('computecontainer')) {
         const instances = Math.max(2, Math.ceil((usage_profile.peak_concurrency || 100) / 50));
 
         switch (provider) {
             case 'AWS':
-                // 🔥 FIX: Map Fargate usage to the Task Definition resource, not the Service
-                // Infracost v0.10+ charges Fargate at task level
-                usage['aws_ecs_task_definition.pricing-task'] = {
+                // 🔥 FIG: Sync with terraformGeneratorV2 names
+                usage['aws_ecs_task_definition.app'] = {
                     monthly_cpu_credit_hours: instances * 730, // vCPU hours
                     monthly_memory_gb_hours: instances * 2 * 730 // 2GB * hours
                 };
 
-                // Keep service for orchestration overhead if any
                 usage['aws_ecs_service.app'] = {
                     monthly_cpu_hours: instances * 730,
                     monthly_memory_gb_hours: instances * 2 * 730
@@ -131,7 +134,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // DATABASE SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (hasService('relationaldatabase') || hasService('relational_database')) {
+    if (hasService('relationaldatabase')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_db_instance.db'] = {
@@ -155,7 +158,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         }
     }
 
-    if (hasService('nosqldatabase') || hasService('nosql_database')) {
+    if (hasService('nosqldatabase')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_dynamodb_table.main'] = {
@@ -185,14 +188,13 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // STORAGE SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    // 🔥 FIX: Check for both 'object_storage' and 'objectstorage' (catalog uses no underscore)
-    if (hasService('objectstorage') || hasService('object_storage')) {
+    if (hasService('objectstorage')) {
         switch (provider) {
             case 'AWS':
-                // Resource name must match objectStorage.js template: aws_s3_bucket.main
-                usage['aws_s3_bucket.main'] = {
+                // Resource name must match terraformGeneratorV2: aws_s3_bucket.b
+                usage['aws_s3_bucket.b'] = {
                     storage_gb: storageGB,
-                    monthly_tier_1_requests: monthlyRequests * 0.1, // 10% direct S3 access
+                    monthly_tier_1_requests: monthlyRequests * 0.1,
                     monthly_tier_2_requests: monthlyRequests * 0.05,
                     monthly_data_transfer_gb: {
                         outbound_internet: transferGB
@@ -227,7 +229,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         // Usage keys are minimal (mostly sizing-based in Terraform)
         switch (provider) {
             case 'AWS':
-                usage['aws_elasticache_cluster.cache'] = {
+                usage['aws_elasticache_cluster.c'] = {
                     // ElastiCache is instance-based, not heavily usage-dependent
                 };
                 break;
@@ -250,7 +252,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // NETWORKING SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (hasService('loadbalancer') || hasService('load_balancer')) {
+    if (hasService('loadbalancer')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_lb.alb'] = {
@@ -310,12 +312,12 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // MESSAGING SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (hasService('messagequeue') || hasService('message_queue')) {
+    if (hasService('messagequeue')) {
         const queueMessages = monthlyRequests * 0.2; // 20% async messages
 
         switch (provider) {
             case 'AWS':
-                usage['aws_sqs_queue.queue'] = {
+                usage['aws_sqs_queue.q'] = {
                     monthly_requests: queueMessages
                 };
                 break;
@@ -338,7 +340,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // IDENTITY & AUTH SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (hasService('identityauth') || hasService('identity_auth')) {
+    if (hasService('identityauth')) {
         const authRequests = monthlyRequests * 0.5; // 50% require auth
 
         switch (provider) {
@@ -367,7 +369,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // HIGH-AVAILABILITY / MULTI-REGION SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (hasService('globalloadbalancer') || hasService('global_load_balancer')) {
+    if (hasService('globalloadbalancer')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_lb.global_alb'] = {
@@ -383,7 +385,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // API GATEWAY SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (hasService('apigateway') || hasService('api_gateway')) {
+    if (hasService('apigateway')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_apigatewayv2_api.api'] = {
@@ -405,7 +407,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         }
     }
 
-    if (hasService('websocketgateway') || hasService('websocket_gateway')) {
+    if (hasService('websocketgateway')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_apigatewayv2_api.websocket'] = {
@@ -441,7 +443,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         }
     }
 
-    if (hasService('auditlogging') || hasService('audit_logging')) {
+    if (hasService('auditlogging')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_cloudwatch_log_group.audit'] = {
@@ -456,11 +458,10 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // SECRETS & SECURITY SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (hasService('secretsmanagement') || hasService('secrets_management') ||
-        hasService('secrets_manager')) {
+    if (hasService('secretsmanagement')) {
         switch (provider) {
             case 'AWS':
-                usage['aws_secretsmanager_secret.vault'] = {
+                usage['aws_secretsmanager_secret.secret'] = {
                     monthly_api_calls: 10000 // typical secret retrieval
                 };
                 break;
@@ -471,7 +472,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     // IOT SERVICES
     // ═══════════════════════════════════════════════════════════════════
 
-    if (hasService('iotcore') || hasService('iot_core')) {
+    if (hasService('iotcore')) {
         const deviceMessages = (usage_profile.device_count || 1000) * 30 * 24 * 60; // 1 msg/min
         switch (provider) {
             case 'AWS':
@@ -482,7 +483,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         }
     }
 
-    if (hasService('timeseriesdatabase') || hasService('time_series_db')) {
+    if (hasService('timeseriesdatabase')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_timestreamwrite_database.tsdb'] = {
@@ -492,7 +493,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         }
     }
 
-    if (hasService('eventstreaming') || hasService('event_streaming')) {
+    if (hasService('eventstreaming')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_kinesis_stream.events'] = {
@@ -565,7 +566,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         }
     }
 
-    if (hasService('searchengine') || hasService('search_engine')) {
+    if (hasService('searchengine')) {
         switch (provider) {
             case 'AWS':
                 usage['aws_opensearch_domain.search'] = {
@@ -682,27 +683,32 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
 
 /**
  * Convert normalized usage object to Infracost YAML format.
+ * 🔥 FIX: Using resource_usage instead of usage, and ensuring version is a number.
  */
 function toInfracostYAML(normalizedUsage) {
-    let yaml = `version: 0.1\nusage:\n`;
+    const usageObj = {
+        version: 0.1,
+        resource_usage: normalizedUsage || {}
+    };
+    try {
+        const yamlString = yaml.dump(usageObj, {
+            indent: 2,
+            lineWidth: -1,
+            noRefs: true,
+            sortKeys: false,
+            quotingType: '"',
+            forceQuotes: true
+        });
 
-    for (const [resourceName, usageData] of Object.entries(normalizedUsage)) {
-        yaml += `  ${resourceName}:\n`;
+        // Safe logging that doesn't bloat the terminal
+        console.log(`[YAML GEN] Generated YAML for Infracost (${yamlString.length} bytes)`);
 
-        for (const [key, value] of Object.entries(usageData)) {
-            if (typeof value === 'object' && value !== null) {
-                // Nested object (e.g., monthly_data_transfer_gb)
-                yaml += `    ${key}:\n`;
-                for (const [subKey, subValue] of Object.entries(value)) {
-                    yaml += `      ${subKey}: ${subValue}\n`;
-                }
-            } else {
-                yaml += `    ${key}: ${value}\n`;
-            }
-        }
+        return yamlString;
+    } catch (err) {
+        console.error(`[YAML GEN] Failed to generate YAML: ${err.message}`);
+        // Fallback to a minimal but valid structure
+        return "version: 0.1\nresource_usage: {}\n";
     }
-
-    return yaml;
 }
 
 /**

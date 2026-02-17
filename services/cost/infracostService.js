@@ -101,7 +101,7 @@ const PROVIDER_RESOURCE_PREFIXES = {
 };
 
 function validateProviderResources(resources, provider) {
-  const expectedPrefixes = PROVIDER_RESOURCE_PREFIXES[provider] || [];
+  const expectedPrefixes = PROVIDER_RESOURCE_PREFIXES[provider.toUpperCase()] || [];
   const invalidResources = [];
 
   for (const resource of resources) {
@@ -500,7 +500,8 @@ async function calculateInfrastructureCost(infraSpec, intent, costProfile, usage
     const results = {};
     const providers = ['AWS', 'GCP', 'AZURE'];
 
-    for (const provider of providers) {
+    // 🔥 PERFORMANCE FIX: Run providers in parallel to reduce total execution time
+    const providerPromises = providers.map(async (provider) => {
       try {
         const providerResult = await generateCostEstimate(
           provider,
@@ -519,7 +520,7 @@ async function calculateInfrastructureCost(infraSpec, intent, costProfile, usage
             ? `API Quota Exceeded (Infracost Limit). Using approximate formula pricing.`
             : `Infracost returned incomplete pricing for ${provider}`;
 
-          results[provider] = {
+          const fallbackResult = {
             ...generateMockCostData(provider, infraSpec, { tier: 'MEDIUM' }, costProfile),
             estimate_type: 'heuristic',
             estimate_source: 'formula_fallback',
@@ -528,24 +529,36 @@ async function calculateInfrastructureCost(infraSpec, intent, costProfile, usage
           };
 
           // Explicitly set explanation for confidence calculation later
-          results[provider].quota_exceeded = providerResult?.quota_exceeded;
+          fallbackResult.quota_exceeded = providerResult?.quota_exceeded;
+
+          return { provider, data: fallbackResult };
 
         } else {
-          results[provider] = providerResult;
+          return { provider, data: providerResult };
         }
       } catch (providerError) {
         console.error(`[INFRA COST] Error for ${provider}:`, providerError.message);
         fs.writeFileSync('loop_error.log', provider + ': ' + providerError.message + '\n' + providerError.stack + '\n---\n', { flag: 'a' });
-        results[provider] = {
-          provider: provider,
-          total_monthly_cost: 100,
-          formatted_cost: '$100.00/month',
-          is_mock: true,
-          estimate_type: 'heuristic',
-          estimate_source: 'fallback'
+        return {
+          provider,
+          data: {
+            provider: provider,
+            total_monthly_cost: 100,
+            formatted_cost: '$100.00/month',
+            is_mock: true,
+            estimate_type: 'heuristic',
+            estimate_source: 'fallback'
+          }
         };
       }
-    }
+    });
+
+    const outcomes = await Promise.all(providerPromises);
+
+    // Aggregating results from parallel execution
+    outcomes.forEach(({ provider, data }) => {
+      results[provider] = data;
+    });
 
     // Build cost map for scoring function
     const allProviderCosts = {};
@@ -2018,82 +2031,26 @@ function generateUsageFile(usageProfile, deployableServices) {
 }
 
 /**
- * Force generate usage file with fallback values if needed
- * This ensures Infracost always has usage data to work with
- * 🔥 ENHANCED: Includes IoT, ML, Gaming, Fintech, Healthcare domains
+ * Force generation of a usage file when automated normalization fails.
+ * 🔥 FIX: Uses unified usageNormalizer to prevent malformed YAML.
  */
 function forceGenerateUsageFile(provider, sizing, deployableServices) {
-  // Default fallback values if sizing is missing
-  const reqs = sizing?.api_gateway?.requests_per_month || 1000000;
-  const storage = sizing?.relational_database?.storage_gb || 100;
-  const computeRequests = sizing?.compute_serverless?.monthly_requests || 500000;
-  const dataTransfer = sizing?.object_storage?.monthly_data_transfer_gb || 50;
-  const iotMessages = sizing?.iot_core?.monthly_messages || reqs * 10;
-  const mlInferences = sizing?.ml_inference_service?.monthly_requests || 100000;
+  try {
+    const runId = generateRunId();
+    const providerDir = path.join(INFRACOST_BASE_DIR, provider.toLowerCase(), runId);
+    if (!fs.existsSync(providerDir)) fs.mkdirSync(providerDir, { recursive: true });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // CATALOG-DRIVEN USAGE GENERATION - SSoT
-  // ═══════════════════════════════════════════════════════════════════
-  // 🔥 FIX: Use new_services.json (SSOT) instead of deprecated terraform/services
-  const catalog = require('../../catalog/new_services.json');
+    // Ensure we pass provider correctly
+    const usageYaml = usageNormalizer.generateInfracostUsageFile(deployableServices, sizing, provider);
+    const usageFilePath = path.join(providerDir, 'infracost-usage.yml');
 
-  let ymlContent = `version: 0.1
-  resource_type_default_usage:
-  `;
-
-  // Helper to generate defaults
-  const getDefaultUsage = (resourceType, sizing) => {
-    // Basic defaults mapping
-    const basicDefaults = {
-      monthly_requests: reqs,
-      storage_gb: storage,
-      monthly_data_transfer_gb: dataTransfer
-    };
-
-    // AWS overrides
-    if (resourceType === 'aws_lambda_function') return { monthly_requests: computeRequests, request_duration_ms: 250 };
-    if (resourceType === 'aws_lb') return { new_connections: reqs, processed_bytes: dataTransfer * 1024 * 1024 * 1024 };
-    if (resourceType === 'aws_elasticache_cluster') return { node_hours: reqs / 1000 };
-    if (resourceType === 'aws_sqs_queue') return { monthly_requests: reqs / 5, request_size_kb: 1 };
-
-    // 🔥 FIX: Fargate/ECS Usage Params
-    if (resourceType === 'aws_ecs_service') return { tasks: 1, running_hours: 730 };
-    if (resourceType === 'aws_fargate_profile') return { running_hours: 730 };
-
-    // Custom domain overrides
-    if (resourceType === 'aws_iot_topic_rule') return { monthly_messages: iotMessages };
-    if (resourceType === 'aws_sagemaker_endpoint') return { instance_hours: mlInferences / 1000 };
-
-    return basicDefaults;
-  };
-
-  // 1. Iterate through all services in input list (if provided) OR all catalog services (for fallback)
-  const servicesToProcess = (deployableServices && deployableServices.length > 0)
-    ? deployableServices
-    : Object.keys(catalog);
-
-  servicesToProcess.forEach(svcId => {
-    // Handle objects or strings
-    const id = typeof svcId === 'string' ? svcId : (svcId.id || svcId.name);
-    const serviceDef = catalog[id];
-
-    if (serviceDef && serviceDef.pricing && serviceDef.pricing.infracost && serviceDef.pricing.infracost.resourceType) {
-      const resourceType = serviceDef.pricing.infracost.resourceType;
-      const usage = getDefaultUsage(resourceType, sizing);
-
-      ymlContent += `  ${resourceType}: \n`;
-      Object.keys(usage).forEach(key => {
-        ymlContent += `    ${key}: ${usage[key]} \n`;
-      });
-    }
-  });
-
-
-  const filePath = path.join(INFRACOST_BASE_DIR, provider.toLowerCase(), 'infracost-usage.yml');
-  ensureDir(path.dirname(filePath));
-  fs.writeFileSync(filePath, ymlContent);
-  console.log(`[USAGE] Force generated universal usage file at: ${filePath} `);
-  return filePath;
+    fs.writeFileSync(usageFilePath, usageYaml);
+    console.log(`[USAGE] Forced usage file for ${provider} at ${usageFilePath}`);
+    return usageFilePath;
+  } catch (err) {
+    console.error(`[USAGE] Force generation failed: ${err.message}`);
+    return null;
+  }
 }
 
 /**
@@ -2125,10 +2082,37 @@ async function runInfracost(terraformDir, usageFilePath = null) {
 
     console.log(`[INFRACOST] Found ${terraformFiles.length} Terraform files: ${terraformFiles.join(', ')} `);
 
-    // Verify usage file exists if provided
-    if (usageFilePath && !fs.existsSync(usageFilePath)) {
-      console.warn(`[INFRACOST] Usage file does not exist: ${usageFilePath} `);
-      usageFilePath = null; // Reset to null to avoid passing non-existent file
+    // 🔥 FIX: Validate Terraform configuration to prevent Infracost crashes on invalid HCL
+    try {
+      console.log(`[TERRAFORM] Validating configuration in ${terraformDir}...`);
+
+      // 🔥 PERFORMANCE FIX: enable global plugin cache to prevent re-downloading 400MB+ providers every run
+      const pluginCacheDir = path.join(os.homedir(), '.terraform.d', 'plugin-cache');
+      if (!fs.existsSync(pluginCacheDir)) {
+        fs.mkdirSync(pluginCacheDir, { recursive: true });
+      }
+
+      const execOpts = {
+        cwd: terraformDir,
+        stdio: 'pipe',
+        timeout: 180000, // Increased to 3m for slow inits
+        env: {
+          ...process.env,
+          TF_PLUGIN_CACHE_DIR: pluginCacheDir
+        }
+      };
+
+      // Init (backend=false to speed up, but plugins still needed for validate)
+      require('child_process').execSync('terraform init -upgrade -backend=false', execOpts);
+
+      // Validate
+      require('child_process').execSync('terraform validate', execOpts);
+      console.log(`[TERRAFORM] Validation successful.`);
+    } catch (err) {
+      console.error(`[TERRAFORM] Validation failed: ${err.message}`);
+      if (err.stdout) console.error(`[TERRAFORM] STDOUT: ${err.stdout.toString()}`);
+      if (err.stderr) console.error(`[TERRAFORM] STDERR: ${err.stderr.toString()}`);
+      return { error: 'TERRAFORM_VALIDATION_FAILED', details: err.message }; // 🔥 FIX: Strictly fail on validation error
     }
 
     const { execFile } = require('child_process');
@@ -2139,59 +2123,76 @@ async function runInfracost(terraformDir, usageFilePath = null) {
       'breakdown',
       '--path', terraformDir,
       '--format', 'json',
-      // '--show-skipped', // Removed: We now parse JSON for skipped resources
-      '--log-level', 'info'
+      '--log-level', 'warn'
     ];
 
     if (usageFilePath && fs.existsSync(usageFilePath)) {
       args.push('--usage-file', usageFilePath);
     }
 
-    console.log(`[INFRACOST] Executing: infracost ${args.map(a => a.includes(' ') ? `"${a}"` : a).join(' ')} `);
+    console.log(`[INFRACOST] Executing: infracost ${args.join(' ')}`);
 
-    const { stdout, stderr } = await execFilePromise('infracost', args, {
-      env: {
-        ...process.env,
-        INFRACOST_API_KEY: process.env.INFRACOST_API_KEY
-      },
-      timeout: 60000,
-      maxBuffer: 1024 * 1024 * 20,
-      windowsHide: true
-    });
+    // 🔥 FIX: Retry mechanism for transient network errors
+    let attempts = 0;
+    const maxAttempts = 2; // Retry once
+    let lastError = null;
 
-    if (stderr && stderr.trim()) {
-      console.log(`[INFRACOST] CLI output: ${stderr} `);
-      // 🔥 FIX: Detect Quota Exceeded
-      if (stderr.includes('limit exceeded') || stderr.includes('Forbidden')) {
-        console.error('[INFRACOST] 🚨 API QUOTA EXCEEDED');
-        return { error: 'API_QUOTA_EXCEEDED' };
+    while (attempts < maxAttempts) {
+      try {
+        attempts++;
+        const { stdout, stderr } = await execFilePromise('infracost', args, {
+          cwd: terraformDir, // 🔥 FIX: Run from the Terraform dir, NOT the Node.js CWD (prevents Infracost from scanning backend dir and crashing on YAML files)
+          env: {
+            ...process.env,
+            INFRACOST_API_KEY: process.env.INFRACOST_API_KEY
+          },
+          timeout: 120000, // 2 min (terraform init can be slow on first run)
+          maxBuffer: 1024 * 1024 * 20,
+          windowsHide: true
+        });
+
+        if (stderr && stderr.trim()) {
+          console.log(`[INFRACOST] CLI output (Attempt ${attempts}): ${stderr}`);
+          if (stderr.includes('limit exceeded') || stderr.includes('Forbidden') || stderr.includes('quota')) {
+            console.error('[INFRACOST] 🚨 API QUOTA EXCEEDED');
+            return { error: 'API_QUOTA_EXCEEDED' };
+          }
+        }
+
+        if (!stdout || stdout.trim() === '') {
+          throw new Error('No output received from Infracost CLI');
+        }
+
+        return JSON.parse(stdout);
+
+      } catch (error) {
+        lastError = error;
+        console.error(`[INFRACOST] Attempt ${attempts} failed: ${error.message}`);
+
+        const errorMsg = (error.message || '') + (error.stdout || '') + (error.stderr || '');
+
+        // Check for specific fatal errors where retry won't help
+        if (errorMsg.includes('limit exceeded') || errorMsg.includes('Forbidden') || errorMsg.includes('quota')) {
+          return { error: 'API_QUOTA_EXCEEDED' };
+        }
+
+        if (errorMsg.includes('ENOTFOUND') || errorMsg.includes('ETIMEDOUT') || errorMsg.includes('networking')) {
+          console.warn(`[INFRACOST] Network error detected. Retrying...`);
+          await new Promise(r => setTimeout(r, 1000)); // Wait 1s before retry
+          continue;
+        }
+
+        // Break on other errors (like invalid configuration)
+        break;
       }
     }
 
-    if (!stdout || stdout.trim() === '') {
-      console.error(`[INFRACOST] No output received from CLI command`);
-      return null;
-    }
+    console.error(`[INFRACOST] All attempts failed for ${terraformDir}`);
+    return { error: 'INFRACOST_EXECUTION_FAILED', details: lastError?.message };
 
-    return JSON.parse(stdout);
   } catch (error) {
-    console.error(`[INFRACOST] CLI execution error for ${terraformDir}: `, error.message);
-    const combinedOutput = (error.stdout || '') + (error.stderr || '');
-    if (combinedOutput.includes('limit exceeded') || combinedOutput.includes('Forbidden')) {
-      console.error('[INFRACOST] 🚨 API QUOTA EXCEEDED (Caught in error)');
-      return { error: 'API_QUOTA_EXCEEDED' };
-    }
-
-    if (error.stdout) {
-      // Try to parse partial stdout if available (sometimes error comes with valid JSON)
-      try {
-        const partial = JSON.parse(error.stdout);
-        if (partial && partial.projects) return partial;
-      } catch (ignore) { }
-      console.error(`[INFRACOST] STDOUT: ${error.stdout} `);
-    }
-    if (error.stderr) console.error(`[INFRACOST] STDERR: ${error.stderr} `);
-    return null;
+    console.error(`[INFRACOST] Fatal execution error:`, error.message);
+    return { error: 'INFRACOST_FATAL_ERROR', details: error.message };
   }
 }
 
@@ -2557,19 +2558,15 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
 
   // 🔵 PHASE 3.2: Normalize usage into resource-level Infracost keys
   let usageFilePath = null;
-  if (usageOverrides) {
-    try {
-      const normalized = usageNormalizer.normalizeUsageForInfracost(usageOverrides, deployableServices, provider);
-      const usageYaml = usageNormalizer.toInfracostYAML(normalized);
-      if (usageYaml) {
-        usageFilePath = path.join(providerDir, 'infracost-usage.yml');
-        fs.writeFileSync(usageFilePath, usageYaml);
-        console.log(`[USAGE FILE] Generated usage file for ${provider} at ${usageFilePath}`);
-      }
-      console.log(`[USAGE NORMALIZER] Generated usage file for ${provider} at ${usageFilePath}`);
-    } catch (usageError) {
-      console.error(`[USAGE NORMALIZER] Failed to normalize usage: ${usageError.message}`);
+  try {
+    const usageYaml = usageNormalizer.generateInfracostUsageFile(deployableServices, usageOverrides, provider);
+    if (usageYaml) {
+      usageFilePath = path.join(providerDir, 'infracost-usage.yml');
+      fs.writeFileSync(usageFilePath, usageYaml);
+      console.log(`[USAGE FILE] Generated usage file for ${provider} at ${usageFilePath}`);
     }
+  } catch (usageError) {
+    console.error(`[USAGE NORMALIZER] Failed to generate usage: ${usageError.message}`);
   }
 
   // 🔥 FORCE USAGE FILE: Always ensure usage file exists to prevent Infracost from failing
@@ -2611,12 +2608,15 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
     );
     const versionsTf = terraformGeneratorV2.generateVersionsTf(genProvider);
     const providersTf = terraformGeneratorV2.generateProvidersTf(genProvider, resolvedRegion);
+    // 🔥 FIX: Generate variables.tf to prevent validation errors
+    const variablesTf = terraformGeneratorV2.generateVariablesTf(genProvider, 'STANDARD', deployableServices);
 
     // Construct flat project folder without modules
     const projectFolder = {
       'main.tf': pricingMainTf,
       'versions.tf': versionsTf,
-      'providers.tf': providersTf
+      'providers.tf': providersTf,
+      'variables.tf': variablesTf
     };
 
     // Recursively write all files
@@ -2638,6 +2638,18 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
   // 🔵 PHASE 3.4: PRIMARY PATH - Run Infracost CLI
   try {
     const infracostResult = await runInfracost(providerDir, usageFilePath);
+
+    // 🔥 FIX: Check if runInfracost returned an error object (e.g. validation failed)
+    if (infracostResult && infracostResult.error) {
+      console.error(`[INFRACOST] ❌ runInfracost returned error: ${infracostResult.error} - ${infracostResult.details || ''}`);
+      return {
+        ...generateBetterFallback(provider, infraSpec, sizing, costProfile),
+        estimate_type: 'heuristic',
+        estimate_source: 'formula_fallback',
+        estimate_reason: `Infracost failed: ${infracostResult.error}`,
+        pricing_status: 'VALIDATION_FAILED'
+      };
+    }
 
     if (infracostResult) {
       // Provider sanity check - detect cross-provider state leakage
@@ -3447,10 +3459,21 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
     // ═══════════════════════════════════════════════════════════════════
     let costMode = classifyWorkload(intent, infraSpec);
 
-    // 🔥 FIX: Enforce STATIC_SITE_BYPASS for STATIC_SITE pattern
+    // 🔥 FIX: Enforce STATIC_SITE_BYPASS for STATIC_SITE pattern ONLY if no advanced services
     if (infraSpec.canonical_architecture?.pattern_id === 'STATIC_SITE' || infraSpec.architecture_pattern === 'STATIC_SITE') {
-      console.log(`[COST ANALYSIS] Overriding Cost Mode for STATIC_SITE -> STATIC_SITE_BYPASS`);
-      costMode = 'STATIC_SITE_BYPASS';
+      const deployableServices = extractDeployableServices(infraSpec);
+      const ADVANCED_SERVICES = ['relationaldatabase', 'nosqldatabase', 'computecontainer', 'computevm', 'cache', 'searchengine'];
+      const hasAdvancedServices = deployableServices.some(s =>
+        ADVANCED_SERVICES.includes(s.replace(/_/g, '').toLowerCase())
+      );
+
+      if (!hasAdvancedServices) {
+        console.log(`[COST ANALYSIS] Overriding Cost Mode for STATIC_SITE -> STATIC_SITE_BYPASS (Pure Static)`);
+        costMode = 'STATIC_SITE_BYPASS';
+      } else {
+        console.log(`[COST ANALYSIS] STATIC_SITE detected but has ADVANCED SERVICES. Proceeding with full INFRASTRUCTURE_COST.`);
+        costMode = 'INFRASTRUCTURE_COST';
+      }
     }
     console.log(`[COST ANALYSIS] Cost Mode: ${costMode}`);
 

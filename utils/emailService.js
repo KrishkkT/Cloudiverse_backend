@@ -237,6 +237,42 @@ const sendSubscriptionCancelledEmail = async (user) => {
   await sendEmail(user.email, subject, getHtmlTemplate('Subscription Cancelled', body), 'BILLING');
 };
 
+// 8. CI/CD NOTIFICATIONS
+const sendDeploymentStatusEmail = async (user, details) => {
+  const isSuccess = details.status === 'success';
+  const color = isSuccess ? '#22c55e' : '#ef4444';
+  const icon = isSuccess ? '✅' : '❌';
+  const subject = `${icon} Deployment ${isSuccess ? 'Successful' : 'Failed'} - ${details.projectName}`;
+
+  const body = `
+    <h2 style="color: ${color};">${icon} Deployment ${isSuccess ? 'Successful' : 'Failed'}</h2>
+    <p>Your deployment for workspace <strong>${details.projectName}</strong> has ${isSuccess ? 'completed successfully' : 'failed'}.</p>
+
+    <div style="background-color: #F3F4F6; padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <h3 style="margin-top: 0; color: #1e293b;">Deployment Details</h3>
+      <table style="width: 100%; border-collapse: collapse;">
+         <tr><td style="padding: 8px 0; color: #64748b;">Trigger</td><td style="text-align: right; font-weight: 600;">${details.trigger}</td></tr>
+         <tr><td style="padding: 8px 0; color: #64748b;">Branch</td><td style="text-align: right; font-weight: 600;">${details.branch}</td></tr>
+         <tr><td style="padding: 8px 0; color: #64748b;">Commit</td><td style="text-align: right; font-family: monospace;">${details.commitHash ? details.commitHash.substring(0, 7) : 'N/A'}</td></tr>
+         <tr><td style="padding: 8px 0; color: #64748b;">Duration</td><td style="text-align: right; font-weight: 600;">${details.duration}</td></tr>
+      </table>
+    </div>
+
+    ${isSuccess ? `
+    <div style="text-align: center; margin-top: 30px;">
+      <a href="${details.liveUrl}" class="btn" style="background-color: #22c55e; color: #ffffff;">🌐 View Live Site</a>
+    </div>` : `
+    <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 15px; margin-top: 20px; color: #b91c1c;">
+      <strong>Error:</strong> ${details.error || 'Unknown error occurred.'}
+    </div>
+    <div style="text-align: center; margin-top: 30px;">
+      <a href="${process.env.VITE_FRONTEND_URL || '#'}/workspaces/${details.workspaceId}" class="btn" style="background-color: #1e293b; color: #ffffff;">View Logs</a>
+    </div>`}
+  `;
+
+  await sendEmail(user.email, subject, getHtmlTemplate(`Deployment ${isSuccess ? 'Success' : 'Failure'}`, body), 'UPDATES');
+};
+
 module.exports = {
   sendEmail,
   sendWelcomeEmail,
@@ -250,5 +286,6 @@ module.exports = {
   sendBillingEmail,
   sendSubscriptionSuccessEmail,
   sendPaymentFailedEmail,
-  sendSubscriptionCancelledEmail
+  sendSubscriptionCancelledEmail,
+  sendDeploymentStatusEmail
 };

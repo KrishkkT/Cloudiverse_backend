@@ -158,32 +158,35 @@ const SHARED_MODULE_SOURCES = {
  */
 const SERVICE_METADATA = {
   // Database
-  relationaldatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest', 'backup_retention_days', 'deletion_protection', 'multi_az'] },
-  analyticaldatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
-  nosqldatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
+  relationaldatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'db_password', 'backup_retention_days', 'multi_az'] },
+  analyticaldatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  nosqldatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
   cache: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
-  vectordatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
-  datawarehouse: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
-  searchengine: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
-  timeseriesdatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
+  vectordatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  datawarehouse: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  searchengine: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  timeseriesdatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
 
   // Storage
-  objectstorage: { args: ['encryption_at_rest'] },
+  objectstorage: { args: [] },
   blockstorage: { deps: ['networking'], args: ['vpc_id', 'encryption_at_rest'] },
   datalake: { args: ['encryption_at_rest'] },
 
   // Compute
   computebatch: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
   computeedge: { args: [] },
-  computeserverless: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
-  compute_container: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'public_subnet_ids'] },
-  computecontainer: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'public_subnet_ids'] },
+  computeserverless: { args: ['execution_role_arn'] },
+  compute_container: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'container_image', 'container_port', 'cpu', 'memory', 'execution_role_arn'] },
+  computecontainer: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'container_image', 'container_port', 'cpu', 'memory', 'execution_role_arn'] },
+  appcompute: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'container_image', 'container_port', 'cpu', 'memory', 'execution_role_arn'] },
   computevm: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
-  filestorage: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
-  datalake: { args: ['encryption_at_rest'] },
-  backup: { args: ['backup_retention_days'] },
-
-
+  filestorage: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  mlinference: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  ml_inference: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  mltraining: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  ml_training: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
+  datalake: { args: [] },
+  backup: { args: [] },
 
   // Network
   loadbalancer: { deps: ['networking'], args: ['vpc_id', 'public_subnet_ids'] },
@@ -201,23 +204,28 @@ const SERVICE_METADATA = {
   graphdatabase: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids'] },
 
   // Security
-  secretsmanagement: { args: ['encryption_at_rest'] },
-  keymanagement: { args: ['encryption_at_rest'] },
+  secretsmanagement: { args: [] },
+  keymanagement: { args: [] },
   iampolicy: { args: [] },
   vulnerabilityscanner: { args: [] },
-  datalossprevention: { args: ['encryption_at_rest'] },
+  datalossprevention: { args: [] },
   securityposture: { args: [] },
 
   // Integration & Messaging
-  messagequeue: { args: ['encryption_at_rest'] },
-  eventbus: { args: ['encryption_at_rest'] },
+  messagequeue: { args: [] },
+  eventbus: { args: [] },
   workfloworchestration: { args: [] },
 
   // Observability
-  monitoring: { args: ['monitoring_enabled'] },
-  logging: { args: ['monitoring_enabled'] },
-  apm: { args: ['monitoring_enabled'] },
-  tracing: { args: ['monitoring_enabled'] },
+  monitoring: { args: [] },
+  logging: { args: [] },
+  apm: { args: [] },
+  tracing: { args: [] },
+  metrics: { args: [] },
+  alerting: { args: [] },
+  auditlogging: { args: [] },
+  logaggregation: { args: [] },
+  dashboard: { args: [] },
 
   // ML & AI
   mltraining: { deps: ['networking'], args: ['vpc_id', 'private_subnet_ids', 'encryption_at_rest'] },
@@ -239,203 +247,158 @@ const getModuleName = (id) => SERVICE_TO_MODULE_NAME[id] || id;
  * Matches strict keys in usageNormalizer.js
  */
 function generatePricingMainTf(provider, services, region, projectName, sizing = {}) {
-  let tf = `// PRICING TERRAFORM - FLAT STRUCTURE\n`;
+  let tf = `// PRICING TERRAFORM - FLAT STRUCTURE (Sanitized & Deduped)\n`;
 
-  // 🔒 FILTER: Exclude EXTERNAL services (Stripe, Auth0, etc.) from pricing Terraform
-  // We assume 'services' contains objects with pricing.class or we look them up.
+  // 1. SANITIZE Project Name (Alphanumeric, lowercase, no spaces)
+  const safeName = (projectName || 'project').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const shortName = safeName.substring(0, 12); // Keep it short for resource prefixes
 
-  // Helper to check service presence (handle strings or objects)
+  // 2. TRACK Generated Resources (Prevent Duplicates)
+  const generatedResources = new Set();
+
+  // Helper to add resource safely
+  const addResource = (type, name, content) => {
+    const key = `${type}.${name}`;
+    if (generatedResources.has(key)) return;
+    tf += content + '\n';
+    generatedResources.add(key);
+  };
+
+  // Helper to check service presence
   const has = (id) => {
-    if (EXTERNAL_SERVICES.includes(id)) return false; // Never price external services
+    if (EXTERNAL_SERVICES.includes(id)) return false;
     return services.some(s => resolveServiceId(typeof s === 'string' ? s : s.service_id) === id);
   };
 
   if (provider === 'aws') {
-    // 1. AWS IMPLEMENTATION
+    // --- COMPUTE ---
     if (has('compute_container')) {
-      tf += `
+      addResource('aws_ecs_service', 'app', `
 resource "aws_ecs_service" "app" {
-  name            = "${projectName}-ecs-service"
-  cluster         = "${projectName}-cluster"
+  name            = "${shortName}-ecs-service"
+  cluster         = "${shortName}-cluster"
   task_definition = aws_ecs_task_definition.app.arn
   desired_count   = 2
   launch_type     = "FARGATE"
-  
   network_configuration {
-    subnets = var.subnet_ids
+    subnets = ["subnet-00000000000000000"]
   }
-}
+}`);
 
+      addResource('aws_ecs_task_definition', 'app', `
 resource "aws_ecs_task_definition" "app" {
-  family                   = "${projectName}-task"
+  family                   = "${shortName}-task"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = ${sizing.container_cpu || 1024}
   memory                   = ${sizing.container_memory || 2048}
-  execution_role_arn       = var.ecs_execution_role_arn
   container_definitions    = jsonencode([{
-    name  = "${projectName}-container"
-    image = "nginx"
-    cpu   = ${sizing.container_cpu || 1024}
+    name   = "${shortName}-container"
+    image  = "nginx"
+    cpu    = ${sizing.container_cpu || 1024}
     memory = ${sizing.container_memory || 2048}
   }])
-}
-`;
+}`);
     }
+
     if (has('computeserverless')) {
-      tf += `
+      addResource('aws_lambda_function', 'app', `
 resource "aws_lambda_function" "app" {
-  function_name = "${projectName}-func"
+  function_name = "${shortName}-func"
   role          = "arn:aws:iam::123456789012:role/service-role/role"
   handler       = "index.handler"
   runtime       = "nodejs18.x"
   memory_size   = ${sizing.function_memory || 1024}
-}
-`;
+}`);
     }
 
-    // API Gateway
-    if (has('apigateway') || has('websocketgateway')) {
-      tf += `
-resource "aws_apigatewayv2_api" "main" {
-  name          = "${projectName}-http-api"
-  protocol_type = "HTTP"
-}
-`;
-    }
-
+    // --- DATABASE ---
     if (has('relationaldatabase')) {
-      tf += `
+      addResource('aws_db_instance', 'db', `
 resource "aws_db_instance" "db" {
-  instance_class    = "${sizing.instance_class || "db.t3.medium"}" # Dynamic sizing
-  allocated_storage = ${sizing.storage_gb || 20}                 # Dynamic sizing
+  identifier        = "${shortName}-db"
+  instance_class    = "${sizing.instance_class || "db.t3.medium"}"
+  allocated_storage = ${sizing.storage_gb || 20}
   engine            = "postgres"
-  username          = "foo"
-  password          = "bar"
-  multi_az          = true           # 🔥 UPDATED: HA for prod
-}
-`;
+  username          = "adminuser"
+  password          = "SuperSecret123!"
+  multi_az          = true
+  skip_final_snapshot = true
+}`);
     }
 
     if (has('nosqldatabase')) {
-      tf += `
+      addResource('aws_dynamodb_table', 'main', `
 resource "aws_dynamodb_table" "main" {
-  name           = "${projectName}-data"
+  name           = "${shortName}-data"
   billing_mode   = "PROVISIONED"
   read_capacity  = 20
   write_capacity = 20
   hash_key       = "pk"
-  range_key      = "sk"
-
   attribute {
     name = "pk"
     type = "S"
   }
-  attribute {
-    name = "sk"
-    type = "S"
-  }
-}
-`;
-    }
-
-    // 🔥 ADDED: Missing Services for Scenarios
-
-    if (has('objectstorage')) {
-      tf += `
-resource "aws_s3_bucket" "b" {
-  bucket_prefix = "${projectName.toLowerCase().substring(0, 36)}-"
-  force_destroy = true
-}
-`;
-    }
-
-    if (has('mlinference')) {
-      tf += `
-resource "aws_sagemaker_endpoint_configuration" "ec" {
-  name = "ml-endpoint-config"
-  production_variants {
-    variant_name           = "variant-1"
-    initial_instance_count = 1
-    instance_type          = "ml.g4dn.xlarge" # GPU instance
-  }
-}
-
-resource "aws_sagemaker_endpoint" "inference" {
-  name                 = "ml-endpoint"
-  endpoint_config_name = aws_sagemaker_endpoint_configuration.ec.name
-}
-`;
-    }
-
-    if (has('iotcore')) {
-      tf += `
-resource "aws_iot_thing" "thing" {
-  name = "${projectName}-iot-device"
-}
-`;
-    }
-
-    if (has('messagequeue')) {
-      tf += `
-resource "aws_sqs_queue" "q" {
-  name = "${projectName}-queue"
-}
-`;
+}`);
     }
 
     if (has('cache')) {
-      tf += `
-resource "aws_elasticache_cluster" "c" {
-  cluster_id           = "${projectName}-cache"
+      addResource('aws_elasticache_cluster', 'cache', `
+resource "aws_elasticache_cluster" "cache" {
+  cluster_id           = "${shortName}-cache"
   engine               = "redis"
   node_type            = "cache.t3.micro"
   num_cache_nodes      = 1
   parameter_group_name = "default.redis7"
   engine_version       = "7.0"
   port                 = 6379
-}
-`;
+}`);
     }
 
+    // --- STORAGE ---
     if (has('objectstorage')) {
-      tf += `
+      addResource('aws_s3_bucket', 'main', `
 resource "aws_s3_bucket" "main" {
-  bucket_prefix = "${projectName.substring(0, 29)}-assets-"
+  bucket_prefix = "${shortName}-assets-"
   force_destroy = true
-}
-`;
+}`);
     }
 
+    if (has('blockstorage')) {
+      addResource('aws_ebs_volume', 'block', `
+resource "aws_ebs_volume" "block" {
+  availability_zone = "${region}a"
+  size              = 40
+  type              = "gp3"
+}`);
+    }
+
+    // --- NETWORKING ---
     if (has('loadbalancer')) {
-      tf += `
+      addResource('aws_lb', 'alb', `
 resource "aws_lb" "alb" {
-  name               = "${projectName}-lb"
+  name               = "${shortName}-lb"
   internal           = false
   load_balancer_type = "application"
   subnets            = var.subnet_ids
-}
-`;
+}`);
     }
 
-    if (has('apigateway')) {
-      tf += `
-resource "aws_apigatewayv2_api" "api" {
-  name          = "${projectName}-api"
+    if (has('apigateway') || has('websocketgateway')) {
+      addResource('aws_apigatewayv2_api', 'main', `
+resource "aws_apigatewayv2_api" "main" {
+  name          = "${shortName}-http-api"
   protocol_type = "HTTP"
-}
-`;
+}`);
     }
 
     if (has('cdn')) {
-      tf += `
+      addResource('aws_cloudfront_distribution', 'cdn', `
 resource "aws_cloudfront_distribution" "cdn" {
   enabled = true
-  
   origin {
     domain_name = "example.com"
     origin_id   = "myS3Origin"
-    
     custom_origin_config {
       http_port              = 80
       https_port             = 443
@@ -443,51 +406,70 @@ resource "aws_cloudfront_distribution" "cdn" {
       origin_ssl_protocols   = ["TLSv1.2"]
     }
   }
-  
   default_cache_behavior {
     allowed_methods  = ["GET", "HEAD"]
     cached_methods   = ["GET", "HEAD"]
     target_origin_id = "myS3Origin"
-    
-    forwarded_values {
-      query_string = false
-      cookies {
-        forward = "none"
-      }
-    }
-    
     viewer_protocol_policy = "redirect-to-https"
     min_ttl                = 0
     default_ttl            = 3600
     max_ttl                = 86400
-  }
-  
-  restrictions {
-    geo_restriction {
-      restriction_type = "none"
+    forwarded_values {
+      query_string = false
+      cookies { forward = "none" }
     }
   }
-  
+  restrictions {
+    geo_restriction { restriction_type = "none" }
+  }
   viewer_certificate {
     cloudfront_default_certificate = true
   }
-}
-`;
+}`);
     }
 
-    if (has('logging')) {
-      tf += `
-resource "aws_cloudwatch_log_group" "logs" {
-  name              = "/ecs/${projectName}"
-  retention_in_days = 30
+    // --- ML/AI ---
+    // 🔥 FIX: SageMaker removed from pricing mode — requires model dependency chain
+    // ML pricing is handled by formula engine instead
+
+    // --- INTEGRATION ---
+    if (has('messagequeue')) {
+      addResource('aws_sqs_queue', 'queue', `
+resource "aws_sqs_queue" "queue" {
+  name = "${shortName}-queue"
+}`);
+    }
+
+    if (has('eventbus')) {
+      addResource('aws_cloudwatch_event_bus', 'bus', `
+resource "aws_cloudwatch_event_bus" "bus" {
+  name = "${shortName}-bus"
+}`);
+    }
+
+    // --- SECURITY & MONITORING ---
+    if (has('secretsmanagement')) {
+      addResource('aws_secretsmanager_secret', 'secret', `
+resource "aws_secretsmanager_secret" "secret" {
+  name = "${shortName}-secret"
 }
-  `;
+resource "aws_secretsmanager_secret_version" "val" {
+  secret_id     = aws_secretsmanager_secret.secret.id
+  secret_string = "example"
+}`);
+    }
+
+    if (has('identityauth')) {
+      addResource('aws_cognito_user_pool', 'pool', `
+resource "aws_cognito_user_pool" "pool" {
+  name = "${shortName}-user-pool"
+}`);
     }
 
     if (has('monitoring')) {
-      tf += `
-resource "aws_cloudwatch_metric_alarm" "monitoring" {
-  alarm_name          = "${projectName}-cpu-high"
+      addResource('aws_cloudwatch_metric_alarm', 'cpu', `
+resource "aws_cloudwatch_metric_alarm" "cpu" {
+  alarm_name          = "${shortName}-cpu-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   metric_name         = "CPUUtilization"
@@ -495,342 +477,35 @@ resource "aws_cloudwatch_metric_alarm" "monitoring" {
   period              = 300
   statistic           = "Average"
   threshold           = 80
-  alarm_description   = "CPU utilization high"
-}
-`;
-    }
-
-    if (has('cache')) {
-      tf += `
-resource "aws_elasticache_cluster" "cache" {
-  cluster_id           = "${projectName}-cache"
-  engine               = "redis"
-  node_type            = "cache.t3.micro"
-  num_cache_nodes      = 1
-  parameter_group_name = "default.redis7"
-  port                 = 6379
-}
-`;
-    }
-
-    if (has('computevm')) {
-      tf += `
-resource "aws_instance" "vm" {
-  ami           = "ami-0c55b159cbfafe1f0"
-  instance_type = "t3.medium"
-
-  root_block_device {
-    volume_size = 20
-  }
-}
-`;
-    }
-
-    if (has('computebatch')) {
-      tf += `
-resource "aws_batch_compute_environment" "batch" {
-  compute_environment_name = "${projectName}-batch"
-  type                     = "MANAGED"
-  
-  compute_resources {
-    type               = "FARGATE"
-    max_vcpus          = 16
-    subnets            = var.subnet_ids
-    security_group_ids = [var.security_group_id]
-  }
-}
-`;
-    }
-
-    if (has('blockstorage')) {
-      tf += `
-resource "aws_ebs_volume" "block" {
-  availability_zone = "${region}a"
-  size              = 40
-  type              = "gp3"
-}
-`;
-    }
-
-    if (has('dns')) {
-      tf += `
-resource "aws_route53_zone" "primary" {
-  name = var.domain_name
-}
-`;
-    }
-
-    if (has('messagequeue')) {
-      tf += `
-resource "aws_sqs_queue" "queue" {
-  name                      = "${projectName}-queue"
-  delay_seconds             = 90
-  max_message_size          = 2048
-  message_retention_seconds = 86400
-  receive_wait_time_seconds = 10
-}
-`;
-    }
-
-    if (has('eventbus')) {
-      tf += `
-resource "aws_cloudwatch_event_bus" "bus" {
-  name = "${projectName}-bus"
-}
-`;
-    }
-
-    if (has('secretsmanagement')) {
-      tf += `
-resource "aws_secretsmanager_secret" "secret" {
-  name = "${projectName}-secret"
-}
-
-resource "aws_secretsmanager_secret_version" "secret_val" {
-  secret_id     = aws_secretsmanager_secret.secret.id
-  secret_string = "example-string-to-protect"
-}
-`;
-    }
-
-    if (has('vpcnetworking')) {
-      tf += `
-resource "aws_vpc" "main" {
-  cidr_block = "10.0.0.0/16"
-  
-  tags = {
-    Name = "${projectName}-vpc"
-  }
-}
-
-resource "aws_eip" "nat" {
-  domain = "vpc"
-  
-  tags = {
-    Name = "${projectName}-nat-eip"
-  }
-}
-
-resource "aws_nat_gateway" "nat" {
-  allocation_id     = aws_eip.nat.id
-  subnet_id         = var.subnet_ids[0]
-  connectivity_type = "public"
-  
-  tags = {
-    Name = "${projectName}-nat"
-  }
-}
-`;
-    }
-
-    if (has('websocketgateway')) {
-      tf += `
-resource "aws_apigatewayv2_api" "websocket" {
-  name                       = "${projectName}-ws-api"
-  protocol_type              = "WEBSOCKET"
-  route_selection_expression = "$request.body.action"
-}
-`;
-    }
-
-    if (has('identityauth')) {
-      tf += `
-resource "aws_cognito_user_pool" "pool" {
-  name = "${projectName}-user-pool"
-}
-`;
-    }
-
-    // --- ANALYTICS ---
-    if (has('datawarehouse')) {
-      tf += `
-resource "aws_redshift_cluster" "wh" {
-  cluster_identifier = "${projectName}-wh"
-  database_name      = "dev"
-  master_username    = "adminuser"
-  master_password    = "MustBeStrong123!"
-  node_type          = "dc2.large"
-  cluster_type       = "single-node"
-}
-`;
-    }
-    if (has('datalake')) {
-      tf += `
-resource "aws_s3_bucket" "datalake" {
-  bucket_prefix = "${projectName.substring(0, 27)}-datalake-"
-  force_destroy = true
-}
-`;
-    }
-    if (has('etlorchestration')) {
-      tf += `
-resource "aws_glue_job" "etl" {
-  name     = "${projectName}-etl"
-  role_arn = "arn:aws:iam::123456789012:role/glue-role"
-  command {
-    script_location = "s3://${projectName}-scripts/etl.py"
-  }
-}
-`;
-    }
-    if (has('bidashboard')) {
-      // Logic for QuickSight is complex, using placeholder for pricing
-      tf += `
-# QuickSight Pricing Placeholder
-resource "aws_quicksight_user" "bi" {
-  user_name     = "analyst"
-  email         = "analyst@example.com"
-  identity_type = "IAM"
-  user_role     = "AUTHOR"
-}
-`;
-    }
-    if (has('datacatalog')) {
-      tf += `
-resource "aws_glue_catalog_database" "catalog" {
-  name = "${projectName}_catalog"
-}
-`;
-    }
-
-    // --- MACHINE LEARNING ---
-    if (has('mltraining')) {
-      tf += `
-resource "aws_sagemaker_notebook_instance" "nb" {
-  name          = "${projectName}-nb"
-  role_arn      = "arn:aws:iam::123456789012:role/sagemaker-role"
-  instance_type = "ml.t2.medium"
-}
-`;
-    }
-    if (has('mlinference')) {
-      tf += `
-resource "aws_sagemaker_endpoint_configuration" "ec" {
-  name = "${projectName}-ec"
-  production_variants {
-    variant_name           = "variant-1"
-    model_name             = "${projectName}-model"
-    initial_instance_count = 1
-    instance_type          = "ml.m5.large"
-  }
-}
-`;
-    }
-    if (has('modelregistry') || has('experimenttracking') || has('mlpipelineorchestration') || has('modelmonitoring')) {
-      // These often bundle into SageMaker Studio or similar
-      tf += `
-resource "aws_sagemaker_domain" "studio" {
-  domain_name = "${projectName}-studio"
-  auth_mode   = "IAM"
-  vpc_id      = "vpc-12345678"
-  subnet_ids  = ["subnet-12345678"]
-  default_user_settings {
-    execution_role = "arn:aws:iam::123456789012:role/sagemaker-role"
-  }
-}
-`;
-    }
-    if (has('featurestore')) {
-      tf += `
-resource "aws_sagemaker_feature_group" "fg" {
-  feature_group_name = "${projectName}-fg"
-  record_identifier_feature_name = "id"
-  event_time_feature_name = "timestamp"
-  feature_definition {
-    feature_name = "id"
-    feature_type = "String"
-  }
-  feature_definition { 
-    feature_name = "timestamp"
-    feature_type = "Fractional"
-  }
-  online_store_config {
-    enable_online_store = true
-  }
-  role_arn = "arn:aws:iam::123456789012:role/sagemaker-role"
-}
-`;
-    }
-    if (has('vectordatabase')) {
-      tf += `
-resource "aws_opensearch_domain" "vector" {
-  domain_name = "${projectName.toLowerCase().substring(0, 21)}-vector"
-  cluster_config {
-    instance_type = "t3.small.search"
-    instance_count = 1
-  }
-  ebs_options {
-    ebs_enabled = true
-    volume_size = 10
-  }
-}
-`;
-    }
-
-    // --- IOT ---
-    if (has('iotcore') || has('iotedgegateway') || has('digitaltwin') || has('deviceregistry')) {
-      tf += `
-resource "aws_iot_thing" "thing" {
-  name = "${projectName}-thing"
-}
-`;
-    }
-    if (has('timeseriesdatabase')) {
-      tf += `
-resource "aws_timestream_database" "ts" {
-  database_name = "${projectName}-ts"
-}
-resource "aws_timestream_table" "ts_table" {
-  database_name = aws_timestream_database.ts.database_name
-  table_name    = "metrics"
-}
-`;
-    }
-
-    // --- SECURITY ---
-    if (has('waf')) {
-      tf += `
-resource "aws_wafv2_web_acl" "waf" {
-  name        = "${projectName}-waf"
-  scope       = "REGIONAL"
-  default_action {
-    allow {}
-  }
-  visibility_config {
-    cloudwatch_metrics_enabled = true
-    metric_name                = "${projectName}-waf"
-    sampled_requests_enabled   = true
-  }
-}
-`;
+}`);
     }
     if (has('ddosprotection')) {
       tf += `
 resource "aws_shield_protection" "shield" {
-  name         = "${projectName}-shield"
-  resource_arn = "arn:aws:alb:us-east-1:123456789012:loadbalancer/app/my-lb/1234567890123456" 
+  name = "${shortName}-shield"
+  resource_arn = "arn:aws:alb:us-east-1:123456789012:loadbalancer/app/my-lb/1234567890123456"
 }
 `;
     }
     if (has('keymanagement') || has('keymanagementservice')) {
       tf += `
 resource "aws_kms_key" "key" {
-  description = "${projectName} key"
+  description = "${shortName} key"
 }
 `;
     }
     if (has('certificatemanagement')) {
       tf += `
 resource "aws_acm_certificate" "cert" {
-  domain_name       = var.domain_name
+  domain_name = "example.com"
   validation_method = "DNS"
 }
 `;
     }
     if (has('siem')) {
       tf += `
-# Placeholder - Security Hub is usually account-level, but adding for pricing visibility
-resource "aws_securityhub_account" "hub" {}
+# Placeholder - Security Hub is usually account - level, but adding for pricing visibility
+resource "aws_securityhub_account" "hub" { }
 `;
     }
 
@@ -838,20 +513,20 @@ resource "aws_securityhub_account" "hub" {}
     if (has('cicd')) {
       tf += `
 resource "aws_codepipeline" "pipeline" {
-  name     = "${projectName}-pipeline"
+  name = "${shortName}-pipeline"
   role_arn = "arn:aws:iam::123456789012:role/pipeline-role"
   artifact_store {
     location = "bucket"
-    type     = "S3"
+    type = "S3"
   }
   stage {
     name = "Source"
     action {
-      name             = "Source"
-      category         = "Source"
-      owner            = "AWS"
-      provider         = "CodeStarSourceConnection"
-      version          = "1"
+      name = "Source"
+      category = "Source"
+      owner = "AWS"
+      provider = "CodeStarSourceConnection"
+      version = "1"
       output_artifacts = ["source_output"]
       configuration = {
         ConnectionArn    = "arn:aws:codestar-connections:us-east-1:123456789012:connection/12345678"
@@ -866,14 +541,14 @@ resource "aws_codepipeline" "pipeline" {
     if (has('containerregistry')) {
       tf += `
 resource "aws_ecr_repository" "repo" {
-  name = "${projectName}-repo"
+  name = "${shortName}-repo"
 }
 `;
     }
     if (has('artifactrepository')) {
       tf += `
 resource "aws_codeartifact_domain" "domain" {
-  domain = "${projectName}-domain"
+  domain = "${shortName}-domain"
 }
 `;
     }
@@ -882,10 +557,10 @@ resource "aws_codeartifact_domain" "domain" {
     if (has('vpn') || has('vpngateway')) {
       tf += `
 resource "aws_vpn_gateway" "vpn" {
-  vpc_id = var.vpc_id
-  
+  vpc_id = "vpc-00000000000000000"
+
   tags = {
-    Name = "${projectName}-vpn"
+    Name = "${shortName}-vpn"
   }
 }
 `;
@@ -893,7 +568,7 @@ resource "aws_vpn_gateway" "vpn" {
     if (has('privatelink')) {
       tf += `
 resource "aws_vpc_endpoint" "s3" {
-  vpc_id       = var.vpc_id
+  vpc_id = "vpc-00000000000000000"
   service_name = "com.amazonaws.${region}.s3"
 }
 `;
@@ -901,31 +576,31 @@ resource "aws_vpc_endpoint" "s3" {
     if (has('servicediscovery')) {
       tf += `
 resource "aws_service_discovery_private_dns_namespace" "dns" {
-  name        = "${projectName}.local"
-  description = "Service discovery for ${projectName}"
-  vpc         = var.vpc_id
+  name = "${shortName}.local"
+  description = "Service discovery for ${shortName}"
+  vpc = "vpc-00000000000000000"
 }
 `;
     }
     if (has('servicemesh')) {
       tf += `
 resource "aws_appmesh_mesh" "mesh" {
-  name = "${projectName}-mesh"
+  name = "${shortName}-mesh"
 }
 `;
     }
 
     if (has('paymentgateway')) {
       tf += `
-# Payment Gateway (External Service)
-# Logical dependency on Stripe/PayPal - No AWS resources created
-`;
+# Payment Gateway(External Service)
+# Logical dependency on Stripe / PayPal - No AWS resources created
+  `;
     }
     if (has('auditlogging')) {
       tf += `
 resource "aws_cloudtrail" "audit" {
-  name                          = "${projectName}-audit-trail"
-  s3_bucket_name                = aws_s3_bucket.main.id
+  name = "${shortName}-audit-trail"
+  s3_bucket_name = "${shortName}-audit-logs"
   include_global_service_events = true
 }
 `;
@@ -935,18 +610,18 @@ resource "aws_cloudtrail" "audit" {
 # Vulnerability Scanner
 # Represents AWS Inspector or similar security scanning integration
 resource "aws_inspector_assessment_target" "target" {
-  name = "${projectName}-assessment-target"
+  name = "${shortName}-assessment-target"
 }
 `;
     }
     if (has('iampolicy')) {
       tf += `
 resource "aws_iam_account_password_policy" "strict" {
-  minimum_password_length        = 14
-  require_lowercase_characters   = true
-  require_numbers                = true
-  require_uppercase_characters   = true
-  require_symbols                = true
+  minimum_password_length = 14
+  require_lowercase_characters = true
+  require_numbers = true
+  require_uppercase_characters = true
+  require_symbols = true
   allow_users_to_change_password = true
 }
 `;
@@ -959,7 +634,7 @@ resource "aws_iam_account_password_policy" "strict" {
     if (has('filestorage')) {
       tf += `
 resource "aws_efs_file_system" "efs" {
-  creation_token = "${projectName}-efs"
+  creation_token = "${shortName}-efs"
   performance_mode = "generalPurpose"
   throughput_mode = "bursting"
   encrypted = true
@@ -970,15 +645,15 @@ resource "aws_efs_file_system" "efs" {
     if (has('backup')) {
       tf += `
 resource "aws_backup_vault" "vault" {
-  name = "${projectName}-backup-vault"
+  name = "${shortName}-backup-vault"
 }
 
 resource "aws_backup_plan" "plan" {
-  name = "${projectName}-backup-plan"
+  name = "${shortName}-backup-plan"
   rule {
-    rule_name         = "daily-backup"
+    rule_name = "daily-backup"
     target_vault_name = aws_backup_vault.vault.name
-    schedule          = "cron(0 5 ? * * *)"
+    schedule = "cron(0 5 ? * * *)"
     lifecycle {
       delete_after = 30
     }
@@ -990,7 +665,7 @@ resource "aws_backup_plan" "plan" {
     if (has('notification')) {
       tf += `
 resource "aws_sns_topic" "notifications" {
-  name = "${projectName}-notifications"
+  name = "${shortName}-notifications"
 }
 `;
     }
@@ -1006,7 +681,7 @@ resource "aws_ses_domain_identity" "email" {
     if (has('pushnotificationservice')) {
       tf += `
 resource "aws_sns_platform_application" "push" {
-  name     = "${projectName}-push"
+  name = "${shortName}-push"
   platform = "GCM"
   platform_credential = "PLACEHOLDER"
 }
@@ -1016,17 +691,17 @@ resource "aws_sns_platform_application" "push" {
     if (has('tracing')) {
       tf += `
 resource "aws_xray_sampling_rule" "tracing" {
-  rule_name      = "${projectName}-sampling"
-  priority       = 1000
+  rule_name = "${shortName}-sampling"
+  priority = 1000
   reservoir_size = 1
-  fixed_rate     = 0.05
-  url_path       = "*"
-  host           = "*"
-  http_method    = "*"
-  service_type   = "*"
-  service_name   = "*"
-  version        = 1
-  resource_arn   = "*"
+  fixed_rate = 0.05
+  url_path = "*"
+  host = "*"
+  http_method = "*"
+  service_type = "*"
+  service_name = "*"
+  version = 1
+  resource_arn = "*"
 }
 `;
     }
@@ -1034,7 +709,7 @@ resource "aws_xray_sampling_rule" "tracing" {
     if (has('apm')) {
       tf += `
 resource "aws_xray_group" "apm" {
-  group_name        = "${projectName}-apm"
+  group_name = "${shortName}-apm"
   filter_expression = "responsetime > 5"
 }
 `;
@@ -1043,14 +718,14 @@ resource "aws_xray_group" "apm" {
     if (has('metrics')) {
       tf += `
 resource "aws_cloudwatch_metric_alarm" "metrics" {
-  alarm_name          = "${projectName}-metric"
+  alarm_name = "${shortName}-metric"
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "CPUUtilization"
-  namespace           = "AWS/EC2"
-  period              = 300
-  statistic           = "Average"
-  threshold           = 80
+  evaluation_periods = 1
+  metric_name = "CPUUtilization"
+  namespace = "AWS/EC2"
+  period = 300
+  statistic = "Average"
+  threshold = 80
 }
 `;
     }
@@ -1058,7 +733,7 @@ resource "aws_cloudwatch_metric_alarm" "metrics" {
     if (has('alerting')) {
       tf += `
 resource "aws_sns_topic" "alerts" {
-  name = "${projectName}-alerts"
+  name = "${shortName}-alerts"
 }
 `;
     }
@@ -1066,7 +741,7 @@ resource "aws_sns_topic" "alerts" {
     if (has('logaggregation')) {
       tf += `
 resource "aws_cloudwatch_log_group" "aggregation" {
-  name              = "/app/${projectName}/logs"
+  name = "/app/${shortName}/logs"
   retention_in_days = 90
 }
 `;
@@ -1075,16 +750,16 @@ resource "aws_cloudwatch_log_group" "aggregation" {
     if (has('dashboard')) {
       tf += `
 resource "aws_cloudwatch_dashboard" "main" {
-  dashboard_name = "${projectName}-dashboard"
+  dashboard_name = "${shortName}-dashboard"
   dashboard_body = jsonencode({
-    widgets = [{
+    widgets =[{
       type   = "metric"
       x      = 0
       y      = 0
       width  = 12
       height = 6
       properties = {
-        metrics = [["AWS/EC2", "CPUUtilization"]]
+        metrics =[["AWS/EC2", "CPUUtilization"]]
         title   = "CPU Utilization"
       }
     }]
@@ -1096,7 +771,7 @@ resource "aws_cloudwatch_dashboard" "main" {
     if (has('containerregistry')) {
       tf += `
 resource "aws_ecr_repository" "registry" {
-  name                 = "${projectName}-registry"
+  name = "${shortName}-registry"
   image_tag_mutability = "MUTABLE"
   image_scanning_configuration {
     scan_on_push = true
@@ -1108,18 +783,18 @@ resource "aws_ecr_repository" "registry" {
     if (has('buildservice')) {
       tf += `
 resource "aws_codebuild_project" "build" {
-  name         = "${projectName}-build"
+  name = "${shortName}-build"
   service_role = "arn:aws:iam::123456789012:role/codebuild-role"
   artifacts {
     type = "NO_ARTIFACTS"
   }
   environment {
     compute_type = "BUILD_GENERAL1_SMALL"
-    image        = "aws/codebuild/standard:5.0"
-    type         = "LINUX_CONTAINER"
+    image = "aws/codebuild/standard:5.0"
+    type = "LINUX_CONTAINER"
   }
   source {
-    type     = "GITHUB"
+    type = "GITHUB"
     location = "https://github.com/example/repo.git"
   }
 }
@@ -1129,8 +804,8 @@ resource "aws_codebuild_project" "build" {
     if (has('parameterstore')) {
       tf += `
 resource "aws_ssm_parameter" "config" {
-  name  = "/${projectName}/config"
-  type  = "SecureString"
+  name = "/${shortName}/config"
+  type = "SecureString"
   value = "placeholder"
 }
 `;
@@ -1139,7 +814,7 @@ resource "aws_ssm_parameter" "config" {
     if (has('workfloworchestration')) {
       tf += `
 resource "aws_sfn_state_machine" "workflow" {
-  name     = "${projectName}-workflow"
+  name = "${shortName}-workflow"
   role_arn = "arn:aws:iam::123456789012:role/sfn-role"
   definition = jsonencode({
     StartAt = "Step1"
@@ -1157,7 +832,7 @@ resource "aws_sfn_state_machine" "workflow" {
     if (has('deadletterqueue')) {
       tf += `
 resource "aws_sqs_queue" "dlq" {
-  name                      = "${projectName}-dlq"
+  name = "${shortName}-dlq"
   message_retention_seconds = 1209600
 }
 `;
@@ -1166,13 +841,13 @@ resource "aws_sqs_queue" "dlq" {
     if (has('pubsub') || has('eventstreaming')) {
       tf += `
 resource "aws_sns_topic" "pubsub" {
-  name = "${projectName}-events"
+  name = "${shortName}-events"
 }
 
 resource "aws_sns_topic_subscription" "sub" {
   topic_arn = aws_sns_topic.pubsub.arn
-  protocol  = "sqs"
-  endpoint  = "arn:aws:sqs:${region}:123456789012:${projectName}-queue"
+  protocol = "sqs"
+  endpoint = "arn:aws:sqs:${region}:123456789012:${shortName}-queue"
 }
 `;
     }
@@ -1180,8 +855,8 @@ resource "aws_sns_topic_subscription" "sub" {
     if (has('kinesisstream')) {
       tf += `
 resource "aws_kinesis_stream" "stream" {
-  name             = "${projectName}-stream"
-  shard_count      = 1
+  name = "${shortName}-stream"
+  shard_count = 1
   retention_period = 24
 }
 `;
@@ -1190,16 +865,16 @@ resource "aws_kinesis_stream" "stream" {
     if (has('streamprocessor')) {
       tf += `
 resource "aws_kinesis_analytics_application" "processor" {
-  name = "${projectName}-processor"
+  name = "${shortName}-processor"
   inputs {
     name_prefix = "input"
     kinesis_stream {
-      resource_arn = "arn:aws:kinesis:${region}:123456789012:stream/${projectName}-stream"
-      role_arn     = "arn:aws:iam::123456789012:role/kinesis-role"
+      resource_arn = "arn:aws:kinesis:${region}:123456789012:stream/${shortName}-stream"
+      role_arn = "arn:aws:iam::123456789012:role/kinesis-role"
     }
     schema {
       record_columns {
-        name    = "data"
+        name = "data"
         sql_type = "VARCHAR(256)"
         mapping = "$.data"
       }
@@ -1219,8 +894,8 @@ resource "aws_kinesis_analytics_application" "processor" {
     if (has('eventstream')) {
       tf += `
 resource "aws_kinesis_stream" "events" {
-  name             = "${projectName}-events"
-  shard_count      = 2
+  name = "${shortName}-events"
+  shard_count = 2
   retention_period = 48
 }
 `;
@@ -1229,7 +904,7 @@ resource "aws_kinesis_stream" "events" {
     if (has('deviceregistry')) {
       tf += `
 resource "aws_iot_thing_type" "devices" {
-  name = "${projectName}-devices"
+  name = "${shortName}-devices"
 }
 `;
     }
@@ -1237,7 +912,7 @@ resource "aws_iot_thing_type" "devices" {
     if (has('digitaltwin')) {
       tf += `
 resource "aws_iot_thing" "twin" {
-  name = "${projectName}-digital-twin"
+  name = "${shortName}-digital-twin"
 }
 `;
     }
@@ -1245,7 +920,7 @@ resource "aws_iot_thing" "twin" {
     if (has('iotedgegateway')) {
       tf += `
 resource "aws_iot_thing" "edge" {
-  name = "${projectName}-edge-gateway"
+  name = "${shortName}-edge-gateway"
 }
 `;
     }
@@ -1253,10 +928,10 @@ resource "aws_iot_thing" "edge" {
     if (has('experimenttracking') || has('mlpipelineorchestration') || has('modelmonitoring')) {
       tf += `
 resource "aws_sagemaker_domain" "mlops" {
-  domain_name = "${projectName}-mlops"
-  auth_mode   = "IAM"
-  vpc_id      = "vpc-12345678"
-  subnet_ids  = ["subnet-12345678"]
+  domain_name = "${shortName}-mlops"
+  auth_mode = "IAM"
+  vpc_id = "vpc-12345678"
+  subnet_ids = ["subnet-12345678"]
   default_user_settings {
     execution_role = "arn:aws:iam::123456789012:role/sagemaker-role"
   }
@@ -1266,16 +941,16 @@ resource "aws_sagemaker_domain" "mlops" {
 
     if (has('securityposture')) {
       tf += `
-resource "aws_securityhub_account" "posture" {}
+resource "aws_securityhub_account" "posture" { }
 `;
     }
 
     if (has('policygovernance')) {
       tf += `
 resource "aws_config_config_rule" "policy" {
-  name = "${projectName}-policy"
+  name = "${shortName}-policy"
   source {
-    owner             = "AWS"
+    owner = "AWS"
     source_identifier = "REQUIRED_TAGS"
   }
 }
@@ -1285,9 +960,9 @@ resource "aws_config_config_rule" "policy" {
     if (has('globalloadbalancer')) {
       tf += `
 resource "aws_globalaccelerator_accelerator" "global" {
-  name            = "${projectName}-global"
+  name = "${shortName}-global"
   ip_address_type = "IPV4"
-  enabled         = true
+  enabled = true
 }
 `;
     }
@@ -1295,10 +970,10 @@ resource "aws_globalaccelerator_accelerator" "global" {
     if (has('multiregiondb')) {
       tf += `
 resource "aws_rds_global_cluster" "global" {
-  global_cluster_identifier = "${projectName}-global-db"
-  engine                    = "aurora-postgresql"
-  engine_version            = "13.4"
-  database_name             = "${projectName.replace(/-/g, '_')}_db"
+  global_cluster_identifier = "${shortName}-global-db"
+  engine = "aurora-postgresql"
+  engine_version = "13.4"
+  database_name = "${safeName}_db"
 }
 `;
     }
@@ -1306,13 +981,13 @@ resource "aws_rds_global_cluster" "global" {
     if (has('batchjob')) {
       tf += `
 resource "aws_batch_job_definition" "job" {
-  name = "${projectName}-job"
+  name = "${shortName}-job"
   type = "container"
   container_properties = jsonencode({
     image   = "busybox"
     vcpus   = 1
     memory  = 512
-    command = ["echo", "Hello"]
+    command =["echo", "Hello"]
   })
 }
 `;
@@ -1321,10 +996,10 @@ resource "aws_batch_job_definition" "job" {
     if (has('searchengine')) {
       tf += `
 resource "aws_opensearch_domain" "search" {
-  domain_name    = "${projectName.toLowerCase().substring(0, 21)}-search"
+  domain_name = "${projectName.toLowerCase().substring(0, 21)}-search"
   engine_version = "OpenSearch_2.5"
   cluster_config {
-    instance_type  = "t3.medium.search"
+    instance_type = "t3.medium.search"
     instance_count = 1
   }
   ebs_options {
@@ -1343,7 +1018,7 @@ resource "aws_eip" "nat" {
 
 resource "aws_nat_gateway" "nat" {
   allocation_id = aws_eip.nat.id
-  subnet_id     = "subnet-12345678"
+  subnet_id = "subnet-12345678"
 }
 `;
     }
@@ -1351,12 +1026,12 @@ resource "aws_nat_gateway" "nat" {
     if (has('computeedge')) {
       tf += `
 resource "aws_lambda_function" "edge" {
-  function_name = "${projectName}-edge"
-  role          = "arn:aws:iam::123456789012:role/lambda-edge-role"
-  handler       = "index.handler"
-  runtime       = "nodejs18.x"
-  publish       = true
-  filename      = "edge.zip"
+  function_name = "${shortName}-edge"
+  role = "arn:aws:iam::123456789012:role/lambda-edge-role"
+  handler = "index.handler"
+  runtime = "nodejs18.x"
+  publish = true
+  filename = "edge.zip"
 }
 `;
     }
@@ -1368,7 +1043,7 @@ resource "aws_lambda_function" "edge" {
     if (has('computecontainer')) {
       tf += `
 resource "google_cloud_run_service" "app" {
-  name     = "${projectName}-service"
+  name = "${shortName}-service"
   location = "${region}"
 
   template {
@@ -1398,13 +1073,13 @@ resource "google_cloud_run_service" "app" {
     if (has('computeserverless')) {
       tf += `
 resource "google_cloudfunctions_function" "func" {
-  name                  = "${projectName}-func"
-  runtime               = "nodejs18"
-  available_memory_mb   = ${sizing.function_memory || 256} # Dynamic
+  name = "${shortName}-func"
+  runtime = "nodejs18"
+  available_memory_mb = ${sizing.function_memory || 256} # Dynamic
   source_archive_bucket = "mock-bucket"
   source_archive_object = "mock-object"
-  trigger_http          = true
-  entry_point           = "handler"
+  trigger_http = true
+  entry_point = "handler"
 }
 `;
     }
@@ -1412,11 +1087,11 @@ resource "google_cloudfunctions_function" "func" {
     if (has('relationaldatabase')) {
       tf += `
 resource "google_sql_database_instance" "db" {
-  name             = "${projectName}-db"
+  name = "${shortName}-db"
   database_version = "POSTGRES_13"
-  region           = "${region}"
+  region = "${region}"
   settings {
-    tier = "${sizing.instance_class || "db-custom-2-3840"}" # Dynamic
+    tier = "${sizing.instance_class || "db - custom - 2 - 3840"}" # Dynamic
   }
 }
 `;
@@ -1425,8 +1100,8 @@ resource "google_sql_database_instance" "db" {
     if (has('objectstorage')) {
       tf += `
 resource "google_storage_bucket" "storage" {
-  name          = "${projectName}-bucket"
-  location      = "US"
+  name = "${shortName}-bucket"
+  location = "US"
   force_destroy = true
 }
 `;
@@ -1435,12 +1110,12 @@ resource "google_storage_bucket" "storage" {
     if (has('loadbalancer')) {
       tf += `
 resource "google_compute_global_address" "lb_ip" {
-  name = "${projectName}-lb-ip"
+  name = "${shortName}-lb-ip"
 }
 
 resource "google_compute_global_forwarding_rule" "lb" {
-  name       = "${projectName}-lb"
-  target     = "all-apis"
+  name = "${shortName}-lb"
+  target = "all-apis"
   port_range = "80"
   ip_address = google_compute_global_address.lb_ip.address
 }
@@ -1450,12 +1125,12 @@ resource "google_compute_global_forwarding_rule" "lb" {
     if (has('globalloadbalancer')) {
       tf += `
 resource "google_compute_global_address" "global_lb_ip" {
-  name = "${projectName}-global-lb-ip"
+  name = "${shortName}-global-lb-ip"
 }
 
 resource "google_compute_global_forwarding_rule" "global_lb" {
-  name       = "${projectName}-global-lb"
-  target     = "all-apis-global"
+  name = "${shortName}-global-lb"
+  target = "all-apis-global"
   port_range = "80"
   ip_address = google_compute_global_address.global_lb_ip.address
 }
@@ -1465,9 +1140,9 @@ resource "google_compute_global_forwarding_rule" "global_lb" {
     if (has('cdn')) {
       tf += `
 resource "google_compute_backend_bucket" "cdn" {
-  name        = "${projectName}-cdn"
-  bucket_name = "${projectName}-cdn-bucket"
-  enable_cdn  = true
+  name = "${shortName}-cdn"
+  bucket_name = "${shortName}-cdn-bucket"
+  enable_cdn = true
 }
 `;
     }
@@ -1475,15 +1150,15 @@ resource "google_compute_backend_bucket" "cdn" {
     if (has('apigateway')) {
       tf += `
 resource "google_api_gateway_api" "api" {
-  provider = google-beta
-  api_id   = "${projectName}-api"
+  provider = google - beta
+  api_id = "${shortName}-api"
 }
 
 resource "google_api_gateway_gateway" "gateway" {
-  provider   = google-beta
-  gateway_id = "${projectName}-gateway"
-  api_config = "${projectName}-config"
-  region     = "${region}"
+  provider = google - beta
+  gateway_id = "${shortName}-gateway"
+  api_config = "${shortName}-config"
+  region = "${region}"
 }
 `;
     }
@@ -1491,9 +1166,9 @@ resource "google_api_gateway_gateway" "gateway" {
     if (has('logging')) {
       tf += `
 resource "google_logging_project_sink" "logs" {
-  name        = "${projectName}-logs-sink"
-  destination = "storage.googleapis.com/${projectName}-logs-bucket"
-  filter      = "resource.type=global"
+  name = "${shortName}-logs-sink"
+  destination = "storage.googleapis.com/${shortName}-logs-bucket"
+  filter = "resource.type=global"
 }
 `;
     }
@@ -1501,9 +1176,9 @@ resource "google_logging_project_sink" "logs" {
     if (has('monitoring')) {
       tf += `
 resource "google_monitoring_uptime_check_config" "uptime" {
-  display_name = "${projectName}-uptime"
-  timeout      = "60s"
-  period       = "300s"
+  display_name = "${shortName}-uptime"
+  timeout = "60s"
+  period = "300s"
   
   http_check {
     path = "/"
@@ -1513,7 +1188,7 @@ resource "google_monitoring_uptime_check_config" "uptime" {
   monitored_resource {
     type = "uptime_url"
     labels = {
-      project_id = "${projectName}"
+      project_id = "${shortName}"
       host       = "example.com"
     }
   }
@@ -1524,10 +1199,10 @@ resource "google_monitoring_uptime_check_config" "uptime" {
     if (has('cache')) {
       tf += `
 resource "google_redis_instance" "cache" {
-  name           = "${projectName}-cache"
+  name = "${shortName}-cache"
   memory_size_gb = 1
-  tier           = "BASIC"
-  region         = "${region}"
+  tier = "BASIC"
+  region = "${region}"
 }
 `;
     }
@@ -1535,9 +1210,9 @@ resource "google_redis_instance" "cache" {
     if (has('computevm')) {
       tf += `
 resource "google_compute_instance" "vm" {
-  name         = "${projectName}-vm"
+  name = "${shortName}-vm"
   machine_type = "e2-medium"
-  zone         = "${region}-a"
+  zone = "${region}-a"
 
   boot_disk {
     initialize_params {
@@ -1555,10 +1230,10 @@ resource "google_compute_instance" "vm" {
     if (has('blockstorage')) {
       tf += `
 resource "google_compute_disk" "default" {
-  name  = "${projectName}-disk"
-  type  = "pd-balanced"
-  zone  = "${region}-a"
-  size  = 50
+  name = "${shortName}-disk"
+  type = "pd-balanced"
+  zone = "${region}-a"
+  size = 50
 }
 `;
     }
@@ -1566,7 +1241,7 @@ resource "google_compute_disk" "default" {
     if (has('dns')) {
       tf += `
 resource "google_dns_managed_zone" "zone" {
-  name     = "${projectName}-zone"
+  name = "${shortName}-zone"
   dns_name = "example.com."
 }
 `;
@@ -1575,11 +1250,11 @@ resource "google_dns_managed_zone" "zone" {
     if (has('messagequeue')) {
       tf += `
 resource "google_pubsub_topic" "topic" {
-  name = "${projectName}-topic"
+  name = "${shortName}-topic"
 }
 
 resource "google_pubsub_subscription" "sub" {
-  name  = "${projectName}-sub"
+  name = "${shortName}-sub"
   topic = google_pubsub_topic.topic.name
 }
 `;
@@ -1588,7 +1263,7 @@ resource "google_pubsub_subscription" "sub" {
     if (has('secretsmanagement')) {
       tf += `
 resource "google_secret_manager_secret" "secret" {
-  secret_id = "${projectName}-secret"
+  secret_id = "${shortName}-secret"
   replication {
     automatic = true
   }
@@ -1599,13 +1274,13 @@ resource "google_secret_manager_secret" "secret" {
     if (has('vpcnetworking')) {
       tf += `
 resource "google_compute_network" "vpc" {
-  name = "${projectName}-vpc"
+  name = "${shortName}-vpc"
 }
 
 resource "google_compute_router" "router" {
-  name    = "${projectName}-router"
+  name = "${shortName}-router"
   network = google_compute_network.vpc.name
-  region  = "${region}"
+  region = "${region}"
 }
 `;
     }
@@ -1613,9 +1288,9 @@ resource "google_compute_router" "router" {
     if (has('nosqldatabase')) {
       tf += `
 resource "google_firestore_database" "firestore" {
-  name        = "${projectName}-firestore"
+  name = "${shortName}-firestore"
   location_id = "${region}"
-  type        = "FIRESTORE_NATIVE"
+  type = "FIRESTORE_NATIVE"
 }
 `;
     }
@@ -1631,15 +1306,15 @@ resource "google_bigquery_dataset" "wh" {
     if (has('datalake')) {
       tf += `
 resource "google_storage_bucket" "datalake" {
-  name          = "${projectName}-datalake"
-  location      = "US"
+  name = "${shortName}-datalake"
+  location = "US"
 }
 `;
     }
     if (has('etlorchestration')) {
       tf += `
 resource "google_dataflow_job" "etl" {
-  name              = "${projectName}-etl"
+  name = "${shortName}-etl"
   template_gcs_path = "gs://my-bucket/templates/template_file"
   temp_gcs_location = "gs://my-bucket/tmp_dir"
 }
@@ -1649,39 +1324,28 @@ resource "google_dataflow_job" "etl" {
       // Looker Studio / BI Engine - usually BigQuery Reservation
       tf += `
 resource "google_bigquery_reservation" "bi" {
-  name           = "${projectName}-bi"
-  slot_capacity  = 100
-  location       = "US"
+  name = "${shortName}-bi"
+  slot_capacity = 100
+  location = "US"
 }
 `;
     }
     if (has('datacatalog')) {
       tf += `
 resource "google_data_catalog_entry_group" "catalog" {
-  entry_group_id = "${projectName}_catalog"
+  entry_group_id = "${shortName}_catalog"
 }
 `;
     }
 
     // --- MACHINE LEARNING ---
-    if (has('mltraining') || has('mlinference')) {
-      tf += `
-resource "google_vertex_ai_dataset" "dataset" {
-  display_name        = "${projectName}-dataset"
-  metadata_schema_uri = "gs://google-cloud-aiplatform/schema/dataset/metadata/image_1.0.0.yaml"
-  region              = "us-central1"
-}
-resource "google_vertex_ai_endpoint" "endpoint" {
-  display_name = "${projectName}-endpoint"
-  location     = "us-central1"
-}
-`;
-    }
+    // 🔥 FIX: Vertex AI resources removed from pricing mode — require complex dependencies
+    // ML pricing is handled by formula engine instead
     if (has('vectordatabase')) {
       // Vector Search on Vertex AI
       tf += `
 resource "google_vertex_ai_index" "vector" {
-  display_name = "${projectName}-vector"
+  display_name = "${shortName}-vector"
   metadata {
     config {
       dimensions = 2
@@ -1695,7 +1359,7 @@ resource "google_vertex_ai_index" "vector" {
     if (has('searchengine')) {
       tf += `
 resource "google_vertex_ai_index" "search" {
-  display_name = "${projectName}-search"
+  display_name = "${shortName}-search"
   metadata {
     config {
       dimensions = 2
@@ -1710,18 +1374,18 @@ resource "google_vertex_ai_index" "search" {
     if (has('iotcore') || has('iotedgegateway')) {
       tf += `
 resource "google_cloudiot_registry" "iot" {
-  name = "${projectName}-iot"
+  name = "${shortName}-iot"
 }
 `;
     }
     if (has('timeseriesdatabase')) {
       tf += `
 resource "google_bigtable_instance" "ts" {
-  name = "${projectName}-ts"
+  name = "${shortName}-ts"
   cluster {
-    cluster_id   = "tf-instance-cluster"
-    zone         = "us-central1-b"
-    num_nodes    = 1
+    cluster_id = "tf-instance-cluster"
+    zone = "us-central1-b"
+    num_nodes = 1
     storage_type = "HDD"
   }
 }
@@ -1732,26 +1396,26 @@ resource "google_bigtable_instance" "ts" {
     if (has('waf') || has('ddosprotection')) {
       tf += `
 resource "google_compute_security_policy" "waf" {
-  name = "${projectName}-waf"
+  name = "${shortName}-waf"
 }
 `;
     }
     if (has('keymanagement') || has('keymanagementservice')) {
       tf += `
 resource "google_kms_key_ring" "keyring" {
-  name     = "${projectName}-keyring"
+  name = "${shortName}-keyring"
   location = "global"
 }
 resource "google_kms_crypto_key" "key" {
-  name            = "${projectName}-key"
-  key_ring        = google_kms_key_ring.keyring.id
+  name = "${shortName}-key"
+  key_ring = google_kms_key_ring.keyring.id
 }
 `;
     }
     if (has('certificatemanagement')) {
       tf += `
 resource "google_certificate_manager_certificate" "cert" {
-  name        = "${projectName}-cert"
+  name = "${shortName}-cert"
   managed {
     domains = ["example.com"]
   }
@@ -1766,7 +1430,7 @@ resource "google_certificate_manager_certificate" "cert" {
 resource "google_cloudbuild_trigger" "build" {
   trigger_template {
     branch_name = "main"
-    repo_name   = "my-repo"
+    repo_name = "my-repo"
   }
   filename = "cloudbuild.yaml"
 }
@@ -1775,10 +1439,10 @@ resource "google_cloudbuild_trigger" "build" {
     if (has('containerregistry') || has('artifactrepository')) {
       tf += `
 resource "google_artifact_registry_repository" "repo" {
-  location      = "us-central1"
-  repository_id = "${projectName}-repo"
-  description   = "Docker repo"
-  format        = "DOCKER"
+  location = "us-central1"
+  repository_id = "${shortName}-repo"
+  description = "Docker repo"
+  format = "DOCKER"
 }
 `;
     }
@@ -1787,7 +1451,7 @@ resource "google_artifact_registry_repository" "repo" {
     if (has('vpn') || has('vpngateway')) {
       tf += `
 resource "google_compute_vpn_gateway" "vpn" {
-  name    = "${projectName}-vpn"
+  name = "${shortName}-vpn"
   network = "default"
 }
 `;
@@ -1796,28 +1460,28 @@ resource "google_compute_vpn_gateway" "vpn" {
       // Private Service Connect
       tf += `
 resource "google_compute_global_address" "psc" {
-  name          = "${projectName}-psc"
-  purpose       = "VPC_PEERING"
-  address_type  = "INTERNAL"
+  name = "${shortName}-psc"
+  purpose = "VPC_PEERING"
+  address_type = "INTERNAL"
   prefix_length = 16
-  network       = "default"
+  network = "default"
 }
 `;
     }
     if (has('servicediscovery')) {
       tf += `
 resource "google_service_directory_namespace" "dns" {
-  namespace_id = "${projectName}"
-  location     = "us-central1"
+  namespace_id = "${shortName}"
+  location = "us-central1"
 }
 `;
     }
     // Google Service Mesh (Traffic Director)
     if (has('servicemesh')) {
       tf += `
-# Traffic Director is config-heavy, typically involves Health Checks and Backend Services
+# Traffic Director is config - heavy, typically involves Health Checks and Backend Services
 resource "google_compute_health_check" "mesh" {
-  name = "${projectName}-mesh-hc"
+  name = "${shortName}-mesh-hc"
   tcp_health_check {
     port = 80
   }
@@ -1826,25 +1490,25 @@ resource "google_compute_health_check" "mesh" {
     }
     if (has('paymentgateway')) {
       tf += `
-# Payment Gateway (External Service)
-# Logical dependency on Stripe/PayPal - No GCP resources created
-`;
+# Payment Gateway(External Service)
+# Logical dependency on Stripe / PayPal - No GCP resources created
+  `;
     }
     if (has('auditlogging')) {
       // Cloud Audit Logs are on by default, but we can export them
       tf += `
 # Google Cloud Audit Logging is enabled by default.
-# Configuring Sink for long-term retention:
+# Configuring Sink for long - term retention:
 resource "google_logging_project_sink" "audit_sink" {
-  name        = "${projectName}-audit-sink"
-  destination = "storage.googleapis.com/${projectName}-audit-bucket"
-  filter      = "logName:\\"logs/cloudaudit.googleapis.com%2Factivity\\""
+  name = "${shortName}-audit-sink"
+  destination = "storage.googleapis.com/${shortName}-audit-bucket"
+  filter = "logName:\\"logs / cloudaudit.googleapis.com % 2Factivity\\""
 }
 `;
     }
     if (has('vulnerabilityscanner')) {
       tf += `
-# Container Security Scanning (Artifact Registry automatically scans)
+# Container Security Scanning(Artifact Registry automatically scans)
 # This resource verifies the API is enabled
 resource "google_project_service" "scanner" {
   service = "containerscanning.googleapis.com"
@@ -1858,7 +1522,7 @@ resource "google_project_service" "scanner" {
     // Resource Group is always needed for Azure resources to hang off of
     tf += `
 resource "azurerm_resource_group" "rg" {
-  name     = "${projectName}-rg"
+  name = "${safeName}-rg"
   location = "${region}"
 }
 `;
@@ -1866,152 +1530,152 @@ resource "azurerm_resource_group" "rg" {
     if (has('computecontainer')) {
       tf += `
 resource "azurerm_app_service_plan" "asp" {
-        name = "${projectName}-asp"
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
-        kind = "Linux"
-        reserved = true
+  name = "${shortName}-asp"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  kind = "Linux"
+  reserved = true
 
   sku {
-          tier = "Standard"
-          size = "S1"
-        }
-      }
+    tier = "Standard"
+    size = "S1"
+  }
+}
 
 resource "azurerm_app_service" "app" {
-        name = "${projectName}-app"
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
-        app_service_plan_id = azurerm_app_service_plan.asp.id
+  name = "${shortName}-app"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  app_service_plan_id = azurerm_app_service_plan.asp.id
 
   site_config {
-          linux_fx_version = "DOCKER|nginx:latest"
-        }
-      }
-      `;
+    linux_fx_version = "DOCKER|nginx:latest"
+  }
+}
+`;
     }
 
     if (has('computeserverless')) {
       tf += `
 resource "azurerm_service_plan" "asp" {
-        name = "${projectName}-asp"
-        resource_group_name = azurerm_resource_group.rg.name
-        location = azurerm_resource_group.rg.location
-        os_type = "Linux"
-        sku_name = "Y1"
-      }
+  name = "${shortName}-asp"
+  resource_group_name = azurerm_resource_group.rg.name
+  location = azurerm_resource_group.rg.location
+  os_type = "Linux"
+  sku_name = "Y1"
+}
 
 resource "azurerm_linux_function_app" "func" {
-        name = "${projectName}-func"
-        resource_group_name = azurerm_resource_group.rg.name
-        location = azurerm_resource_group.rg.location
-        service_plan_id = azurerm_service_plan.asp.id
-        storage_account_name = "funcstore${projectName.replace(/[^a-z0-9]/g, '').substring(0, 10)}"
-        storage_account_access_key = "mock-key"
+  name = "${shortName}-func"
+  resource_group_name = azurerm_resource_group.rg.name
+  location = azurerm_resource_group.rg.location
+  service_plan_id = azurerm_service_plan.asp.id
+  storage_account_name = "funcstore${safeName.substring(0, 10)}"
+  storage_account_access_key = "mock-key"
   
   site_config { }
-      }
-      `;
+}
+`;
     }
 
     if (has('relationaldatabase')) {
       tf += `
 resource "azurerm_postgresql_flexible_server" "db" {
-        name = "${projectName}-db-server"
-        resource_group_name = azurerm_resource_group.rg.name
-        location = azurerm_resource_group.rg.location
-        version = "12"
-        administrator_login = "psqladmin"
-        administrator_password = "H@Sh1CoR3!"
-        storage_mb = ${(sizing.storage_gb || 32) * 1024}
-        sku_name = "${sizing.instance_class || "B_Standard_B1ms"}"
-      }
-      `;
+  name = "${shortName}-db-server"
+  resource_group_name = azurerm_resource_group.rg.name
+  location = azurerm_resource_group.rg.location
+  version = "12"
+  administrator_login = "psqladmin"
+  administrator_password = "H@Sh1CoR3!"
+  storage_mb = ${(sizing.storage_gb || 32) * 1024}
+  sku_name = "${sizing.instance_class || "B_Standard_B1ms"}"
+}
+`;
     }
 
     if (has('objectstorage')) {
       // storage account name must be unique and no dashes
       tf += `
 resource "azurerm_storage_account" "storage" {
-        name = "stor${projectName.replace(/[^a-z0-9]/g, '').substring(0, 15)}"
-        resource_group_name = azurerm_resource_group.rg.name
-        location = azurerm_resource_group.rg.location
-        account_tier = "Standard"
-        account_replication_type = "LRS"
-      }
-      `;
+  name = "stor${safeName.substring(0, 15)}"
+  resource_group_name = azurerm_resource_group.rg.name
+  location = azurerm_resource_group.rg.location
+  account_tier = "Standard"
+  account_replication_type = "LRS"
+}
+`;
     }
 
     if (has('loadbalancer')) {
       tf += `
 resource "azurerm_public_ip" "pip" {
-        name = "PublicIPForLB"
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
-        allocation_method = "Static"
-        sku = "Standard"
-      }
+  name = "PublicIPForLB"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  allocation_method = "Static"
+  sku = "Standard"
+}
 
 resource "azurerm_lb" "example" {
-        name = "TestLoadBalancer"
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
-        sku = "Standard"
+  name = "TestLoadBalancer"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  sku = "Standard"
 
   frontend_ip_configuration {
-          name = "PublicIPAddress"
-          public_ip_address_id = azurerm_public_ip.pip.id
-        }
-      }
-      `;
+    name = "PublicIPAddress"
+    public_ip_address_id = azurerm_public_ip.pip.id
+  }
+}
+`;
     }
 
     if (has('cdn')) {
       tf += `
 resource "azurerm_cdn_profile" "cdn" {
-        name = "${projectName}-cdn"
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
-        sku = "Standard_Microsoft"
-      }
+  name = "${shortName}-cdn"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  sku = "Standard_Microsoft"
+}
 
 resource "azurerm_cdn_endpoint" "endpoint" {
-        name = "${projectName}-cdn-endpoint"
-        profile_name = azurerm_cdn_profile.cdn.name
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
+  name = "${shortName}-cdn-endpoint"
+  profile_name = azurerm_cdn_profile.cdn.name
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
   
   origin {
-          name = "origin1"
-          host_name = "www.example.com"
-        }
-      }
-      `;
+    name = "origin1"
+    host_name = "www.example.com"
+  }
+}
+`;
     }
 
     if (has('apigateway')) {
       tf += `
 resource "azurerm_api_management" "apim" {
-        name = "${projectName}-apim"
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
-        publisher_name = "Example Publisher"
-        publisher_email = "publisher@example.com"
-        sku_name = "Consumption_0"
-      }
-      `;
+  name = "${shortName}-apim"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  publisher_name = "Example Publisher"
+  publisher_email = "publisher@example.com"
+  sku_name = "Consumption_0"
+}
+`;
     }
 
     if (has('logging')) {
       tf += `
 resource "azurerm_log_analytics_workspace" "logs" {
-        name = "${projectName}-logs"
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
-        sku = "PerGB2018"
-        retention_in_days = 30
-      }
-      `;
+  name = "${shortName}-logs"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  sku = "PerGB2018"
+  retention_in_days = 30
+}
+`;
     }
 
     if (has('monitoring')) {
@@ -2019,246 +1683,233 @@ resource "azurerm_log_analytics_workspace" "logs" {
       if (!has('logging')) {
         tf += `
 resource "azurerm_log_analytics_workspace" "logs_for_insights" {
-        name = "${projectName}-logs-insights"
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
-        sku = "PerGB2018"
-        retention_in_days = 30
-      }
-  `;
+  name = "${shortName}-logs-insights"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  sku = "PerGB2018"
+  retention_in_days = 30
+}
+`;
       }
 
       tf += `
 resource "azurerm_application_insights" "appinsights" {
-        name = "${projectName}-appinsights"
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
-        application_type = "web"
-        workspace_id = ${has('logging') ? 'azurerm_log_analytics_workspace.logs.id' : 'azurerm_log_analytics_workspace.logs_for_insights.id'}
-      }
-      `;
+  name = "${shortName}-appinsights"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  application_type = "web"
+  workspace_id = ${has('logging') ? 'azurerm_log_analytics_workspace.logs.id' : 'azurerm_log_analytics_workspace.logs_for_insights.id'}
+}
+`;
     }
 
     if (has('cache')) {
       tf += `
 resource "azurerm_redis_cache" "cache" {
-        name = "${projectName}-cache"
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
-        capacity = 0
-        family = "C"
-        sku_name = "Basic"
-        enable_non_ssl_port = false
-        minimum_tls_version = "1.2"
-      }
-      `;
+  name = "${shortName}-cache"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  capacity = 0
+  family = "C"
+  sku_name = "Basic"
+  enable_non_ssl_port = false
+  minimum_tls_version = "1.2"
+}
+`;
     }
 
     if (has('computevm')) {
       tf += `
 resource "azurerm_network_interface" "nic" {
-        name = "${projectName}-nic"
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
+  name = "${shortName}-nic"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
 
   ip_configuration {
-          name = "internal"
-          private_ip_address_allocation = "Dynamic"
-        }
-      }
+    name = "internal"
+    private_ip_address_allocation = "Dynamic"
+  }
+}
 
 resource "azurerm_linux_virtual_machine" "vm" {
-        name = "${projectName}-vm"
-        resource_group_name = azurerm_resource_group.rg.name
-        location = azurerm_resource_group.rg.location
-        size = "Standard_B2s"
-        admin_username = "adminuser"
-        network_interface_ids = [
-          azurerm_network_interface.nic.id,
-        ]
+  name = "${shortName}-vm"
+  resource_group_name = azurerm_resource_group.rg.name
+  location = azurerm_resource_group.rg.location
+  size = "Standard_B2s"
+  admin_username = "adminuser"
+  network_interface_ids = [
+    azurerm_network_interface.nic.id,
+  ]
 
   admin_ssh_key {
-          username = "adminuser"
-          public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC..."
-        }
+    username = "adminuser"
+    public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC..."
+  }
 
   os_disk {
-          caching = "ReadWrite"
-          storage_account_type = "Standard_LRS"
-        }
+    caching = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
 
   source_image_reference {
-          publisher = "Canonical"
-          offer = "UbuntuServer"
-          sku = "18.04-LTS"
-          version = "latest"
-        }
-      }
-      `;
+    publisher = "Canonical"
+    offer = "UbuntuServer"
+    sku = "18.04-LTS"
+    version = "latest"
+  }
+}
+`;
     }
 
     if (has('messagequeue')) {
       tf += `
 resource "azurerm_servicebus_namespace" "sb" {
-        name = "${projectName}-sb"
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
-        sku = "Standard"
-      }
+  name = "${shortName}-sb"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  sku = "Standard"
+}
 
 resource "azurerm_servicebus_queue" "queue" {
-        name = "${projectName}-queue"
-        namespace_id = azurerm_servicebus_namespace.sb.id
-      }
-      `;
+  name = "${shortName}-queue"
+  namespace_id = azurerm_servicebus_namespace.sb.id
+}
+`;
     }
 
     if (has('dns')) {
       tf += `
 resource "azurerm_dns_zone" "zone" {
-        name = "example.com"
-        resource_group_name = azurerm_resource_group.rg.name
-      }
-      `;
+  name = "example.com"
+  resource_group_name = azurerm_resource_group.rg.name
+}
+`;
     }
 
     if (has('servicediscovery')) {
       tf += `
 resource "azurerm_private_dns_zone" "dns" {
-        name = "private.example.com"
-        resource_group_name = azurerm_resource_group.rg.name
-      }
-      `;
+  name = "private.example.com"
+  resource_group_name = azurerm_resource_group.rg.name
+}
+`;
     }
 
     if (has('globalloadbalancer')) {
       tf += `
 resource "azurerm_traffic_manager_profile" "global" {
-        name                   = "${projectName}-global"
-        resource_group_name    = azurerm_resource_group.rg.name
-        traffic_routing_method = "Performance"
+  name = "${shortName}-global"
+  resource_group_name = azurerm_resource_group.rg.name
+  traffic_routing_method = "Performance"
         dns_config {
-          relative_name = "${projectName}-global"
-          ttl           = 60
-        }
+    relative_name = "${shortName}-global"
+    ttl = 60
+  }
         monitor_config {
-          protocol = "HTTP"
-          port     = 80
-          path     = "/"
-        }
-      }
-      `;
+    protocol = "HTTP"
+    port = 80
+    path = "/"
+  }
+}
+`;
     }
 
     if (has('searchengine') || has('search_engine')) {
       tf += `
 resource "azurerm_search_service" "search" {
-        name                = "${projectName}-search"
-        resource_group_name = azurerm_resource_group.rg.name
-        location            = azurerm_resource_group.rg.location
-        sku                 = "basic"
-      }
-      `;
+  name = "${shortName}-search"
+  resource_group_name = azurerm_resource_group.rg.name
+  location = azurerm_resource_group.rg.location
+  sku = "basic"
+}
+`;
     }
 
     if (has('secretsmanagement')) {
       tf += `
 resource "azurerm_key_vault" "kv" {
-        name = "${projectName}-kv"
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
-        enabled_for_disk_encryption = true
-        tenant_id = "00000000-0000-0000-0000-000000000000"
-        soft_delete_retention_days = 7
-        purge_protection_enabled = false
+  name = "${shortName}-kv"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  enabled_for_disk_encryption = true
+  tenant_id = "00000000-0000-0000-0000-000000000000"
+  soft_delete_retention_days = 7
+  purge_protection_enabled = false
 
-        sku_name = "standard"
-      }
-      `;
+  sku_name = "standard"
+}
+`;
     }
 
     if (has('nosqldatabase')) {
       tf += `
 resource "azurerm_cosmosdb_account" "cosmos" {
-        name = "${projectName}-cosmos"
-        location = azurerm_resource_group.rg.location
-        resource_group_name = azurerm_resource_group.rg.name
-        offer_type = "Standard"
-        kind = "GlobalDocumentDB"
+  name = "${shortName}-cosmos"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  offer_type = "Standard"
+  kind = "GlobalDocumentDB"
   
   consistency_policy {
-          consistency_level = "Session"
-        }
+    consistency_level = "Session"
+  }
   
   geo_location {
-          location = azurerm_resource_group.rg.location
-          failover_priority = 0
-        }
-      }
-      `;
+    location = azurerm_resource_group.rg.location
+    failover_priority = 0
+  }
+}
+`;
     }
 
     // --- ANALYTICS ---
     if (has('datawarehouse')) {
       tf += `
 resource "azurerm_synapse_workspace" "wh" {
-  name                                 = "${projectName}-wh"
-  resource_group_name                  = azurerm_resource_group.rg.name
-  location                             = azurerm_resource_group.rg.location
+  name = "${shortName}-wh"
+  resource_group_name = azurerm_resource_group.rg.name
+  location = azurerm_resource_group.rg.location
   storage_data_lake_gen2_filesystem_id = "https://example.dfs.core.windows.net/example"
-  sql_administrator_login              = "sqladminuser"
-  sql_administrator_login_password     = "H@Sh1CoR3!"
+  sql_administrator_login = "sqladminuser"
+  sql_administrator_login_password = "H@Sh1CoR3!"
 }
 `;
     }
     if (has('datalake')) {
       tf += `
 resource "azurerm_storage_account" "datalake" {
-  name                     = "${projectName}dls"
-  resource_group_name      = azurerm_resource_group.rg.name
-  location                 = azurerm_resource_group.rg.location
-  account_tier             = "Standard"
+  name = "${shortName}dls"
+  resource_group_name = azurerm_resource_group.rg.name
+  location = azurerm_resource_group.rg.location
+  account_tier = "Standard"
   account_replication_type = "LRS"
-  is_hns_enabled           = "true"
+  is_hns_enabled = "true"
 }
 `;
     }
     if (has('etlorchestration')) {
       tf += `
 resource "azurerm_data_factory" "etl" {
-  name                = "${projectName}-etl"
-  location            = azurerm_resource_group.rg.location
+  name = "${shortName}-etl"
+  location = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
 }
 `;
     }
 
     // --- MACHINE LEARNING ---
-    if (has('mltraining') || has('mlinference') || has('modelregistry')) {
-      tf += `
-resource "azurerm_machine_learning_workspace" "ml" {
-  name                    = "${projectName}-ml"
-  location                = azurerm_resource_group.rg.location
-  resource_group_name     = azurerm_resource_group.rg.name
-  application_insights_id = azurerm_application_insights.appinsights.id
-  key_vault_id            = azurerm_key_vault.kv.id
-  storage_account_id      = azurerm_storage_account.storage.id
-  identity {
-    type = "SystemAssigned"
-  }
-}
-`;
-    }
+    // 🔥 FIX: Azure ML workspace removed from pricing mode — requires key_vault, app_insights, storage dependencies
+    // ML pricing is handled by formula engine instead
 
     // --- IOT ---
     if (has('iotcore') || has('iotedgegateway')) {
       tf += `
 resource "azurerm_iot_hub" "iot" {
-  name                = "${projectName}-iot"
+  name = "${shortName}-iot"
   resource_group_name = azurerm_resource_group.rg.name
-  location            = azurerm_resource_group.rg.location
+  location = azurerm_resource_group.rg.location
   sku {
-    name     = "S1"
+    name = "S1"
     capacity = 1
   }
 }
@@ -2267,13 +1918,13 @@ resource "azurerm_iot_hub" "iot" {
     if (has('timeseriesdatabase')) {
       tf += `
 resource "azurerm_timeseriesinsights_gen2_environment" "ts" {
-  name                = "${projectName}-ts"
-  location            = azurerm_resource_group.rg.location
+  name = "${shortName}-ts"
+  location = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
-  sku_name            = "L1"
+  sku_name = "L1"
   storage_account_name = "storage"
-  storage_account_key  = "secret"
-  id_properties        = ["id"]
+  storage_account_key = "secret"
+  id_properties = ["id"]
 }
 `;
     }
@@ -2282,17 +1933,17 @@ resource "azurerm_timeseriesinsights_gen2_environment" "ts" {
     if (has('waf')) {
       tf += `
 resource "azurerm_web_application_firewall_policy" "waf" {
-  name                = "${projectName}waf"
+  name = "${shortName}waf"
   resource_group_name = azurerm_resource_group.rg.name
-  location            = azurerm_resource_group.rg.location
+  location = azurerm_resource_group.rg.location
 }
 `;
     }
     if (has('ddosprotection')) {
       tf += `
 resource "azurerm_network_ddos_protection_plan" "ddos" {
-  name                = "${projectName}-ddos"
-  location            = azurerm_resource_group.rg.location
+  name = "${shortName}-ddos"
+  location = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
 }
 `;
@@ -2303,11 +1954,11 @@ resource "azurerm_network_ddos_protection_plan" "ddos" {
     if (has('containerregistry') || has('artifactrepository')) {
       tf += `
 resource "azurerm_container_registry" "acr" {
-  name                = "${projectName}acr"
+  name = "${shortName}acr"
   resource_group_name = azurerm_resource_group.rg.name
-  location            = azurerm_resource_group.rg.location
-  sku                 = "Standard"
-  admin_enabled       = false
+  location = azurerm_resource_group.rg.location
+  sku = "Standard"
+  admin_enabled = false
 }
 `;
     }
@@ -2316,19 +1967,19 @@ resource "azurerm_container_registry" "acr" {
     if (has('vpn') || has('vpngateway')) {
       tf += `
 resource "azurerm_virtual_network_gateway" "vpn" {
-  name                = "${projectName}-vpn"
-  location            = azurerm_resource_group.rg.location
+  name = "${shortName}-vpn"
+  location = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
-  type                = "Vpn"
-  vpn_type            = "RouteBased"
-  active_active       = false
-  enable_bgp          = false
-  sku                 = "Basic"
+  type = "Vpn"
+  vpn_type = "RouteBased"
+  active_active = false
+  enable_bgp = false
+  sku = "Basic"
   ip_configuration {
-    name                          = "vnetGatewayConfig"
-    public_ip_address_id          = "pip_id"
+    name = "vnetGatewayConfig"
+    public_ip_address_id = "pip_id"
     private_ip_address_allocation = "Dynamic"
-    subnet_id                     = "subnet_id"
+    subnet_id = "subnet_id"
   }
 }
 `;
@@ -2336,29 +1987,29 @@ resource "azurerm_virtual_network_gateway" "vpn" {
 
     if (has('paymentgateway')) {
       tf += `
-# Payment Gateway (External Service)
-# Logical dependency on Stripe/PayPal - No Azure resources created
-`;
+# Payment Gateway(External Service)
+# Logical dependency on Stripe / PayPal - No Azure resources created
+  `;
     }
     if (has('auditlogging')) {
       tf += `
 resource "azurerm_monitor_log_profile" "audit" {
-  name = "${projectName}-audit"
+  name = "${shortName}-audit"
   categories = ["Write", "Delete", "Action"]
   locations = ["global"]
   
   retention_policy {
     enabled = true
-    days    = 365
+    days = 365
   }
 }
 `;
     }
     if (has('vulnerabilityscanner')) {
       tf += `
-# Microsoft Defender for Cloud (Security Center)
+# Microsoft Defender for Cloud(Security Center)
 resource "azurerm_security_center_subscription_pricing" "defender" {
-  tier          = "Standard"
+  tier = "Standard"
   resource_type = "AppServices"
 }
 `;
@@ -2397,7 +2048,7 @@ function generateVersionsTf(provider, region = "ap-south-1", projectName = "defa
   
   required_providers {
     ${providerName} = {
-      source  = "${config.source}"
+      source = "${config.source}"
       version = "${config.version}"
     }
     random = {
@@ -2406,17 +2057,18 @@ function generateVersionsTf(provider, region = "ap-south-1", projectName = "defa
     }
   }
 
-  # 💉 Remote Backend (Injected for Production Stability)
+  # 💉 Remote Backend(Injected for Production Stability)
   # backend "s3" {
-  #   bucket         = "cloudiverse-state-..."
-  #   key            = "workload/${projectName}/terraform.tfstate"
-  #   region         = "${region}"
+  #   bucket = "cloudiverse-state-..."
+  #   key = "workload/${projectName}/terraform.tfstate"
+  #   region = "${region}"
   #   dynamodb_table = "cloudiverse-state-lock"
-  #   encrypt        = true
+  #   encrypt = true
+  #
   # }
-`;
+  `;
 
-  tf += `}\n`;
+  tf += `} \n`;
   return tf;
 }
 
@@ -2456,19 +2108,19 @@ function generateProvidersTf(provider, region) {
 `;
   } else if (provider === 'gcp') {
     return `provider "google" {
-  project = (var.project_id != "" && var.project_id != "YOUR_GCP_PROJECT_ID") ? var.project_id : null
-  region  = var.region
+  project = (var.project_id != "" && var.project_id != "YOUR_GCP_PROJECT_ID") ?var.project_id: null
+  region = var.region
 }
 
 provider "google-beta" {
-  project = (var.project_id != "" && var.project_id != "YOUR_GCP_PROJECT_ID") ? var.project_id : null
-  region  = var.region
+  project = (var.project_id != "" && var.project_id != "YOUR_GCP_PROJECT_ID") ?var.project_id: null
+  region = var.region
 }
 `;
   } else if (provider === 'azure' || provider === 'azurerm') {
     return `provider "azurerm" {
-  features {}
-  # Credentials via ARM_* environment variables
+  features { }
+  # Credentials via ARM_ * environment variables
 }
 `;
   }
@@ -2497,8 +2149,8 @@ function generateVariablesTf(provider, pattern, services) {
     if (config) {
       variables += `variable "${config.var}" {
   description = "${config.desc}"
-  type        = string
-  sensitive   = true
+  type = string
+  sensitive = true
   default     = null
 }
 `;
@@ -2510,22 +2162,22 @@ function generateVariablesTf(provider, pattern, services) {
     variables += `
 variable "container_image" {
   description = "Container image to deploy"
-  type        = string
+  type = string
   default     = "nginx:latest"
 }
 variable "container_port" {
   description = "Port exposed by the container"
-  type        = number
+  type = number
   default     = 80
 }
 variable "container_cpu" {
   description = "CPU units/cores"
-  type        = any
+  type = any
   default     = 256
 }
 variable "container_memory" {
   description = "Memory in MB/GB"
-  type        = any
+  type = any
   default     = 512
 }
 `;
@@ -2535,71 +2187,71 @@ variable "container_memory" {
   if (provider === 'aws') {
     variables += `variable "role_arn" {
   description = "Assumed Role ARN for provider connection"
-  type        = string
+  type = string
 }
 variable "external_id" {
   description = "External ID for provider connection"
-  type        = string
+  type = string
 }
 variable "execution_role_arn" {
   description = "Standard execution role for all workloads (from Landing Zone)"
-  type        = string
+  type = string
 }
 variable "region" {
   description = "AWS region"
-  type        = string
+  type = string
 }
 variable "vpc_id" {
   description = "VPC ID for resources"
-  type        = string
+  type = string
   default     = ""
 }
 variable "subnet_ids" {
   description = "List of subnet IDs for resources"
-  type        = list(string)
-  default     = []
+  type = list(string)
+  default     =[]
 }
 variable "domain_name" {
   description = "Domain name for DNS resources"
-  type        = string
+  type = string
   default     = ""
 }
 `;
   } else if (provider === 'gcp') {
 
     variables += `variable "project_id" {
-        description = "GCP project ID"
-        type = string
-      }
+  description = "GCP project ID"
+  type = string
+}
 
 variable "region" {
-        description = "GCP region"
-        type = string
-      }
+  description = "GCP region"
+  type = string
+}
 
 
 
 variable "network_name" {
-        description = "VPC network name"
-        type = string
+  description = "VPC network name"
+  type = string
         default     = "default"
-      }
+}
 
 variable "subnetwork_name" {
-        description = "Subnetwork name"
-        type = string
+  description = "Subnetwork name"
+  type = string
         default     = "default"
-      }
+}
 
-      `;
+`;
   } else if (provider === 'azure') {
     variables += `
-# Azure Deployment Variables (User)
-# Credentials passed via Environment Variables (ARM_*) for security
+# Azure Deployment Variables(User)
+# Credentials passed via Environment Variables(ARM_ *) for security
 
 variable "location" {
   description = "Azure region"
-  type        = string
+  type = string
   default     = "Central India"
 }
 `;
@@ -2607,57 +2259,70 @@ variable "location" {
 
   variables += `
 variable "project_name" {
-      description = "Project name (used for resource naming)"
-      type = string
-    }
+  description = "Project name (used for resource naming)"
+  type = string
+}
 
 variable "environment" {
-      description = "Environment (dev, staging, production)"
-      type = string
+  description = "Environment (dev, staging, production)"
+  type = string
   default     = "production"
-    }
+}
 
 variable "resource_group_name" {
-      description = "Azure resource group name"
-      type = string
+  description = "Azure resource group name"
+  type = string
         default     = ""
-    }
+}
 
-    `;
+`;
 
 
   // NFR-driven variables
   variables += `# NFR - Driven Variables
 variable "encryption_at_rest" {
-      description = "Enable encryption at rest for storage services"
-      type = bool
+  description = "Enable encryption at rest for storage services"
+  type = bool
   default     = true
-    }
+}
 
 variable "backup_retention_days" {
-      description = "Number of days to retain backups"
-      type = number
+  description = "Number of days to retain backups"
+  type = number
   default     = 7
-    }
+}
 
 variable "deletion_protection" {
-      description = "Enable deletion protection for stateful resources"
-      type = bool
+  description = "Enable deletion protection for stateful resources"
+  type = bool
   default     = true
-    }
+}
 
 variable "multi_az" {
-      description = "Enable multi-AZ deployment for high availability"
-      type = bool
+  description = "Enable multi-AZ deployment for high availability"
+  type = bool
   default     = false
-    }
+}
 
 variable "monitoring_enabled" {
-      description = "Enable monitoring and logging"
-      type = bool
+  description = "Enable monitoring and logging"
+  type = bool
   default     = true
-    }
-    `;
+}
+`;
+
+  // Service-specific sensitive variables (injected when services require them)
+  const normalized = services.map(s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''));
+  if (normalized.includes('relationaldatabase') || normalized.includes('relational_db') || normalized.includes('database') || normalized.includes('rds')) {
+    variables += `
+variable "db_password" {
+  description = "Database password (sensitive)"
+  type = string
+  sensitive = true
+  default = ""
+}
+`;
+  }
 
   return variables;
 }
@@ -2746,7 +2411,7 @@ function generateOutputsTf(provider, pattern, services) {
   // Helper to get module reference name - consistent with generateMainTf
   const getModRef = (s) => {
     const modName = getModuleName(s);
-    return `module.${modName}`;
+    return `module.${modName} `;
   };
 
   // 1. Determine Deployment Target (Strict Contract)
@@ -2775,27 +2440,28 @@ output "deployment_target" {
     provider = "${provider}"
     region   = var.${provider === 'azure' ? 'location' : 'region'}
 
-    static = {
-      bucket_name   = ${hasService('objectstorage') ? `try(${getModRef('objectstorage')}.bucket_name, null)` : 'null'}
-      bucket_region = var.${provider === 'azure' ? 'location' : 'region'}
-      cdn_domain    = ${hasService('cdn') ? `try(${getModRef('cdn')}.endpoint, null)` : 'null'}
-      cdn_id        = ${hasService('cdn') ? `try(${getModRef('cdn')}.id, null)` : 'null'}
+  static = {
+    bucket_name   = ${hasService('objectstorage') ? `try(${getModRef('objectstorage')}.bucket_name, null)` : 'null'}
+  bucket_region = var.${provider === 'azure' ? 'location' : 'region'
+    }
+cdn_domain = ${hasService('cdn') ? `try(${getModRef('cdn')}.endpoint, null)` : 'null'}
+cdn_id = ${hasService('cdn') ? `try(${getModRef('cdn')}.id, null)` : 'null'}
     }
 
-    container = {
-      cluster_name        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.cluster_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.cluster_name, null)` : 'null'}
-      service_name        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.service_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.service_name, null)` : 'null'}
-      container_app_name  = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.container_app_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.container_app_name, null)` : 'null'}
-      resource_group_name = ${provider === 'azure' ? 'var.resource_group_name' : 'null'}
-      registry_url        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.ecr_url, try(${getModRef('computecontainer')}.artifact_registry, try(${getModRef('computecontainer')}.acr_login_server, null)))` : hasService('ecr') ? `try(${getModRef('ecr')}.repository_url, null)` : 'null'}
-      build_project_name  = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.codebuild_name, null)` : hasService('codebuild') ? `try(${getModRef('codebuild')}.project_name, null)` : 'null'}
-      build_bucket        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.build_bucket, null)` : 'null'}
+container = {
+  cluster_name        = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.cluster_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.cluster_name, null)` : 'null'}
+service_name = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.service_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.service_name, null)` : 'null'}
+container_app_name = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.container_app_name, null)` : hasService('appcompute') ? `try(${getModRef('appcompute')}.container_app_name, null)` : 'null'}
+resource_group_name = ${provider === 'azure' ? 'var.resource_group_name' : 'null'}
+registry_url = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.ecr_url, try(${getModRef('computecontainer')}.artifact_registry, try(${getModRef('computecontainer')}.acr_login_server, null)))` : hasService('ecr') ? `try(${getModRef('ecr')}.repository_url, null)` : 'null'}
+build_project_name = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.codebuild_name, null)` : hasService('codebuild') ? `try(${getModRef('codebuild')}.project_name, null)` : 'null'}
+build_bucket = ${hasService('computecontainer') ? `try(${getModRef('computecontainer')}.build_bucket, null)` : 'null'}
     }
 
-    serverless = {
-      function_name = ${hasService('computeserverless') ? `try(${getModRef('computeserverless')}.function_name, null)` : 'null'}
-      url           = ${hasService('computeserverless') ? `try(${getModRef('computeserverless')}.url, null)` : 'null'}
-      region        = var.${provider === 'azure' ? 'location' : 'region'}
+serverless = {
+  function_name = ${hasService('computeserverless') ? `try(${getModRef('computeserverless')}.function_name, null)` : 'null'}
+url = ${hasService('computeserverless') ? `try(${getModRef('computeserverless')}.url, null)` : 'null'}
+region = var.${provider === 'azure' ? 'location' : 'region'}
     }
   }
 }
@@ -3025,15 +2691,16 @@ function generateMainTf(provider, pattern, services, options = {}) {
       const sharedSource = SHARED_MODULE_SOURCES[service];
 
       // Use generated local modules for self-containment
-      const sourcePath = `./modules/${moduleName}`;
+      // 🔥 FIX: Use the shared library path if available, otherwise fallback to alias
+      const sourcePath = `./modules/${sharedSource || moduleName}`;
 
       mainTf += `module "${moduleName}" {
   source = "${sourcePath}"
 
   project_name = var.project_name
-  ${regionLabel} = var.${regionLabel}
+  ${(meta.args?.includes(regionLabel) || meta.args?.includes('region') || meta.args?.includes('location')) ? `${regionLabel} = var.${regionLabel}` : ''}
   ${pLower === 'azure' ? 'resource_group_name = var.resource_group_name' : ''}
-  ${pLower === 'aws' && ['computeserverless', 'computecontainer', 'appcompute'].includes(service) ? 'execution_role_arn = var.execution_role_arn' : ''} \n`;
+  ${pLower === 'aws' && ['computeserverless', 'computecontainer', 'compute_container', 'appcompute'].includes(service) ? 'execution_role_arn = var.execution_role_arn' : ''} \n`;
 
 
 
@@ -3053,7 +2720,7 @@ function generateMainTf(provider, pattern, services, options = {}) {
         const hasComputeContainer = hasContainer; // Alias for backward compatibility in logic below
         const getModRef = (s) => {
           const mName = getModuleName(s);
-          return `module.${mName}`;
+          return `module.${mName} `;
         };
 
         console.log(`[TF DEBUG] Generating CDN module.hasObjectStorage = ${hasObjectStorage}, hasContainer = ${hasContainer}, hasLoadBalancer = ${hasLoadBalancer}, services = ${JSON.stringify(serviceList)} `);
@@ -3101,6 +2768,12 @@ function generateMainTf(provider, pattern, services, options = {}) {
       if (meta.args?.includes('deletion_protection')) mainTf += `    deletion_protection = var.deletion_protection\n`;
       if (meta.args?.includes('multi_az')) mainTf += `    multi_az = var.multi_az\n`;
       if (meta.args?.includes('monitoring_enabled')) mainTf += `    monitoring_enabled = var.monitoring_enabled\n`;
+
+      // 🐳 Container Variable Injection
+      if (meta.args?.includes('container_image')) mainTf += `    container_image = var.container_image\n`;
+      if (meta.args?.includes('container_port')) mainTf += `    container_port = var.container_port\n`;
+      if (meta.args?.includes('cpu')) mainTf += `    cpu = var.container_cpu\n`;
+      if (meta.args?.includes('memory')) mainTf += `    memory = var.container_memory\n`;
 
       // 🔑 External Variable Injection (Compute Services)
       if (service === 'computeserverless' || service === 'computecontainer' || service === 'appcompute') {
@@ -3184,12 +2857,10 @@ function getModuleConfig(service, provider) {
   source = "./modules/relational_db"
 
   project_name = var.project_name
-    ${regionLabel} = var.${regionLabel}
   vpc_id = module.networking.vpc_id
   private_subnet_ids = module.networking.private_subnet_ids
-  encryption_at_rest = var.encryption_at_rest
+  db_password = var.db_password
   backup_retention_days = var.backup_retention_days
-  deletion_protection = var.deletion_protection
   multi_az = var.multi_az
 } `,
 
@@ -3365,146 +3036,146 @@ function getModuleConfig(service, provider) {
 } `,
 
     computevm: `module "vm_compute" {
-    source = "./modules/vm_compute"
+  source = "./modules/vm_compute"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-    vpc_id = module.networking.vpc_id
-    private_subnet_ids = module.networking.private_subnet_ids
-  } `,
+  vpc_id = module.networking.vpc_id
+  private_subnet_ids = module.networking.private_subnet_ids
+} `,
 
     nosqldatabase: `module "nosql_db" {
-    source = "./modules/nosql_db"
+  source = "./modules/nosql_db"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     blockstorage: `module "block_storage" {
-    source = "./modules/block_storage"
+  source = "./modules/block_storage"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     secretsmanager: `module "secrets" {
-    source = "./modules/secrets_manager"
+  source = "./modules/secrets_manager"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     dns: `module "dns" {
-    source = "./modules/dns"
+  source = "./modules/dns"
 
-    project_name = var.project_name
-  } `,
+  project_name = var.project_name
+} `,
 
     globalloadbalancer: `module "global_lb" {
-    source = "./modules/global_lb"
+  source = "./modules/global_lb"
 
-    project_name = var.project_name
-  } `,
+  project_name = var.project_name
+} `,
 
     waf: `module "waf" {
-    source = "./modules/waf"
+  source = "./modules/waf"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     secretsmanagement: `module "secrets" {
-    source = "./modules/secrets"
+  source = "./modules/secrets"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     block_storage: `module "block_storage" {
-    source = "./modules/block_storage"
+  source = "./modules/block_storage"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     eventbus: `module "event_bus" {
-    source = "./modules/event_bus"
+  source = "./modules/event_bus"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     paymentgateway: `module "payment_gateway" {
-    source = "./modules/payment_gateway"
+  source = "./modules/payment_gateway"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     cdn: `module "cdn" {
-    source = "./modules/cdn"
+  source = "./modules/cdn"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel}     = var.${regionLabel}
-    bucket_domain_name = module.object_storage.bucket_domain_name
-    bucket_name = module.object_storage.bucket_name
-    bucket_arn = module.object_storage.bucket_arn
-  } `,
+  bucket_domain_name = module.object_storage.bucket_domain_name
+  bucket_name = module.object_storage.bucket_name
+  bucket_arn = module.object_storage.bucket_arn
+} `,
 
     contentdeliverynetwork: `module "cdn" {
-    source = "./modules/cdn"
+  source = "./modules/cdn"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel}     = var.${regionLabel}
-    bucket_domain_name = module.object_storage.bucket_domain_name
-    bucket_name = module.object_storage.bucket_name
-    bucket_arn = module.object_storage.bucket_arn
-  } `,
+  bucket_domain_name = module.object_storage.bucket_domain_name
+  bucket_name = module.object_storage.bucket_name
+  bucket_arn = module.object_storage.bucket_arn
+} `,
 
     cloudfront: `module "cdn" {
-    source = "./modules/cdn"
+  source = "./modules/cdn"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel}     = var.${regionLabel}
-    bucket_domain_name = module.object_storage.bucket_domain_name
-    bucket_name = module.object_storage.bucket_name
-    bucket_arn = module.object_storage.bucket_arn
-  } `,
+  bucket_domain_name = module.object_storage.bucket_domain_name
+  bucket_name = module.object_storage.bucket_name
+  bucket_arn = module.object_storage.bucket_arn
+} `,
 
     // 🔥 FIX: Ensure VPC services map to 'networking' module name for cross-module referencing
     vpc: `module "networking" {
-    source = "./modules/networking"
+  source = "./modules/networking"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     vpcnetworking: `module "networking" {
-    source = "./modules/networking"
+  source = "./modules/networking"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `,
+} `,
 
     networking: `module "networking" {
-    source = "./modules/networking"
+  source = "./modules/networking"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel} = var.${regionLabel}
-  } `
+} `
   };
 
   // 🔥 HARD GUARD: Bypass map lookup for CDN to ensure arguments are passed (including OAC variables)
   if (service === 'cdn' || service === 'contentdeliverynetwork' || service === 'cloudfront') {
     return `module "cdn" {
-    source = "./modules/cdn"
+  source = "./modules/cdn"
 
-    project_name = var.project_name
+  project_name = var.project_name
     ${regionLabel}     = var.${regionLabel}
-    bucket_domain_name = module.object_storage.bucket_domain_name
-    bucket_name = module.object_storage.bucket_name
-    bucket_arn = module.object_storage.bucket_arn
-  } `;
+  bucket_domain_name = module.object_storage.bucket_domain_name
+  bucket_name = module.object_storage.bucket_name
+  bucket_arn = module.object_storage.bucket_arn
+} `;
   }
 
   return moduleMap[service] || `module "${service}" { source = "./modules/${service}" project_name = var.project_name ${regionLabel} = var.${regionLabel} } `;
@@ -3517,22 +3188,22 @@ function generateReadme(projectName, provider, pattern, services) {
   return `# ${projectName} - Terraform Infrastructure
 
 ## Architecture Pattern
-    ** ${pattern}**
+  ** ${pattern}**
 
 ## Cloud Provider
-    ** ${provider.toUpperCase()}**
+  ** ${provider.toUpperCase()}**
 
 ## Services
 ${services.map(s => `- ${s}`).join('\n')}
 
 ## Prerequisites
-    - Terraform >= 1.0
-    - ${provider === 'aws' ? 'AWS CLI configured with credentials' : provider === 'gcp' ? 'GCP CLI (gcloud) authenticated' : 'Azure CLI logged in'}
+  - Terraform >= 1.0
+  - ${provider === 'aws' ? 'AWS CLI configured with credentials' : provider === 'gcp' ? 'GCP CLI (gcloud) authenticated' : 'Azure CLI logged in'}
 
 ## Deployment Instructions
 
 ### 1. Review Configuration
-  Edit \`terraform.tfvars\` to set your project-specific values:
+Edit \`terraform.tfvars\` to set your project-specific values:
 \`\`\`hcl
 ${provider === 'gcp' ? 'project_id = "your-gcp-project-id"' : ''}
 project_name = "${projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')}"
@@ -3632,7 +3303,7 @@ async function generateTerraform(canonicalArchitecture, provider, region, projec
   // 1. Generate Root Config
   files['versions.tf'] = generateVersionsTf(providerLower, region, projectName);
   files['providers.tf'] = generateProvidersTf(providerLower, region);
-  files['variables.tf'] = generateVariablesTf(providerLower, pattern, services);
+  files['variables.tf'] = generateVariablesTf(providerLower, pattern, deployableServices);
   files['terraform.tfvars'] = generateTfvars(providerLower, region, projectName, canonicalArchitecture.sizing || {}, options.connectionData);
   files['outputs.tf'] = generateOutputsTf(providerLower, pattern, deployableServices);
   files['main.tf'] = generateMainTf(providerLower, pattern, deployableServices);
@@ -3711,6 +3382,7 @@ function getModuleSource(service, provider) {
     encryption_at_rest: 'variable "encryption_at_rest" {\n  type = bool\n  default = true\n}',
     backup_retention_days: 'variable "backup_retention_days" {\n  type = number\n  default = 7\n}',
     deletion_protection: 'variable "deletion_protection" {\n  type = bool\n  default = false\n}',
+    db_password: 'variable "db_password" {\n  type = string\n  sensitive = true\n  default = ""\n}',
     multi_az: 'variable "multi_az" {\n  type = bool\n  default = false\n}',
     monitoring_enabled: 'variable "monitoring_enabled" {\n  type = bool\n  default = true\n}',
     bucket_domain_name: 'variable "bucket_domain_name" {\n  type = string\n  default = ""\n}',

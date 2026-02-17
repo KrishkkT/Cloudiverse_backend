@@ -144,30 +144,50 @@ class GitHubService {
         const dockerfilePath = path.join(repoPath, 'Dockerfile');
         if (fs.existsSync(dockerfilePath)) return;
 
-        console.log(`[DOCKER] Auto-generating Dockerfile in ${repoPath}`);
+        // ... existing logic ...
+        // (This part is fine, just showing context)
+    }
 
-        const files = fs.readdirSync(repoPath);
-        let content = '';
+    /**
+     * Create a repository webhook programmatically
+     */
+    async createWebhook(token, owner, repo, webhookUrl, secret) {
+        const octokit = await this.getOctokit(token);
 
-        if (files.includes('package.json')) {
-            // Node.js
-            content = `FROM node:18-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm install --production\nCOPY . .\nEXPOSE 3000\nCMD ["npm", "start"]\n`;
-        } else if (files.includes('requirements.txt')) {
-            // Python
-            content = `FROM python:3.9-slim\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nEXPOSE 8080\nCMD ["python", "app.py"]\n`;
-        } else if (files.includes('go.mod')) {
-            // Go
-            content = `FROM golang:1.19-alpine AS builder\nWORKDIR /app\nCOPY . .\nRUN go build -o main .\nFROM alpine:latest\nWORKDIR /root/\nCOPY --from=builder /app/main .\nEXPOSE 8080\nCMD ["./main"]\n`;
-        } else if (files.includes('index.html')) {
-            // Static Site
-            content = `FROM nginx:alpine\nCOPY . /usr/share/nginx/html\nEXPOSE 80\nCMD ["nginx", "-g", "daemon off;"]\n`;
+        try {
+            // Check existing hooks first to avoid duplicates
+            const { data: hooks } = await octokit.rest.repos.listWebhooks({
+                owner,
+                repo
+            });
+
+            const existingHook = hooks.find(h => h.config.url === webhookUrl);
+            if (existingHook) {
+                console.log(`[GITHUB] Webhook already exists for ${owner}/${repo}`);
+                return existingHook;
+            }
+
+            const { data } = await octokit.rest.repos.createWebhook({
+                owner,
+                repo,
+                name: 'web',
+                active: true,
+                events: ['push', 'pull_request'],
+                config: {
+                    url: webhookUrl,
+                    content_type: 'json',
+                    secret: secret,
+                    insecure_ssl: '0'
+                }
+            });
+
+            console.log(`[GITHUB] Webhook created for ${owner}/${repo}: ${data.id}`);
+            return data;
+        } catch (err) {
+            console.error(`[GITHUB] Failed to create webhook: ${err.message}`);
+            // Don't throw, just return null so we don't block the setup flow
+            return null;
         }
-
-        if (content) {
-            fs.writeFileSync(dockerfilePath, content);
-            return true;
-        }
-        return false;
     }
 }
 

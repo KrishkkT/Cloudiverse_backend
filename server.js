@@ -206,6 +206,22 @@ pool.query('SELECT NOW()', async (err, res) => {
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='workspaces' AND column_name='save_count') THEN
               ALTER TABLE workspaces ADD COLUMN save_count INTEGER DEFAULT 0;
           END IF;
+
+          -- Add repo_url if missing (for CI/CD lookup)
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='workspaces' AND column_name='repo_url') THEN
+              ALTER TABLE workspaces ADD COLUMN repo_url VARCHAR(255);
+              CREATE INDEX IF NOT EXISTS idx_workspaces_repo_url ON workspaces(repo_url);
+          END IF;
+
+          -- Add ci_config if missing
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='workspaces' AND column_name='ci_config') THEN
+              ALTER TABLE workspaces ADD COLUMN ci_config JSONB DEFAULT '{}';
+          END IF;
+
+          -- Add last_deployment_at if missing
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='workspaces' AND column_name='last_deployment_at') THEN
+              ALTER TABLE workspaces ADD COLUMN last_deployment_at TIMESTAMP;
+          END IF;
           -- REPAIR GITHUB_INSTALLATIONS TABLE
           IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='github_installations') THEN
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='github_installations' AND column_name='access_token') THEN
@@ -300,6 +316,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/cloud', cloudRoutes);
 app.use('/api/github', githubRoutes);
 app.use('/api/deploy', require('./routes/deploy')); // New Deployment Route
+app.use('/api/ci', require('./routes/ci')); // CI/CD Webhooks & Triggers
 app.use('/api/ai', aiRoutes);
 
 app.use('/api', require('./routes/feedback'));

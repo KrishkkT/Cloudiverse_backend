@@ -443,6 +443,26 @@ class TerraformExecutor {
             }
             this.addLog(jobId, `Wrote ${fileCount} configuration files`, 'SUCCESS');
 
+            // ─── STAGE 1.5: COPY SHARED MODULES ─────────────────────────────────────
+            this.addLog(jobId, 'Copying shared modules library...', 'INFO');
+            const modulesSrc = path.join(__dirname, '../../catalog/terraform/shared-modules');
+            const modulesDest = path.join(workDir, 'modules');
+
+            try {
+                // Ensure fs.cp exists (Node 16.7+)
+                if (fs.cp) {
+                    await fs.cp(modulesSrc, modulesDest, { recursive: true });
+                } else {
+                    // Fallback for older Node versions (if needed) - simplified recursive copy
+                    // But we assume modern Node environment
+                    throw new Error('Node.js version too old: fs.cp required');
+                }
+                this.addLog(jobId, 'Shared modules copied successfully.', 'SUCCESS');
+            } catch (cpErr) {
+                this.addLog(jobId, `Failed to copy shared modules: ${cpErr.message}`, 'ERROR');
+                throw cpErr;
+            }
+
             // ─── STAGE 2: GET CREDENTIALS ───────────────────────────────────────────
             job.stage = 'credentials';
             this.addLog(jobId, `Obtaining ${provider.toUpperCase()} credentials...`, 'INFO');
