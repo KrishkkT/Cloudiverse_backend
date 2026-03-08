@@ -212,28 +212,33 @@ const COST_MODES = {
  */
 function classifyWorkload(intent, infraSpec) {
   const description = intent?.intent_classification?.project_description?.toLowerCase() || '';
-  const services = infraSpec?.service_classes?.required_services || [];
+  const services = infraSpec?.service_classes?.required_services ||
+    infraSpec?.canonical_architecture?.deployable_services || [];
 
-  // Check for AI/ML related keywords
-  if (description.includes('ai') ||
-    description.includes('ml') ||
+  // Check for AI/ML related keywords with boundary checks
+  const isAI = /\bai\b/.test(description) ||
+    /\bml\b/.test(description) ||
     description.includes('llm') ||
     description.includes('token') ||
     description.includes('openai') ||
     description.includes('chatgpt') ||
     description.includes('inference') ||
-    description.includes('generation')) {
+    description.includes('generation');
+
+  if (isAI) {
     return COST_MODES.AI_CONSUMPTION_COST;
   }
 
-  // Check for storage policy related keywords
-  if (description.includes('backup') ||
+  // Check for storage policy related keywords with boundary checks
+  const isStoragePolicy = description.includes('backup') ||
     description.includes('archive') ||
     description.includes('cold') ||
     description.includes('vault') ||
-    description.includes('dr') ||
+    /\bdr\b/.test(description) ||
     description.includes('disaster') ||
-    description.includes('retention')) {
+    description.includes('retention');
+
+  if (isStoragePolicy) {
     return COST_MODES.STORAGE_POLICY_COST;
   }
 
@@ -249,7 +254,7 @@ function classifyWorkload(intent, infraSpec) {
 
   if (hasInfraServices) {
     // If both AI and infra services, it's hybrid
-    if (description.includes('ai') || description.includes('ml')) {
+    if (/\bai\b/.test(description) || /\bml\b/.test(description)) {
       return COST_MODES.HYBRID_COST;
     }
     return COST_MODES.INFRASTRUCTURE_COST;
@@ -273,12 +278,12 @@ function classifyWorkload(intent, infraSpec) {
 /**
  * Calculate costs for different cost modes
  */
-async function calculateCostForMode(costMode, infraSpec, intent, costProfile, usageProfile) {
-  console.log(`[INFRACOST_SERVICE] calculateCostForMode: ${costMode}`);
+async function calculateCostForMode(costMode, infraSpec, intent, costProfile, usageProfile, deployableServicesOverride = null, projectFolders = null) {
+  console.log(`[INFRACOST_SERVICE] calculateCostForMode: ${costMode}. Has projectFolders: ${!!projectFolders}`);
   try {
     switch (costMode) {
       case COST_MODES.INFRASTRUCTURE_COST:
-        return await calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile);
+        return await calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile, deployableServicesOverride, projectFolders);
 
       case COST_MODES.STORAGE_POLICY_COST:
         return calculateStoragePolicyCost(infraSpec, intent, costProfile, usageProfile);
@@ -287,11 +292,11 @@ async function calculateCostForMode(costMode, infraSpec, intent, costProfile, us
         return calculateAIConsumptionCost(infraSpec, intent, costProfile, usageProfile);
 
       case COST_MODES.HYBRID_COST:
-        return calculateHybridCost(infraSpec, intent, costProfile, usageProfile);
+        return calculateHybridCost(infraSpec, intent, costProfile, usageProfile, deployableServicesOverride, projectFolders);
 
       default:
         // Default to infrastructure cost if mode is unknown
-        return await calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile);
+        return await calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile, deployableServicesOverride, projectFolders);
     }
   } catch (error) {
     console.error(`[COST MODE ERROR] Error in cost mode ${costMode}:`, error);
@@ -417,12 +422,13 @@ async function calculateCostForMode(costMode, infraSpec, intent, costProfile, us
 /**
  * Calculate infrastructure cost using existing logic
  */
-async function calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile) {
+async function calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile, deployableServicesOverride = null, projectFolders = null) {
+  console.log(`[INFRA COST] calculateInfrastructureCost. Has projectFolders: ${!!projectFolders}`);
   const description = intent?.intent_classification?.project_description?.toLowerCase() || '';
   const pattern = infraSpec.canonical_architecture?.pattern || '';
 
   // 🔥 FIX: Extract deployable services early to check for advanced components
-  const deployableServices = extractDeployableServices(infraSpec);
+  const deployableServices = deployableServicesOverride || extractDeployableServices(infraSpec);
   const ADVANCED_SERVICES = ['relationaldatabase', 'nosqldatabase', 'computecontainer', 'computevm', 'cache', 'searchengine'];
   const hasAdvancedServices = deployableServices.some(s =>
     ADVANCED_SERVICES.includes(s.replace(/_/g, '').toLowerCase())
@@ -491,11 +497,10 @@ async function calculateInfrastructureCost(infraSpec, intent, costProfile, usage
     // Build usage profile
     const usage = buildUsageProfile(infraSpec, intent, usageProfile);
 
-    // Get deployable services
-    // Get deployable services using the centralized, filtering helper
-    const deployableServices = extractDeployableServices(infraSpec);
+    // Get deployable services (propagated from scenario preparation or extracted fresh)
+    const currentDeployableServices = deployableServicesOverride || extractDeployableServices(infraSpec);
 
-    console.log(`[INFRA COST] Calling generateCostEstimate for ${deployableServices.length} services`);
+    console.log(`[INFRA COST] Calling generateCostEstimate for ${currentDeployableServices.length} services`);
 
     const results = {};
     const providers = ['AWS', 'GCP', 'AZURE'];
@@ -503,12 +508,15 @@ async function calculateInfrastructureCost(infraSpec, intent, costProfile, usage
     // 🔥 PERFORMANCE FIX: Run providers in parallel to reduce total execution time
     const providerPromises = providers.map(async (provider) => {
       try {
+        const existingDir = projectFolders ? projectFolders[provider.toLowerCase()] : null;
         const providerResult = await generateCostEstimate(
           provider,
           infraSpec,
-          deployableServices,
+          intent,
+          costProfile,
           usage,
-          costProfile
+          currentDeployableServices,
+          existingDir
         );
 
         // 🔥 FIX: Check if provider returned INCOMPLETE status (Infracost failed)
@@ -534,6 +542,7 @@ async function calculateInfrastructureCost(infraSpec, intent, costProfile, usage
           return { provider, data: fallbackResult };
 
         } else {
+          console.log(`[INFRA COST] Provider ${provider} result has __providerDir: ${!!providerResult.__providerDir}`);
           return { provider, data: providerResult };
         }
       } catch (providerError) {
@@ -619,176 +628,8 @@ async function calculateInfrastructureCost(infraSpec, intent, costProfile, usage
     throw error;
   }
 }
-/**
- * STRICT PRICE ESTIMATION (Step 3 Core)
- *
- * 1. Filter services: DIRECT/USAGE_BASED (Priced) vs EXTERNAL/FREE (Not Priced)
- * 2. Generate PRICING Terraform for Priced services only.
- * 3. Run Infracost.
- * 4. Apply Integrity Gate: If Priced > 0 but Cost == 0, flag INCOMPLETE.
- */
-async function generateCostEstimate(provider, infraSpec, deployableServices, usageProfile, costProfile) {
-  const runId = generateRunId();
-  const providerDir = path.join(INFRACOST_BASE_DIR, runId, provider);
+// Consolidated generateCostEstimate is located at line 2512
 
-  // 1. CLASSIFY SERVICES
-  const classification = classifyServicesForPricing(deployableServices);
-  const billableServices = [...classification.direct, ...classification.usage_based];
-  console.log(`[${provider}] Service Class: Direct=${classification.direct.length}, Usage=${classification.usage_based.length}, External=${classification.external.length}`);
-
-  // If no billable services, return early (but respect External count)
-  if (billableServices.length === 0) {
-    console.log(`[INFRACOST_SERVICE] generateCostEstimate: No billable services found. Returning zero cost.`);
-    return createZeroCostResult(provider, classification, costProfile);
-  }
-
-  try {
-    console.log(`[INFRACOST_SERVICE] generateCostEstimate: Starting Infracost run for ${provider}`);
-    cleanProviderDir(providerDir);
-
-    // 2. GENERATE PRICING TERRAFORM (Strict Mode)
-    // We pass ONLY billable services to the generator to avoid pollution
-    const tfCode = generatePricingTerraform(provider, infraSpec, billableServices, sizingModel.calculateSizing(infraSpec), costProfile, usageProfile);
-    const tfPath = path.join(providerDir, 'main.tf');
-    fs.writeFileSync(tfPath, tfCode);
-
-    // 3. GENERATE USAGE FILE
-    const usageFilePath = path.join(providerDir, 'infracost-usage.yml');
-    const usageContent = usageNormalizer.generateInfracostUsageFile(billableServices, usageProfile, provider);
-    fs.writeFileSync(usageFilePath, usageContent);
-
-    // 4. RUN INFRACOST
-    const infracostResult = await runInfracost(providerDir, usageFilePath);
-
-    // 🔥 FIX: Intercept Quota Error
-    if (infracostResult && infracostResult.error === 'API_QUOTA_EXCEEDED') {
-      console.warn(`[${provider}] PRICING FAILED: API Quota Exceeded. Falling back.`);
-      return {
-        provider: provider,
-        pricing_status: 'INCOMPLETE',
-        quota_exceeded: true,
-        total_monthly_cost: 0,
-        estimate_type: 'formula_fallback', // Signal fallback
-        services: [] // Empty services list
-      };
-    }
-
-    // 5. COMPLETENESS GATE
-    const totalCost = parseFloat(infracostResult.totalMonthlyCost) || 0;
-    let completenessStatus = 'COMPLETE';
-
-    // Gate: If we have DIRECT services (VMs, DBs) but $0 cost, something is wrong.
-    if (totalCost === 0 && classification.direct.length > 0) {
-      console.warn(`[${provider}] PRICING INCOMPLETE: ${classification.direct.length} direct services generated $0 cost.`);
-      completenessStatus = 'INCOMPLETE';
-    }
-
-    // 🔒 INTEGRITY: Check for unsupported/unknown resources in Infracost output
-    // Infracost puts this in projects[0].metadata.unsupportedResources usually
-    const projectMeta = infracostResult.projects?.[0]?.metadata;
-    if (projectMeta && projectMeta.unsupportedResources && projectMeta.unsupportedResources.length > 0) {
-      console.warn(`[${provider}] PRICING INCOMPLETE: Detected ${projectMeta.unsupportedResources.length} unsupported resources.`);
-      completenessStatus = 'INCOMPLETE';
-    } else if (projectMeta?.unsupportedResourceCounts && Object.keys(projectMeta.unsupportedResourceCounts).length > 0) {
-      // Some versions use counts object
-      console.warn(`[${provider}] PRICING INCOMPLETE: Detected unsupported resources (counts).`);
-      completenessStatus = 'INCOMPLETE';
-    }
-
-    // ---------------------------------------------------------
-    // 🔵 POST-PROCESSING: MERGE & ENRICH SERVICES
-    // ---------------------------------------------------------
-    const enrichedServices = [];
-    const processedIds = new Set();
-
-    // A. Add Infracost Results (PRICED)
-    if (infracostResult.services) {
-      infracostResult.services.forEach(svc => {
-        // Normalize ID for matching
-        const normId = svc.service_class.replace(/_/g, '').toLowerCase();
-        processedIds.add(normId);
-
-        // Validate $0 Cost on Priced Services
-        if (svc.cost.monthly === 0 && classification.details[svc.service_class]?.status === 'PRICED') {
-          console.warn(`[PRICING FIREWALL] ⚠️ Service ${svc.service_class} is PRICED but returned $0.`);
-          svc.pricing_status = 'PRICED';
-          svc.reason = 'Usage within free tier limits (estimated)';
-        } else {
-          svc.pricing_status = 'PRICED';
-          svc.reason = 'Estimated by Infracost';
-        }
-
-        enrichedServices.push(svc);
-      });
-    }
-
-    // B. Add Missing Services (Free / External / Priced but not in Infracost output)
-    deployableServices.forEach(svcId => {
-      const normId = svcId.replace(/_/g, '').toLowerCase();
-
-      // If we haven't processed this service yet (meaning Infracost didn't return it)
-      // Note: Infracost might return 'aws_s3_bucket' while we have 'objectstorage'. Need robust matching.
-      // The `RESOURCE_CATEGORY_MAP` in `normalizeInfracostOutput` handles the translation.
-      // So `svc.service_class` should match `svcId` (canonical).
-
-      const isAlreadyIncluded = enrichedServices.some(s => s.service_class === svcId || s.service_class === normId);
-
-      if (!isAlreadyIncluded) {
-        const detail = classification.details[svcId] || { status: 'UNKNOWN', reason: 'Not evaluated', display_name: svcId };
-
-        if (detail.status === 'PRICED') {
-          // It SHOULD have been in Infracost. If missing, it means Terraform didn't include it or Infracost failed.
-          enrichedServices.push({
-            service_class: svcId,
-            display_name: detail.display_name,
-            category: getCategoryForServiceId(svcId),
-            pricing_status: 'PRICED',
-            reason: 'Pricing data currently unavailable',
-            cost: { monthly: 0, formatted: '$0.00/mo' }
-          });
-        } else {
-          // Correctly categorize Free / External
-          enrichedServices.push({
-            service_class: svcId,
-            display_name: detail.display_name,
-            category: getCategoryForServiceId(svcId),
-            pricing_status: detail.status,
-            reason: detail.reason,
-            cost: { monthly: 0, formatted: detail.status === 'EXTERNAL' ? 'Varies' : 'Included' }
-          });
-        }
-      }
-    });
-
-    return {
-      provider: provider,
-      total_monthly_cost: totalCost,
-      formatted_cost: `$${totalCost.toFixed(2)}/month`,
-      currency: 'USD',
-      estimate_source: 'infracost',
-      estimate_type: 'exact',
-      pricing_status: completenessStatus, // 'COMPLETE' | 'INCOMPLETE'
-      service_counts: {
-        priced: billableServices.length,
-        external: classification.external.length,
-        free: classification.free_tier.length,
-        total: deployableServices.length
-      },
-      services: enrichedServices, // 🔥 Use the enriched list
-      // Keep legacy fields for frontend compatibility for now
-      service_count: enrichedServices.length,
-      confidence: completenessStatus === 'COMPLETE' ? 1.0 : 0.0,
-      is_mock: false
-    };
-
-  } catch (err) {
-    console.error(`[${provider}] Cost Error:`, err);
-    throw err;
-  } finally {
-    // Cleanup (optional, maybe keep for debug)
-    // cleanProviderDir(providerDir);
-  }
-}
 
 /**
  * Classify services into pricing buckets using SSOT
@@ -1400,7 +1241,7 @@ function calculateAIConsumptionCost(infraSpec, intent, costProfile, usageProfile
 /**
  * Calculate hybrid cost combining infrastructure and consumption
  */
-async function calculateHybridCost(infraSpec, intent, costProfile, usageProfile) {
+async function calculateHybridCost(infraSpec, intent, costProfile, usageProfile, deployableServicesOverride = null, projectFolders = null) {
   const description = intent?.intent_classification?.project_description?.toLowerCase() || '';
 
   // Check if this is operational failure analysis
@@ -1489,7 +1330,7 @@ async function calculateHybridCost(infraSpec, intent, costProfile, usageProfile)
   }
 
   // Calculate infrastructure cost
-  const infraResult = await calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile);
+  const infraResult = await calculateInfrastructureCost(infraSpec, intent, costProfile, usageProfile, deployableServicesOverride, projectFolders);
 
   // Determine if we also need AI or storage costs
 
@@ -1728,11 +1569,14 @@ const RESOURCE_CATEGORY_MAP = {
   'aws_sns_topic': 'messagequeue',
   'aws_cloudwatch_event_rule': 'eventbus',
   'aws_opensearch_domain': 'searchengine',
+  'aws_lambda_function': 'computeserverless',
+  'aws_db_instance': 'relationaldatabase',
   // Compute expansion
   'aws_eks_cluster': 'computecontainer',
   'aws_eks_node_group': 'computecontainer',
   'aws_fargate_profile': 'computecontainer',
-
+  'aws_ecs_service': 'computecontainer',
+  'aws_ecs_task_definition': 'computecontainer',
   // GCP
   'google_cloud_run_service': 'computecontainer',
   'google_cloud_run_v2_service': 'computecontainer',
@@ -2057,7 +1901,7 @@ function forceGenerateUsageFile(provider, sizing, deployableServices) {
  * Run Infracost CLI and get JSON output
  * ASYNC: Uses exec with promisify to prevent blocking the event loop
  */
-async function runInfracost(terraformDir, usageFilePath = null) {
+async function runInfracost(terraformDir, usageFilePath = null, skipValidation = false) {
   try {
     // Check if Infracost API key is set
     if (!process.env.INFRACOST_API_KEY) {
@@ -2083,36 +1927,41 @@ async function runInfracost(terraformDir, usageFilePath = null) {
     console.log(`[INFRACOST] Found ${terraformFiles.length} Terraform files: ${terraformFiles.join(', ')} `);
 
     // 🔥 FIX: Validate Terraform configuration to prevent Infracost crashes on invalid HCL
-    try {
-      console.log(`[TERRAFORM] Validating configuration in ${terraformDir}...`);
+    if (!skipValidation) {
+      try {
+        console.log(`[TERRAFORM] Validating configuration in ${terraformDir}...`);
 
-      // 🔥 PERFORMANCE FIX: enable global plugin cache to prevent re-downloading 400MB+ providers every run
-      const pluginCacheDir = path.join(os.homedir(), '.terraform.d', 'plugin-cache');
-      if (!fs.existsSync(pluginCacheDir)) {
-        fs.mkdirSync(pluginCacheDir, { recursive: true });
-      }
-
-      const execOpts = {
-        cwd: terraformDir,
-        stdio: 'pipe',
-        timeout: 180000, // Increased to 3m for slow inits
-        env: {
-          ...process.env,
-          TF_PLUGIN_CACHE_DIR: pluginCacheDir
+        // 🔥 PERFORMANCE FIX: enable global plugin cache to prevent re-downloading 400MB+ providers every run
+        const pluginCacheDir = path.join(os.homedir(), '.terraform.d', 'plugin-cache');
+        if (!fs.existsSync(pluginCacheDir)) {
+          fs.mkdirSync(pluginCacheDir, { recursive: true });
         }
-      };
 
-      // Init (backend=false to speed up, but plugins still needed for validate)
-      require('child_process').execSync('terraform init -upgrade -backend=false', execOpts);
+        const execOpts = {
+          cwd: terraformDir,
+          stdio: 'pipe',
+          timeout: 300000, // Increased to 5m for slow inits
+          env: {
+            ...process.env,
+            TF_PLUGIN_CACHE_DIR: pluginCacheDir
+          }
+        };
 
-      // Validate
-      require('child_process').execSync('terraform validate', execOpts);
-      console.log(`[TERRAFORM] Validation successful.`);
-    } catch (err) {
-      console.error(`[TERRAFORM] Validation failed: ${err.message}`);
-      if (err.stdout) console.error(`[TERRAFORM] STDOUT: ${err.stdout.toString()}`);
-      if (err.stderr) console.error(`[TERRAFORM] STDERR: ${err.stderr.toString()}`);
-      return { error: 'TERRAFORM_VALIDATION_FAILED', details: err.message }; // 🔥 FIX: Strictly fail on validation error
+        // Init (backend=false to speed up, but plugins still needed for validate)
+        // 🔥 REMOVED -upgrade to prevent unnecessary network calls every run
+        require('child_process').execSync('terraform init -backend=false', execOpts);
+
+        // Validate
+        require('child_process').execSync('terraform validate', execOpts);
+        console.log(`[TERRAFORM] Validation successful.`);
+      } catch (err) {
+        console.error(`[TERRAFORM] Validation failed: ${err.message}`);
+        if (err.stdout) console.error(`[TERRAFORM] STDOUT: ${err.stdout.toString()}`);
+        if (err.stderr) console.error(`[TERRAFORM] STDERR: ${err.stderr.toString()}`);
+        return { error: 'TERRAFORM_VALIDATION_FAILED', details: err.message }; // 🔥 FIX: Strictly fail on validation error
+      }
+    } else {
+      console.log(`[TERRAFORM] Skipping validation for pre-initialized directory: ${terraformDir}`);
     }
 
     const { execFile } = require('child_process');
@@ -2146,7 +1995,7 @@ async function runInfracost(terraformDir, usageFilePath = null) {
             ...process.env,
             INFRACOST_API_KEY: process.env.INFRACOST_API_KEY
           },
-          timeout: 120000, // 2 min (terraform init can be slow on first run)
+          timeout: 180000, // 3 min
           maxBuffer: 1024 * 1024 * 20,
           windowsHide: true
         });
@@ -2503,7 +2352,7 @@ function generateMockCostData(provider, infraSpec, sizing, costProfile = 'COST_E
  * ✅ FIX 2: Infracost is now PRIMARY path, formula is FALLBACK
  * ✅ FIX 3: Usage normalized to resource-level keys
  */
-async function generateCostEstimate(provider, infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, deployableServices = null) {
+async function generateCostEstimate(provider, infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, deployableServices = null, existingProviderDir = null) {
   const sizing = sizingModel.getSizingForInfraSpec(infraSpec, intent);
   infraSpec.sizing = sizing; // Attach for downstream services (Terraform)
   const tier = sizing.tier;
@@ -2549,19 +2398,29 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
   console.log(`[COST ESTIMATE ${provider}] Deployable services: ${deployableServices.length}`);
 
   // 🔥 FIX: Create unique provider directory with run ID to prevent state leakage
+  // OR Reuse the existing directory if provided (Performance Optimization)
   const runId = generateRunId();
-  const providerDir = path.join(INFRACOST_BASE_DIR, provider.toLowerCase(), runId);
-  cleanProviderDir(providerDir); // Clean before writing
+  const providerDir = existingProviderDir || path.join(INFRACOST_BASE_DIR, provider.toLowerCase(), runId);
+
+  // Only clean and generate if we're not reusing
+  if (!existingProviderDir) {
+    cleanProviderDir(providerDir);
+  }
 
   let estimate_type = 'heuristic'; // Default to heuristic, upgrade to 'exact' if Infracost succeeds
   let estimate_source = 'formula_fallback';
 
   // 🔵 PHASE 3.2: Normalize usage into resource-level Infracost keys
+  const profileStr = typeof costProfile === 'string'
+    ? costProfile.toUpperCase()
+    : (costProfile?.profile || costProfile?.name || 'COST_EFFECTIVE').toUpperCase();
+
   let usageFilePath = null;
   try {
     const usageYaml = usageNormalizer.generateInfracostUsageFile(deployableServices, usageOverrides, provider);
     if (usageYaml) {
-      usageFilePath = path.join(providerDir, 'infracost-usage.yml');
+      // 🔥 OPTIMIZATION: Use profile-specific usage file to allow parallel scenario execution
+      usageFilePath = path.join(providerDir, `infracost-usage-${profileStr.toLowerCase()}.yml`);
       fs.writeFileSync(usageFilePath, usageYaml);
       console.log(`[USAGE FILE] Generated usage file for ${provider} at ${usageFilePath}`);
     }
@@ -2575,69 +2434,69 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
     usageFilePath = forceGenerateUsageFile(provider, sizing, deployableServices);
   }
 
-  // 🔵 PHASE 3.3: Generate minimal pricing Terraform
-  let terraform;
-  // 🔥 FIX: Normalize costProfile to string (was being passed as object)
-  const profileStr = typeof costProfile === 'string'
-    ? costProfile.toUpperCase()
-    : (costProfile?.profile || costProfile?.name || 'COST_EFFECTIVE').toUpperCase();
+  // 🔵 PHASE 3.3: Generate minimal pricing Terraform (Only if folder is new)
 
-  try {
-    // 🔥 NEW: Use Flat Pricing Generator for pure Infracost visibility (Phase 3.3)
-    console.log(`[TERRAFORM] Generating FLAT pricing project for ${provider} (Cost Mode Analysis)`);
+  if (!existingProviderDir) {
+    try {
+      // 🔥 NEW: Use Flat Pricing Generator for pure Infracost visibility (Phase 3.3)
+      console.log(`[TERRAFORM] Generating FLAT pricing project for ${provider} (Cost Mode Analysis)`);
 
-    // Generator expects lowercase provider key (aws, gcp, azure)
-    const genProvider = provider.toLowerCase();
+      // Generator expects lowercase provider key (aws, gcp, azure)
+      const genProvider = provider.toLowerCase();
 
-    // 🔥 FIX: Use provider-specific default regions for accurate Infracost pricing
-    const DEFAULT_REGIONS = {
-      aws: 'us-east-1',      // AWS Virginia (most complete pricing data)
-      gcp: 'us-central1',    // GCP Iowa (well-priced region with full data)
-      azure: 'eastus'        // Azure East US (most complete pricing data)
-    };
-    const resolvedRegion = DEFAULT_REGIONS[genProvider] || 'us-east-1';
-    const resolvedProjectName = infraSpec.project_name || 'pricing-analysis';
+      // 🔥 FIX: Use provider-specific default regions for accurate Infracost pricing
+      const DEFAULT_REGIONS = {
+        aws: 'us-east-1',      // AWS Virginia (most complete pricing data)
+        gcp: 'us-central1',    // GCP Iowa (well-priced region with full data)
+        azure: 'eastus'        // Azure East US (most complete pricing data)
+      };
+      const resolvedRegion = DEFAULT_REGIONS[genProvider] || 'us-east-1';
+      const resolvedProjectName = infraSpec.project_name || 'pricing-analysis';
 
-    // Generate content directly
-    const pricingMainTf = terraformGeneratorV2.generatePricingMainTf(
-      genProvider,
-      deployableServices,
-      resolvedRegion,
-      resolvedProjectName,
-      sizing
-    );
-    const versionsTf = terraformGeneratorV2.generateVersionsTf(genProvider);
-    const providersTf = terraformGeneratorV2.generateProvidersTf(genProvider, resolvedRegion);
-    // 🔥 FIX: Generate variables.tf to prevent validation errors
-    const variablesTf = terraformGeneratorV2.generateVariablesTf(genProvider, 'STANDARD', deployableServices);
+      // Generate content directly
+      const pricingMainTf = terraformGeneratorV2.generatePricingMainTf(
+        genProvider,
+        deployableServices,
+        resolvedRegion,
+        resolvedProjectName,
+        sizing
+      );
+      const versionsTf = terraformGeneratorV2.generateVersionsTf(genProvider);
+      const providersTf = terraformGeneratorV2.generateProvidersTf(genProvider, resolvedRegion);
+      // 🔥 FIX: Generate variables.tf to prevent validation errors
+      const variablesTf = terraformGeneratorV2.generateVariablesTf(genProvider, 'STANDARD', deployableServices);
 
-    // Construct flat project folder without modules
-    const projectFolder = {
-      'main.tf': pricingMainTf,
-      'versions.tf': versionsTf,
-      'providers.tf': providersTf,
-      'variables.tf': variablesTf
-    };
+      // Construct flat project folder without modules
+      const projectFolder = {
+        'main.tf': pricingMainTf,
+        'versions.tf': versionsTf,
+        'providers.tf': providersTf,
+        'variables.tf': variablesTf
+      };
 
-    // Recursively write all files
-    writeProjectFolder(projectFolder, providerDir);
-    console.log(`[TERRAFORM] Generated flat pricing project for ${provider}`);
-  } catch (terraformError) {
-    console.error(`[TERRAFORM] Failed to generate for ${provider}: ${terraformError.message}`);
-    // Cannot proceed with Infracost without Terraform
-    console.log(`[COST ESTIMATE ${provider}] Falling back to formula engine`);
-    return {
-      ...generateBetterFallback(provider, infraSpec, sizing, costProfile),
-      estimate_type: 'heuristic',
-      estimate_source: 'formula_fallback',
-      estimate_reason: 'Terraform generation failed',
-      pricing_status: 'FALLBACK'
-    };
+      // Recursively write all files
+      writeProjectFolder(projectFolder, providerDir);
+      console.log(`[TERRAFORM] Generated flat pricing project for ${provider}`);
+    } catch (terraformError) {
+      console.error(`[TERRAFORM] Failed to generate for ${provider}: ${terraformError.message}`);
+      // Cannot proceed with Infracost without Terraform
+      console.log(`[COST ESTIMATE ${provider}] Falling back to formula engine`);
+      return {
+        ...generateBetterFallback(provider, infraSpec, sizing, costProfile),
+        estimate_type: 'heuristic',
+        estimate_source: 'formula_fallback',
+        estimate_reason: 'Terraform generation failed',
+        pricing_status: 'FALLBACK',
+        __providerDir: providerDir
+      };
+    }
+  } else {
+    console.log(`[REUSE] Using pre-initialized Terraform for ${provider} in ${providerDir}`);
   }
 
   // 🔵 PHASE 3.4: PRIMARY PATH - Run Infracost CLI
   try {
-    const infracostResult = await runInfracost(providerDir, usageFilePath);
+    const infracostResult = await runInfracost(providerDir, usageFilePath, !!existingProviderDir);
 
     // 🔥 FIX: Check if runInfracost returned an error object (e.g. validation failed)
     if (infracostResult && infracostResult.error) {
@@ -2647,7 +2506,8 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
         estimate_type: 'heuristic',
         estimate_source: 'formula_fallback',
         estimate_reason: `Infracost failed: ${infracostResult.error}`,
-        pricing_status: 'VALIDATION_FAILED'
+        pricing_status: 'VALIDATION_FAILED',
+        __providerDir: providerDir
       };
     }
 
@@ -2690,7 +2550,8 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
             estimate_type: 'heuristic',
             estimate_source: 'fallback_engine_v2',
             estimate_reason: 'Infracost returned $0 (API Quote/Completeness Check)',
-            pricing_status: 'FALLBACK'
+            pricing_status: 'FALLBACK',
+            __providerDir: providerDir
           };
         } else if (normalized.service_count === 0) {
           // This path is now only for truly empty/free workloads (unlikely with billable logic)
@@ -2724,14 +2585,16 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
           throw integrityError;
         }
 
-        return {
+        const finalResult = {
           ...normalized,
           tier,
           cost_profile: costProfile,
-          estimate_type: 'exact',  // ✅ FIX 5: UX Honesty
+          estimate_type: 'exact',
           estimate_source: 'infracost',
-          estimate_reason: 'Real Terraform-based pricing via Infracost CLI'
+          estimate_reason: 'Real Terraform-based pricing via Infracost CLI',
+          __providerDir: providerDir // ✅ ATTACH: For structural reuse
         };
+        return finalResult;
       }
     }
   } catch (infracostError) {
@@ -2742,10 +2605,11 @@ async function generateCostEstimate(provider, infraSpec, intent, costProfile = '
   console.log(`[COST ESTIMATE ${provider}] ⚠️ Infracost unavailable, using formula engine`);
   return {
     ...generateBetterFallback(provider, infraSpec, sizing, costProfile),
-    estimate_type: 'heuristic',  // ✅ FIX 5: UX Honesty
+    estimate_type: 'heuristic',
     estimate_source: 'formula_fallback',
     estimate_reason: 'Infracost CLI unavailable or Terraform validation failed',
-    pricing_status: 'FALLBACK'
+    pricing_status: 'FALLBACK',
+    __providerDir: providerDir // ✅ ATTACH: Even in fallback, directory might be useful
   };
 }
 
@@ -2762,12 +2626,13 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
   // ═══════════════════════════════════════════════════════════════════
   const costMode = classifyWorkload(intent, infraSpec);
 
+  // 🔥 NEW: Extract and normalize services ONCE per request
+  const deployableServices = extractDeployableServices(infraSpec);
+  console.log(`[SCENARIOS] Using ${deployableServices.length} deployable services for all profiles`);
+
   // ═══════════════════════════════════════════════════════════════════
 
   console.log(`[SCENARIOS] Cost Mode: ${costMode}`);
-
-  // 🔵 PHASE 3.1: Extract deployable services ONLY
-  const deployableServices = extractDeployableServices(infraSpec);
 
   if (deployableServices.length === 0) {
     throw new Error('[SCENARIOS] No deployable services found - cannot calculate costs');
@@ -2827,17 +2692,31 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
 
   // Use the cost mode classification to calculate scenarios appropriately
   try {
-    // 🔥 FIX A1: Sequential Execution for Scenarios
-    // Concurrent execution here causes cross-talk between runs (low/expected/high and providers)
+    // 🔥 OPTIMIZATION: Parallel Scenario Execution with Structure Re-use
+    // 1. Prepare providers (Generate + Init) once using a high-parallel preparation phase
+    const providers = ['AWS', 'GCP', 'AZURE'];
+    const projectFolderCache = {};
 
-    console.log('[SCENARIOS] Calculating Low profile...');
-    const costEffectiveRaw = await performCostAnalysis(infraSpec, intent, 'COST_EFFECTIVE', usageProfile.low, true, deployableServices);
+    console.log(`[SCENARIOS] Preparing ${providers.join(', ')} Terraform structures...`);
 
-    console.log('[SCENARIOS] Calculating Expected profile...');
+    // We run the 'EXPECTED' profile once across all providers to warm up the Terraform projects
+    // We use standardRaw as the preparation result to avoid double-calculating
     const standardRaw = await performCostAnalysis(infraSpec, intent, 'COST_EFFECTIVE', usageProfile.expected, true, deployableServices);
 
-    console.log('[SCENARIOS] Calculating High profile...');
-    const highPerfRaw = await performCostAnalysis(infraSpec, intent, 'HIGH_PERFORMANCE', usageProfile.high, true, deployableServices);
+    // Extract the used directories from the preparation step
+    if (standardRaw) {
+      Object.keys(standardRaw).forEach(p => {
+        const dir = standardRaw[p]?.__providerDir;
+        if (dir) projectFolderCache[p.toLowerCase()] = dir;
+      });
+    }
+
+    // 🔥 OPTIMIZATION: Run remaining profiles in parallel (Total of 6 Infracost runs executed simultaneously)
+    console.log('[SCENARIOS] Running remaining profiles in parallel...');
+    const [costEffectiveRaw, highPerfRaw] = await Promise.all([
+      performCostAnalysis(infraSpec, intent, 'COST_EFFECTIVE', usageProfile.low, true, deployableServices, projectFolderCache),
+      performCostAnalysis(infraSpec, intent, 'HIGH_PERFORMANCE', usageProfile.high, true, deployableServices, projectFolderCache)
+    ]);
 
     // ═══════════════════════════════════════════════════════════════════
     // BUILD CANONICAL CostScenarios STRUCTURE
@@ -2850,8 +2729,10 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
       providers.forEach(pLower => {
         const pUpper = pLower.toUpperCase();
 
-        // precise lookup with fallback to different casing
-        const providerData = rawResult?.provider_details?.[pLower] ||
+        // precise lookup with flat fallback (standardRaw is a direct provider map)
+        const providerData = rawResult?.[pUpper] ||
+          rawResult?.[pLower] ||
+          rawResult?.provider_details?.[pLower] ||
           rawResult?.provider_details?.[pUpper] ||
           rawResult?.cost_estimates?.[pLower] ||
           rawResult?.cost_estimates?.[pUpper] ||
@@ -2861,7 +2742,9 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
 
         const cost = providerData.monthly_cost ??
           providerData.total_monthly_cost ??
-          providerData.total;
+          providerData.total ??
+          providerData.total_cost ??
+          0;
 
         // Strictly check for undefined/null - allow 0 if it's a real 0 cost (e.g. Free Tier)
         if (cost !== undefined && cost !== null && !results[pLower]) {
@@ -2877,6 +2760,12 @@ async function calculateScenarios(infraSpec, intent, usageProfile) {
             serviceNames,
             usageData
           );
+
+          // 🔥 ATTACH DIR: Ensure structural reuse metadata is preserved for verification
+          if (providerData.__providerDir) {
+            results[pLower].__providerDir = providerData.__providerDir;
+          }
+
           console.log(`[SCENARIOS] ${pUpper}: $${Number(cost).toFixed(2)}`);
         }
       });
@@ -3449,8 +3338,8 @@ function identifyMissingComponents(infraSpec) {
  *   - 'hybrid':  Formula + optional Infracost (SERVERLESS, MOBILE)
  *   - 'infracost': Full Terraform IR (CONTAINERIZED, VM, PIPELINE)
  */
-async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, onlyPrimary = false, deployableServicesOverride = null) {
-  console.log(`--- STEP 3: Cost Analysis Started (Profile: ${costProfile}) ---`);
+async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECTIVE', usageOverrides = null, onlyPrimary = false, deployableServicesOverride = null, projectFolders = null) {
+  console.log(`--- STEP 3: Cost Analysis Started (Profile: ${costProfile}). Has projectFolders: ${!!projectFolders} ---`);
 
   try {
     // ═══════════════════════════════════════════════════════════════════
@@ -3480,7 +3369,7 @@ async function performCostAnalysis(infraSpec, intent, costProfile = 'COST_EFFECT
     // ═══════════════════════════════════════════════════════════════════
     // STEP 2: ROUTE TO APPROPRIATE COST CALCULATION METHOD
     // ═══════════════════════════════════════════════════════════════════
-    const result = await calculateCostForMode(costMode, infraSpec, intent, costProfile, usageOverrides);
+    const result = await calculateCostForMode(costMode, infraSpec, intent, costProfile, usageOverrides, deployableServicesOverride, projectFolders);
 
     // Add cost mode information to result if not already set by specialized calculator
     if (!result.cost_mode) {
@@ -3794,14 +3683,26 @@ function extractDeployableServices(infraSpec) {
 
 /**
  * Recursive write helper
+ * 🔥 FIX: Maps module template keys to actual .tf filenames
  */
 function writeProjectFolder(folder, basePath) {
+  const keyMap = {
+    'mainTf': 'main.tf',
+    'variablesTf': 'variables.tf',
+    'outputsTf': 'outputs.tf'
+  };
+
   Object.entries(folder).forEach(([name, content]) => {
-    const fullPath = path.join(basePath, name);
+    // Map internal key to filename if applicable
+    const fileName = keyMap[name] || name;
+    const fullPath = path.join(basePath, fileName);
+
     if (typeof content === 'string') {
       fs.writeFileSync(fullPath, content);
-    } else if (typeof content === 'object') {
-      ensureDir(fullPath);
+    } else if (typeof content === 'object' && content !== null) {
+      if (!fs.existsSync(fullPath)) {
+        fs.mkdirSync(fullPath, { recursive: true });
+      }
       writeProjectFolder(content, fullPath);
     }
   });

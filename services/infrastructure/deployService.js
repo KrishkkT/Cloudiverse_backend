@@ -24,6 +24,24 @@ const axios = require('axios');
 const ProjectAnalyzer = require('../../services/core/ProjectAnalyzer');
 const { DeploymentStrategyResolver, Strategies } = require('../../services/infrastructure/DeploymentStrategyResolver');
 
+/**
+ * Normalizes infrastructure outputs to ensure consistent access via .value property.
+ * Handles both the flattened format (stored in DB) and nested format (Terraform output style).
+ */
+const normalizeOutputs = (outputs) => {
+    if (!outputs) return {};
+    const normalized = {};
+    for (const [key, val] of Object.entries(outputs)) {
+        if (val && typeof val === 'object' && 'value' in val) {
+            normalized[key] = val;
+        } else {
+            normalized[key] = { value: val };
+        }
+    }
+    return normalized;
+};
+
+
 // Helper to create AWS Clients with Assumed Role
 const createAwsClient = async (ClientClass, region, roleArn, externalId) => {
     // 1. Get Backend Credentials (from env or implicit)
@@ -69,7 +87,7 @@ const createDeployment = async (workspaceId, sourceType, config) => {
 // Helper: Target Provider Update (ECS, AppService, CloudRun, ContainerApps)
 async function deployImageToProvider(deploymentId, workspace, conn, provider, image) {
     await appendLog(deploymentId, `☁️ Initiating Provider Update for ${provider.toUpperCase()}...`);
-    const infraOutputs = workspace.state_json.infra_outputs;
+    const infraOutputs = normalizeOutputs(workspace.state_json.infra_outputs);
     const region = workspace.state_json.region || 'ap-south-1';
 
     // Ensure computecontainer is present (Handle snake_case V2 output)
@@ -350,7 +368,7 @@ const updateDeploymentStatus = async (deploymentId, status, url = null, logs = [
             const wsRes = await pool.query(
                 `SELECT w.name, u.email, u.name as user_name, w.ci_config 
                  FROM workspaces w 
-                 JOIN users u ON w.user_id = u.id 
+                 JOIN users u ON w.user_id = u.id::text 
                  WHERE w.id = $1`,
                 [workspace_id]
             );
@@ -894,7 +912,20 @@ phases:
 async function deployStaticProject(deploymentId, projectDir, workspace, buildConfig, infraOutputs, provider) {
     const region = workspace.state_json.region || 'ap-south-1';
 
-    // 1. Build
+    // 1. Install Dependencies
+    if (buildConfig.builder) {
+        const installCmd = buildConfig.builder === 'npm' ? 'npm install' :
+            buildConfig.builder === 'yarn' ? 'yarn install' :
+                buildConfig.builder === 'pnpm' ? 'pnpm install' : 'npm install';
+        await appendLog(deploymentId, `📦 Installing dependencies (${installCmd})...`);
+        try {
+            await execPromise(installCmd, { cwd: projectDir });
+        } catch (e) {
+            throw { ...DEPLOY_ERRORS.BUILD_FAILED, details: `Install failed: ${e.message}` };
+        }
+    }
+
+    // 2. Build
     if (buildConfig.command) {
         await appendLog(deploymentId, `🔨 Building Static Project (${buildConfig.command})...`);
         try {
@@ -904,7 +935,7 @@ async function deployStaticProject(deploymentId, projectDir, workspace, buildCon
         }
     }
 
-    // 2. Locate Artifacts
+    // 3. Locate Artifacts
     const buildDir = path.join(projectDir, buildConfig.outputDir);
     let finalBuildDir = buildDir;
     if (!fs.existsSync(buildDir)) {
@@ -917,7 +948,7 @@ async function deployStaticProject(deploymentId, projectDir, workspace, buildCon
     const timestamp = Date.now();
     let liveUrl = "";
 
-    // 3. Upload & Deploy
+    // 4. Upload & Deploy
     if (provider === 'aws') {
         const s3Client = await createAwsClient(S3Client, region, workspace.state_json.connection.role_arn, workspace.state_json.connection.external_id);
         const bucketName = infraOutputs.bucket_name?.value;
@@ -1052,7 +1083,7 @@ const deployFromGithub = async (deploymentId, workspace, config) => {
         await appendLog(deploymentId, `🎯 Deployment Strategy: ${resolution.strategy} (${resolution.reason || ''})`);
 
         const provider = workspace.state_json.connection?.provider || 'aws';
-        const infraOutputs = workspace.state_json.infra_outputs || {};
+        const infraOutputs = normalizeOutputs(workspace.state_json.infra_outputs);
 
         let liveUrl = "";
 

@@ -68,17 +68,18 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
             case 'AWS':
                 usage['aws_lambda_function.app'] = {
                     monthly_requests: monthlyRequests,
-                    request_duration_ms: 250
+                    request_duration_ms: 250 // Correct key is request_duration_ms
                 };
-                usage['aws_apigatewayv2_api.api'] = {
+                usage['aws_apigatewayv2_api.main'] = {
                     monthly_requests: monthlyRequests
                 };
                 break;
 
             case 'GCP':
-                usage['google_cloudfunctions_function.app'] = {
+                usage['google_cloudfunctions_function.func'] = {
                     monthly_requests: monthlyRequests,
-                    request_duration_ms: 250
+                    // GCP cloud functions v1/v2 use duration
+                    request_duration: 250
                 };
                 usage['google_cloud_run_service.app'] = {
                     request_count: monthlyRequests
@@ -86,9 +87,9 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
                 break;
 
             case 'AZURE':
-                usage['azurerm_function_app.app'] = {
+                usage['azurerm_linux_function_app.func'] = {
                     monthly_executions: monthlyRequests,
-                    execution_duration_ms: 250
+                    average_duration_ms: 250
                 };
                 break;
         }
@@ -99,15 +100,10 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
 
         switch (provider) {
             case 'AWS':
-                // 🔥 FIG: Sync with terraformGeneratorV2 names
-                usage['aws_ecs_task_definition.app'] = {
-                    monthly_cpu_credit_hours: instances * 730, // vCPU hours
-                    monthly_memory_gb_hours: instances * 2 * 730 // 2GB * hours
-                };
-
+                // 🔥 FIX: ECS Fargate uses task-level cpu/memory attributes in Terraform.
+                // Usage keys are mostly for uptime if not 24/7.
                 usage['aws_ecs_service.app'] = {
-                    monthly_cpu_hours: instances * 730,
-                    monthly_memory_gb_hours: instances * 2 * 730
+                    monthly_hours: 730
                 };
                 break;
 
@@ -115,15 +111,13 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
                 // 🔥 FIX: Cloud Run charging model often requires billed duration
                 // For REALTIME/Web platforms, we assume at least one instance is always warm (provisioned concurrency)
                 usage['google_cloud_run_service.app'] = {
-                    request_count: monthlyRequests,
-                    average_request_duration_ms: 500,
-                    // Force 24/7 billing: instances * 3600 sec/hr * 730 hr/mo
-                    monthly_billable_instance_seconds: instances * 3600 * 730
+                    monthly_requests: monthlyRequests,
+                    average_request_duration: 500
                 };
                 break;
 
             case 'AZURE':
-                usage['azurerm_container_app.app'] = {
+                usage['azurerm_app_service.app'] = {
                     v_cpu_duration: monthlyRequests * 0.5 // rough estimate
                 };
                 break;
@@ -138,9 +132,8 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
         switch (provider) {
             case 'AWS':
                 usage['aws_db_instance.db'] = {
-                    storage_gb: storageGB,
-                    monthly_read_iops: monthlyRequests * 0.7, // 70% reads
-                    monthly_write_iops: monthlyRequests * 0.3  // 30% writes
+                    additional_backup_storage_gb: storageGB * 0.2, // Assume 20% extra backup
+                    monthly_standard_io_requests: monthlyRequests * 0.5
                 };
                 break;
 
@@ -191,8 +184,8 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     if (hasService('objectstorage')) {
         switch (provider) {
             case 'AWS':
-                // Resource name must match terraformGeneratorV2: aws_s3_bucket.b
-                usage['aws_s3_bucket.b'] = {
+                // Resource name must match terraformGeneratorV2: aws_s3_bucket.main
+                usage['aws_s3_bucket.main'] = {
                     storage_gb: storageGB,
                     monthly_tier_1_requests: monthlyRequests * 0.1,
                     monthly_tier_2_requests: monthlyRequests * 0.05,
@@ -317,7 +310,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
 
         switch (provider) {
             case 'AWS':
-                usage['aws_sqs_queue.q'] = {
+                usage['aws_sqs_queue.queue'] = {
                     monthly_requests: queueMessages
                 };
                 break;
@@ -329,7 +322,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
                 break;
 
             case 'AZURE':
-                usage['azurerm_servicebus_namespace.bus'] = {
+                usage['azurerm_servicebus_namespace.sb'] = {
                     monthly_messages: queueMessages
                 };
                 break;
@@ -388,7 +381,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     if (hasService('apigateway')) {
         switch (provider) {
             case 'AWS':
-                usage['aws_apigatewayv2_api.api'] = {
+                usage['aws_apigatewayv2_api.main'] = {
                     monthly_requests: monthlyRequests
                 };
                 break;
@@ -400,7 +393,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
                 break;
 
             case 'AZURE':
-                usage['azurerm_api_management.api'] = {
+                usage['azurerm_api_management.apim'] = {
                     monthly_calls: monthlyRequests
                 };
                 break;
@@ -425,7 +418,7 @@ function normalizeUsageForInfracost(usage_profile, deployableServices, provider)
     if (hasService('monitoring')) {
         switch (provider) {
             case 'AWS':
-                usage['aws_cloudwatch_metric_alarm.monitoring'] = {
+                usage['aws_cloudwatch_metric_alarm.cpu'] = {
                     metrics: 50 // number of custom metrics
                 };
                 break;

@@ -383,8 +383,10 @@ router.put('/:id/deploy', authMiddleware, async (req, res) => {
       try {
         const userRes = await pool.query("SELECT email, name FROM users WHERE id = $1", [req.user.id]);
 
-        // 🔥 FIX: Prevent duplicate emails
-        const alreadySent = stateJson?.deployment_email_sent_at;
+        // 🔥 FIX: Prevent duplicate emails by checking both is_deployed and the specific timestamp
+        // Even if requests are concurrent, rowCount > 0 from line 362 block already provides isolation.
+        // We add this as extra defense in depth.
+        const alreadySent = stateJson?.deployment_email_sent_at || stateJson?.is_deployed === true;
 
         if (userRes.rows.length > 0 && !alreadySent) {
           const infraSpec = stateJson?.infraSpec || {};

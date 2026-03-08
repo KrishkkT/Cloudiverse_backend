@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const simpleGit = require('simple-git');
 require('dotenv').config();
 
 class GitHubService {
@@ -187,6 +188,52 @@ class GitHubService {
             console.error(`[GITHUB] Failed to create webhook: ${err.message}`);
             // Don't throw, just return null so we don't block the setup flow
             return null;
+        }
+    }
+
+    /**
+     * Clone a GitHub repository to a local directory
+     */
+    async cloneRepo(repoUrl, targetDir, token = null) {
+        try {
+            // Validate repoUrl to prevent command injection
+            if (!repoUrl || typeof repoUrl !== 'string') {
+                throw new Error('Invalid repository URL provided');
+            }
+
+            // Basic validation for GitHub URLs
+            if (!repoUrl.match(/^https:\/\/github\.com\/[^\/]+\/[^\/]+(\.git)?$/)) {
+                throw new Error('Only GitHub repository URLs are supported');
+            }
+
+            // Validate targetDir
+            if (!targetDir || typeof targetDir !== 'string') {
+                throw new Error('Invalid target directory provided');
+            }
+
+            // Initialize simple-git instance
+            const git = simpleGit();
+
+            // Clone options for security and performance
+            const cloneOptions = ['--depth=1', '--single-branch'];
+
+            // If token provided, use it for authentication
+            let authUrl = repoUrl;
+            if (token && typeof token === 'string') {
+                // Insert token into URL for private repos
+                authUrl = repoUrl.replace('https://', `https://oauth2:${token}@`);
+            }
+
+            console.log(`[GITHUB] Cloning ${repoUrl} to ${targetDir}`);
+
+            // Perform async clone using simple-git
+            await git.clone(authUrl, targetDir, cloneOptions);
+
+            console.log(`[GITHUB] Successfully cloned repository to ${targetDir}`);
+            return true;
+        } catch (err) {
+            console.error(`[GITHUB] Failed to clone repository: ${err.message}`);
+            throw new Error(`Failed to clone repository: ${err.message}`);
         }
     }
 }

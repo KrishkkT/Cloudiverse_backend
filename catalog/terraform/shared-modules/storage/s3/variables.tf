@@ -9,6 +9,12 @@ variable "project_name" {
   type        = string
 }
 
+variable "region" {
+  description = "AWS region"
+  type        = string
+  default     = "ap-south-1"
+}
+
 variable "bucket_prefix" {
   description = "Bucket prefix"
   type        = string

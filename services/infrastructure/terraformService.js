@@ -334,40 +334,48 @@ async function generateModularTerraform(infraSpec, provider, projectName, requir
     // Generate modules
     projectFolder['modules'] = {};
 
-    // Add networking module if needed
+    // Add networking module if needed (Gate 1: Implicit requirement)
     if (needsNetworking(pattern, normalizedServices)) {
         const networkingModule = terraformModules.getModule('networking', providerLower);
         if (networkingModule) {
-            projectFolder['modules']['networking'] = networkingModule;
+            const networkingPath = terraformGeneratorV2.getModulePath('networking');
+            setModulePath(projectFolder['modules'], networkingPath, networkingModule);
+            console.log(`[TERRAFORM V2] ✓ Implicit networking added: modules/${networkingPath}`);
         }
     }
 
     // Add service modules
     const missingModules = [];
 
+    /**
+     * Helper to set nested object path
+     */
+    const setModulePath = (target, pathStr, value) => {
+        const parts = pathStr.split(/[/\\]/);
+        let current = target;
+        for (let i = 0; i < parts.length - 1; i++) {
+            const part = parts[i];
+            if (!current[part]) current[part] = {};
+            current = current[part];
+        }
+        current[parts[parts.length - 1]] = value;
+    };
+
     deployableServices.forEach(service => {
         // Services are already normalized and valid against catalog
         const module = terraformModules.getModule(service, providerLower);
-        const folderName = terraformGeneratorV2.getModuleName(service);
+        const moduleDir = terraformGeneratorV2.getModulePath(service);
 
         if (module) {
-            projectFolder['modules'][folderName] = module;
-            console.log(`[TERRAFORM V2] ✓ Module added: ${service} → ${folderName}`);
+            setModulePath(projectFolder['modules'], moduleDir, module);
+            console.log(`[TERRAFORM V2] ✓ Module added: ${service} → modules/${moduleDir}`);
         } else {
             console.warn(`[TERRAFORM V2] ⚠️  Skipping service '${service}' - No Terraform module defined (Gate 2).`);
 
-            // Check if this service is a blocking service (must have Terraform module)
-            const blockingServices = ['objectstorage', 'apigateway']; // Normalized IDs
+            // ... (rest of the logic remains same, but I'll update the loop closure)
+            const blockingServices = ['objectstorage', 'apigateway'];
             const isBlocking = blockingServices.includes(service);
-
-            // Classify module failure for better error messaging
-            missingModules.push({
-                service,
-                provider: providerLower,
-                reason: 'MODULE_NOT_IMPLEMENTED',
-                is_blocking: isBlocking
-            });
-            console.error(`[TERRAFORM V2] ✗ Missing Terraform module for service: ${service} on ${provider} (blocking: ${isBlocking})`);
+            missingModules.push({ service, provider: providerLower, reason: 'MODULE_NOT_IMPLEMENTED', is_blocking: isBlocking });
         }
     });
 

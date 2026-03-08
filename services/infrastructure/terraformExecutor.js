@@ -541,6 +541,15 @@ class TerraformExecutor {
             }
             this.addLog(jobId, 'Terraform initialized successfully!', 'SUCCESS');
 
+            // ─── STAGE 3.5: TERRAFORM VALIDATE ──────────────────────────────────────
+            job.stage = 'validate';
+            this.addLog(jobId, 'Validating Terraform configuration...', 'CMD');
+            const validateResult = await this.runTerraformCommand(jobId, 'validate', ['-no-color'], workDir, envVars);
+            if (!validateResult.success) {
+                throw new Error(`Terraform validation failed with exit code ${validateResult.exitCode}`);
+            }
+            this.addLog(jobId, 'Validation successful!', 'SUCCESS');
+
             // ─── STAGE 4: TERRAFORM PLAN ────────────────────────────────────────────
             job.stage = 'plan';
             this.addLog(jobId, 'Generating execution plan...', 'CMD');

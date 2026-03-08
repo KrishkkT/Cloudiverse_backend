@@ -632,9 +632,9 @@ router.post('/:provider/connect', authMiddleware, async (req, res) => {
 
             const roleName = `CloudiverseAccessRole-${externalId}`;
 
-            // We pass all parameters, including proposed RoleName. 
-            // The current S3 template will ignore RoleName, but future ones will use it.
-            authUrl = `https://console.aws.amazon.com/cloudformation/home?region=ap-south-1#/stacks/create/review?templateURL=${encodeURIComponent(templateUri)}&stackName=${uniqueStackName}&param_ExternalId=${externalId}&param_CloudiverseAccountId=${accountId}&param_RoleName=${roleName}`;
+            // 🔧 FIX: Use region-specific console subdomain for higher reliability.
+            // Also ensure param_ names match the Quick Create expectations.
+            authUrl = `https://ap-south-1.console.aws.amazon.com/cloudformation/home?region=ap-south-1#/stacks/create/review?templateURL=${encodeURIComponent(templateUri)}&stackName=${uniqueStackName}&param_ExternalId=${externalId}&param_CloudiverseAccountId=${accountId}&param_RoleName=${roleName}`;
 
             extra = { externalId, accountId };
         }

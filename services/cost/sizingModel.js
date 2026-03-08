@@ -61,26 +61,26 @@ const COMPUTE_SIZING = {
 const DATA_SIZING = {
     relational_database: {
         cost_effective: {
-            SMALL: { instance_class: "db.t3.micro", storage_gb: 20, multi_az: false, description: "t3.micro, 20GB, single-AZ" },
-            MEDIUM: { instance_class: "db.t3.small", storage_gb: 100, multi_az: true, description: "t3.small, 100GB, multi-AZ" },
-            LARGE: { instance_class: "db.t3.medium", storage_gb: 500, multi_az: true, description: "t3.medium, 500GB, multi-AZ" }
+            SMALL: { instance_class: "db.t3.micro", storage_gb: 20, multi_az: false, description: "t3.micro, 20GB, single-AZ", gcp_machine_type: "db-f1-micro" },
+            MEDIUM: { instance_class: "db.t3.small", storage_gb: 100, multi_az: true, description: "t3.small, 100GB, multi-AZ", gcp_machine_type: "db-custom-1-3840" },
+            LARGE: { instance_class: "db.t3.medium", storage_gb: 500, multi_az: true, description: "t3.medium, 500GB, multi-AZ", gcp_machine_type: "db-custom-2-7680" }
         },
         high_performance: {
-            SMALL: { instance_class: "db.r6i.large", storage_gb: 100, multi_az: true, description: "r6i.large, 100GB, multi-AZ" },
-            MEDIUM: { instance_class: "db.r6i.xlarge", storage_gb: 200, multi_az: true, description: "r6i.xlarge, 200GB, multi-AZ" },
-            LARGE: { instance_class: "db.r6i.2xlarge", storage_gb: 500, multi_az: true, description: "r6i.2xlarge, 500GB, multi-AZ" }
+            SMALL: { instance_class: "db.r6i.large", storage_gb: 100, multi_az: true, description: "r6i.large, 100GB, multi-AZ", gcp_machine_type: "db-custom-2-13312" },
+            MEDIUM: { instance_class: "db.r6i.xlarge", storage_gb: 200, multi_az: true, description: "r6i.xlarge, 200GB, multi-AZ", gcp_machine_type: "db-custom-4-26624" },
+            LARGE: { instance_class: "db.r6i.2xlarge", storage_gb: 500, multi_az: true, description: "r6i.2xlarge, 500GB, multi-AZ", gcp_machine_type: "db-custom-8-53248" }
         }
     },
     nosql_database: {
         cost_effective: {
-            SMALL: { read_units: 5, write_units: 5, storage_gb: 1, description: "5 RCU, 5 WCU, 1GB" },
-            MEDIUM: { read_units: 25, write_units: 25, storage_gb: 10, description: "25 RCU, 25 WCU, 10GB" },
-            LARGE: { read_units: 100, write_units: 100, storage_gb: 100, description: "100 RCU, 100 WCU, 100GB" }
+            SMALL: { read_units: 5, write_units: 5, storage_gb: 1, description: "5 RCU, 5 WCU, 1GB", gcp_instance_type: "standard" },
+            MEDIUM: { read_units: 25, write_units: 25, storage_gb: 10, description: "25 RCU, 25 WCU, 10GB", gcp_instance_type: "standard" },
+            LARGE: { read_units: 100, write_units: 100, storage_gb: 100, description: "100 RCU, 100 WCU, 100GB", gcp_instance_type: "premium" }
         },
         high_performance: {
-            SMALL: { read_units: 50, write_units: 50, storage_gb: 10, description: "50 RCU, 50 WCU, 10GB" },
-            MEDIUM: { read_units: 250, write_units: 250, storage_gb: 100, description: "250 RCU, 250 WCU, 100GB" },
-            LARGE: { read_units: 1000, write_units: 1000, storage_gb: 500, description: "1000 RCU, 1000 WCU, 500GB" }
+            SMALL: { read_units: 50, write_units: 50, storage_gb: 10, description: "50 RCU, 50 WCU, 10GB", gcp_instance_type: "standard" },
+            MEDIUM: { read_units: 250, write_units: 250, storage_gb: 100, description: "250 RCU, 250 WCU, 100GB", gcp_instance_type: "standard" },
+            LARGE: { read_units: 1000, write_units: 1000, storage_gb: 500, description: "1000 RCU, 1000 WCU, 500GB", gcp_instance_type: "premium" }
         }
     },
     cache: {
