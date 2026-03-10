@@ -264,13 +264,19 @@ pool.query('SELECT NOW()', async (err, res) => {
 });
 
 // Middleware
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
+}));
+
 app.use(cors({
   origin: [
     'http://localhost:3000',
     'http://localhost:3001',
     'http://127.0.0.1:3000',
-    'http://127.0.0.1:3001'
+    'http://127.0.0.1:3001',
+    'https://www.cloudiverse.app',
+    'https://cloudiverse.app'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
